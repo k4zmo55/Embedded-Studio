@@ -1,7 +1,7 @@
 /* Uygulama iskeleti: üst çubuk, sekmeler, karşılama ekranı ve mesaj yönlendirme. */
 (function () {
   const { h, $, post, state, ui, saveUi, update, icon, t } = ES;
-  const TABS = [['design', t('Tasarım')], ['clock', 'Clock'], ['monitor', t('Monitör')], ['debug', 'Debug']];
+  const TABS = [['design', t('Tasarım')], ['clock', 'Clock'], ['monitor', t('Monitör')], ['debug', 'Debug'], ['settings', t('Ayarlar')]];
 
   function skeleton() {
     const app = $('app');
@@ -9,12 +9,8 @@
       h('header', { id: 'topbar' },
         h('div', { class: 'brand' }, icon('chip', 18), h('span', { text: 'Embedded Studio' })),
         h('span', { class: 'proj', id: 'proj-name' }),
-        h('label', {}, 'MCU', h('select', { id: 'mcu', onchange: (e) => { state.design.mcuId = e.target.value; state.design.locks = {}; update(); } })),
-        h('label', { title: t('Kod altyapısı') }, t('Altyapı'),
-          h('select', { id: 'framework', onchange: (e) => { state.design.framework = e.target.value; update(); } },
-            h('option', { value: 'hal', text: 'STM32 HAL' }),
-            h('option', { value: 'register', text: 'Bare-metal (register)' }))),
-        h('label', { class: 'check' }, h('input', { type: 'checkbox', id: 'rtos', onchange: (e) => { state.design.rtos = e.target.checked; update(); } }), h('span', { text: 'FreeRTOS' })),
+        // MCU / altyapı / RTOS burada sadece özet; değiştirmek için Ayarlar sekmesi (etkilenen dosyalar orada gösterilir)
+        h('button', { class: 'ghost small proj-summary', id: 'proj-summary', title: t('Proje ayarlarını aç'), onclick: () => setTab('settings') }),
         h('span', { class: 'save-state', id: 'save-state', title: t('Tasarım her değişiklikte otomatik kaydedilir') }),
         h('span', { class: 'spacer' }),
         h('nav', { class: 'tabs', role: 'tablist' }, ...TABS.map(([id, label]) => h('button', { id: `tab-${id}`, role: 'tab', onclick: () => setTab(id) }, label))),
@@ -55,9 +51,8 @@
     state.notes = m.notes;
     state.clock = m.clock;
     state.project = m.project;
-    $('mcu').replaceChildren(...Object.values(state.lib.mcus).map((x) => h('option', { value: x.id, text: x.name, selected: x.id === state.design.mcuId })));
-    $('framework').value = state.design.framework;
-    $('rtos').checked = !!state.design.rtos;
+    const mcu = state.lib.mcus[state.design.mcuId];
+    $('proj-summary').textContent = [mcu ? mcu.name : state.design.mcuId, state.design.framework === 'hal' ? 'HAL' : 'bare-metal', state.design.rtos ? 'FreeRTOS' : t('RTOS yok')].join(' · ');
     $('proj-name').textContent = state.design.project ? state.design.project.name : '';
     for (const [id] of TABS) ES.tabs[id].render();
   });

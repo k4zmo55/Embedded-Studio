@@ -524,3 +524,21 @@ table.regs.core td:first-child { width: 44px; }
 .cf-prev-card .comp-card .card-art svg { width: 100%; max-width: 220px; }
 .cf-json summary { cursor: pointer; font-size: 12px; color: var(--muted); }
 .cf-json pre { font-family: var(--mono); font-size: 11px; background: var(--bg); border: 1px solid var(--border); border-radius: 4px; padding: 8px; overflow: auto; max-height: 260px; margin: 6px 0 0; }
+
+/* ---- Proje ayarları ---- */
+#settings { overflow-y: auto; display: none; }
+#settings.active { display: block; }
+.settings { max-width: 760px; margin: 0 auto; padding: 24px 24px 48px; display: flex; flex-direction: column; gap: 14px; }
+.settings h2 { margin: 0; font-size: 16px; }
+.settings h3 { margin-top: 0; }
+.settings .wizard-actions { gap: 8px; margin-top: 0; }
+.set-row { display: grid; grid-template-columns: 120px 1fr; gap: 10px; align-items: baseline; padding: 3px 0; }
+.set-row .label { color: var(--muted); font-size: 12px; }
+.set-row .mono { overflow-wrap: anywhere; }
+.set-preview { display: flex; flex-direction: column; gap: 8px; }
+.set-files { border-left: 3px solid var(--border); padding: 4px 10px; font-size: 12px; margin-top: 6px; }
+.set-files.add { border-left-color: var(--ok); }
+.set-files.del { border-left-color: var(--err); }
+.set-files.mod { border-left-color: var(--warn); }
+.set-files-head { font-weight: 600; margin-bottom: 3px; }
+.proj-summary { font-family: var(--mono); font-size: 12px; min-width: 0; overflow: hidden; text-overflow: ellipsis; flex-shrink: 1; color: var(--fg); border: 1px solid var(--border); }

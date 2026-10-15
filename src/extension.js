@@ -224,6 +224,9 @@ class Studio {
       case 'generate':
         await this.generateCode();
         break;
+      case 'settings.preview':
+        this.post({ type: 'settings.preview', seq: m.seq, ...this.previewSettings(m.settings) });
+        break;
       case 'clock.solve': {
         const cfg = solveClock(this.lib.mcus[this.design.mcuId], this.design.clock, m.target);
         if (!cfg) return this.toast('error', t('{0} MHz için geçerli bir PLL ayarı bulunamadı.', m.target));
@@ -373,6 +376,54 @@ class Studio {
       vscode.window.showErrorMessage(t('Paket indirilemedi: {0}. Git kurulu ve internet bağlantısı var mı?', e.message));
       return false;
     }
+  }
+
+  /**
+   * Proje ayarı (MCU / altyapı / RTOS) değişirse hangi üretilen dosyaların ekleneceğini, kaldırılacağını,
+   * değişeceğini hesaplar. Diske dokunmaz: iki tasarım için üretimi bellekte çalıştırıp karşılaştırır.
+   */
+  previewSettings(s) {
+    const cur = this.design;
+    const mcuChanged = s.mcuId !== cur.mcuId;
+    const next = migrate({ ...cur, mcuId: s.mcuId, framework: s.framework, rtos: !!s.rtos, locks: mcuChanged ? {} : cur.locks, clock: mcuChanged ? undefined : cur.clock }, this.lib);
+    const cache = path.join(this.context.globalStorageUri.fsPath, 'packs');
+    const halConfTemplate = this.root ? packs.halConfTemplate(cache, this.root) : undefined;
+    const filesOf = (d) => {
+      const mcu = this.lib.mcus[d.mcuId];
+      const gen = generate(d, this.lib, assign(d, this.lib), computeClock(mcu, d.clock), { halConfTemplate });
+      return new Map(gen.files.map((f) => [f.path, f.content]));
+    };
+    const notes = [];
+    let a = new Map(), b = new Map();
+    try {
+      a = filesOf(cur);
+      b = filesOf(next);
+    } catch (e) {
+      notes.push({ level: 'warn', text: t('Dosya listesi hesaplanamadı: {0}', e.message) });
+    }
+    const locks = Object.keys(cur.locks || {}).length;
+    if (mcuChanged) notes.push({ level: 'warn', text: t('MCU değişince elle seçilmiş pin kilitleri ({0}) ve saat ayarları sıfırlanır; pinler yeniden atanır.', locks) });
+    if (s.framework !== cur.framework) {
+      notes.push({ level: 'info', text: s.framework === 'hal'
+        ? t('STM32 HAL sürücüleri projeye eklenir ve derlemeye girer.')
+        : t('Kod register seviyesinde üretilir. HAL klasörü (Drivers/STM32F4xx_HAL_Driver) derlemeden çıkar ama silinmez.') });
+    }
+    if (!!s.rtos !== !!cur.rtos) {
+      notes.push({ level: 'info', text: s.rtos
+        ? t('Her sensör ayrı bir FreeRTOS task\'ında çalışır; FreeRTOS kaynakları projeye eklenir.')
+        : t('Sensörler süper döngüde okunur. FreeRTOS klasörü (Middlewares/FreeRTOS) derlemeden çıkar ama silinmez.') });
+    }
+    notes.push({ level: 'info', text: t('USER CODE blokları arasına yazdığınız kod korunur.') });
+    const names = { hal: 'STM32 HAL', device: t('CMSIS cihaz'), core: t('CMSIS çekirdek'), freertos: 'FreeRTOS' };
+    const mcuNext = this.lib.mcus[next.mcuId];
+    return {
+      generated: !!this.root && fs.existsSync(path.join(this.root, STATE_DIR, 'manifest.json')),
+      added: [...b.keys()].filter((p) => !a.has(p)).sort(),
+      removed: [...a.keys()].filter((p) => !b.has(p)).sort(),
+      changed: [...b.keys()].filter((p) => a.has(p) && a.get(p) !== b.get(p)).sort(),
+      packs: this.root ? packs.missingInProject(this.root, mcuNext, next.framework, next.rtos).map((k) => names[k]) : [],
+      notes
+    };
   }
 
   // ------------------------------------------------------------------ kod üretimi
@@ -659,7 +710,7 @@ class Studio {
     const webview = this.panel.webview;
     const media = (f) => webview.asWebviewUri(vscode.Uri.joinPath(this.context.extensionUri, 'media', f));
     const nonce = [...Array(32)].map(() => Math.random().toString(36)[2]).join('');
-    const scripts = ['i18n.js', 'core.js', 'art.js', 'wizard.js', 'design.js', 'creator.js', 'clock.js', 'widgets.js', 'monitor.js', 'debug.js', 'main.js'];
+    const scripts = ['i18n.js', 'core.js', 'art.js', 'wizard.js', 'design.js', 'creator.js', 'clock.js', 'widgets.js', 'monitor.js', 'debug.js', 'settings.js', 'main.js'];
     return `<!doctype html>
 <html lang="${i18n.getLanguage()}">
 <head>

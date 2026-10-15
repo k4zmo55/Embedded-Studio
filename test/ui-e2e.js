@@ -677,6 +677,31 @@ async function until(fn, ms = 8000, what = 'koşul') {
       await cdp.send('Emulation.setDeviceMetricsOverride', { width: W, height: WIN_H, deviceScaleFactor: 1, mobile: false });
     }
   });
+  await step('Proje ayarları: üst çubukta sadece özet; altyapı değişikliği önizlenir ve onayla uygulanır', async () => {
+    assert.ok(await cdp.eval(`!document.querySelector('#topbar select') && !document.querySelector('#topbar input')`), 'üst çubukta MCU/altyapı/RTOS seçicisi kalmamalı');
+    assert.strictEqual(await cdp.eval(`document.querySelector('#proj-summary').textContent`), 'STM32F411CEU6 · HAL · FreeRTOS');
+    await cdp.click('#proj-summary');
+    await until(() => cdp.eval(`document.querySelector('#settings').classList.contains('active')`), 3000, 'ayarlar sekmesi');
+    assert.ok(await cdp.eval(`document.querySelector('#set-apply').disabled`), 'değişiklik yokken Uygula kapalı');
+    const setFw = async (fw) => {
+      await cdp.click(`(document.querySelector('input[name=set-framework][value=${fw}]').closest('label'))`);
+      await until(() => cdp.eval(`!document.querySelector('#set-apply').disabled`), 8000, 'önizleme');
+    };
+    await setFw('register');
+    // Proje daha önce üretildi: HAL'e ait dosyalar kaldırılacak/değişecek olarak listelenmeli
+    const lists = await cdp.eval(`[...document.querySelectorAll('.set-files')].map((e) => e.className + ':' + e.children.length)`);
+    assert.ok(lists.length > 0, 'etkilenen dosya listesi: ' + JSON.stringify(lists));
+    assert.ok(await cdp.eval(`document.querySelector('#set-preview').textContent.includes('Drivers/STM32F4xx_HAL_Driver')`), 'HAL klasörü notu');
+    await cdp.shot('24-proje-ayarlari');
+    await cdp.click('#set-apply');
+    await until(() => design().framework === 'register', 4000, 'bare-metal uygulandı');
+    await until(() => cdp.eval(`document.querySelector('#proj-summary').textContent.includes('bare-metal')`), 3000, 'özet güncellendi');
+    // Geri al
+    await setFw('hal');
+    await cdp.click('#set-apply');
+    await until(() => design().framework === 'hal', 4000, 'HAL geri geldi');
+    await cdp.click('#tab-design');
+  });
   await step('İngilizce arayüz: ayar değişince yeniden yüklenir, ekranda Türkçe metin kalmaz', async () => {
     settings.language = 'en';
     configListeners.forEach((fn) => fn({ affectsConfiguration: (s) => s === 'embeddedStudio.language' }));
@@ -690,7 +715,7 @@ async function until(fn, ms = 8000, what = 'koşul') {
       return [...new Set(words)].filter((w) => !userText.includes(w)).map((w) => `${where}: ${w}`);
     };
     const found = [];
-    for (const tab of ['design', 'clock', 'monitor', 'debug']) {
+    for (const tab of ['design', 'clock', 'monitor', 'debug', 'settings']) {
       await cdp.click(`#tab-${tab}`);
       await sleep(500);
       found.push(...(await turkish(tab)));
