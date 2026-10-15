@@ -164,7 +164,14 @@ class Cdp {
     for (const ch of text) { await this.send('Input.insertText', { text: ch }); await sleep(45); }
   }
   async shot(name) {
-    const r = await this.send('Page.captureScreenshot', { format: 'png' });
+    let r;
+    try {
+      r = await this.send('Page.captureScreenshot', { format: 'png' });
+    } catch (e) {
+      // Bir kez daha dene: sayfayı öne getir, yeni kare iste
+      await this.send('Page.bringToFront').catch(() => {});
+      r = await this.send('Page.captureScreenshot', { format: 'png', fromSurface: true });
+    }
     fs.writeFileSync(path.join(SHOTS, `${name}.png`), Buffer.from(r.data, 'base64'));
     console.log(`    📷 ${name}.png`);
   }
@@ -183,11 +190,12 @@ function startRecorder(cdp) {
     if (!rec.scene || rec.busy) return;
     rec.busy = true;
     try {
-      const r = await cdp.send('Page.captureScreenshot', { format: 'jpeg', quality: 82 });
+      // Doğrudan GIF boyutunda yakala (960 px): tam çözünürlük tarayıcıyı yavaşlatıyor
+      const r = await cdp.send('Page.captureScreenshot', { format: 'jpeg', quality: 85, clip: { x: 0, y: 0, width: 1500, height: 920, scale: 0.64 } });
       fs.writeFileSync(path.join(REC, `${rec.scene}_${String(rec.n++).padStart(5, '0')}_${Date.now()}.jpg`), Buffer.from(r.data, 'base64'));
     } catch { /* kare atla */ }
     rec.busy = false;
-  }, 120);
+  }, 180);
 }
 const scene = (name) => { rec.scene = REC ? name : null; };
 const CURSOR_JS = `(() => {
@@ -209,6 +217,7 @@ const CURSOR_JS = `(() => {
   }, true);
 })()`;
 async function until(fn, ms = 8000, what = 'koşul') {
+  if (process.env.ES_RECORD) ms *= 3; // kayıt modunda her şey daha yavaş
   const t0 = Date.now();
   for (;;) {
     const v = await fn();
@@ -251,7 +260,9 @@ async function until(fn, ms = 8000, what = 'koşul') {
   });
   const profile = path.join(WORK, 'edge-profile');
   fs.rmSync(profile, { recursive: true, force: true });
-  const browser = spawn(BROWSER, ['--headless=new', `--remote-debugging-port=${CDP_PORT}`, `--user-data-dir=${profile}`, '--window-size=1500,920', '--hide-scrollbars', 'about:blank'], { stdio: 'ignore' });
+  const browser = spawn(BROWSER, ['--headless=new', `--remote-debugging-port=${CDP_PORT}`, `--user-data-dir=${profile}`, '--window-size=1500,920', '--hide-scrollbars',
+    // Arka plan kısıtlamaları kapalı: aksi halde headless bazen kare üretmeyi geciktirip ekran görüntüsünü kilitler
+    '--disable-background-timer-throttling', '--disable-renderer-backgrounding', '--disable-backgrounding-occluded-windows', 'about:blank'], { stdio: 'ignore' });
   browserProc = browser;
   process.on('exit', () => { try { browser.kill(); } catch {} });
   const targets = await until(async () => { try { return (await (await fetch(`http://127.0.0.1:${CDP_PORT}/json`)).json()).filter((t) => t.type === 'page'); } catch { return null; } }, 15000, 'tarayıcı');

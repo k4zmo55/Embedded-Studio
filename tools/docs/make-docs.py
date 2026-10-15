@@ -108,15 +108,15 @@ def install_gif():
     for i in range(1, len(word) + 1, 2):
         plan.append((f'adim=2&yaz={word[:i]}&imlec=200,80', 110))
     plan += [(f'adim=2&yaz={word}&imlec=200,80', 900)]
-    plan += [('adim=3&yaz=Embedded%20Studio&imlec=150,150', 300), ('adim=3&yaz=Embedded%20Studio&imlec=128,182', 1100),
-             ('adim=3&yaz=Embedded%20Studio&kurulu=1&imlec=128,182', 1500)]
+    plan += [('adim=3&yaz=Embedded%20Studio&imlec=150,150', 300), ('adim=3&yaz=Embedded%20Studio&imlec=140,208', 1100),
+             ('adim=3&yaz=Embedded%20Studio&kurulu=1&imlec=140,208', 1500)]
     plan += [('adim=4&imlec=400,300', 300), ('adim=4&imlec=240,489', 1500)]
     plan += [('adim=5', 2600)]
     frames = [render(f'{page}#{h}') for h, _ in plan]
     n, size = make_gif(frames, [d for _, d in plan], OUT / 'kurulum.gif', width=960)
     print(f'  kurulum.gif: {n} kare, {size // 1024} KB')
     # Statik adım görselleri (GIF açılmayan yerler için)
-    for k, h in {1: 'adim=1&imlec=60,262', 2: 'adim=2&yaz=Embedded Studio', 3: 'adim=3&yaz=Embedded%20Studio&imlec=128,182', 4: 'adim=4&imlec=240,489'}.items():
+    for k, h in {1: 'adim=1&imlec=60,262', 2: 'adim=2&yaz=Embedded Studio', 3: 'adim=3&yaz=Embedded%20Studio&imlec=140,208', 4: 'adim=4&imlec=240,489'}.items():
         save_png(render(f'{page}#{h}'), OUT / f'kurulum-{k}.png', width=960)
 
 
