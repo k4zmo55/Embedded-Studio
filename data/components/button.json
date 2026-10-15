@@ -1,0 +1,56 @@
+{
+  "id": "button",
+  "name": "Buton",
+  "category": "Temel",
+  "description": "Basmalı buton (dahili pull-up ile, GND'ye çeker).",
+  "keywords": [
+    "buton",
+    "button",
+    "düğme",
+    "dugme",
+    "tuş",
+    "tus",
+    "switch",
+    "anahtar"
+  ],
+  "interface": "gpio",
+  "voltage": {
+    "min": 0,
+    "max": 5
+  },
+  "sampleMs": 50,
+  "pins": [
+    {
+      "name": "1",
+      "role": "gpio.in"
+    },
+    {
+      "name": "2",
+      "role": "ground"
+    }
+  ],
+  "telemetry": [
+    {
+      "id": "pressed",
+      "unit": "",
+      "sim": {
+        "base": 0.5,
+        "amp": 0.5,
+        "periodS": 7,
+        "noise": 0,
+        "square": true
+      }
+    }
+  ],
+  "art": {
+    "shape": "button"
+  },
+  "monitor": [
+    {
+      "type": "lamp",
+      "channels": [
+        "pressed"
+      ]
+    }
+  ]
+}

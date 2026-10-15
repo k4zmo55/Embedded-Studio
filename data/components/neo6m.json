@@ -1,0 +1,89 @@
+{
+  "id": "neo6m",
+  "name": "u-blox NEO-6M GPS",
+  "category": "Haberleşme",
+  "description": "GPS modülü, NMEA çıkışı (UART 9600 baud).",
+  "keywords": [
+    "gps",
+    "konum",
+    "location",
+    "gnss",
+    "navigasyon"
+  ],
+  "interface": "uart",
+  "voltage": {
+    "min": 3.3,
+    "max": 5
+  },
+  "uart": {
+    "baud": 9600
+  },
+  "sampleMs": 1000,
+  "pins": [
+    {
+      "name": "VCC",
+      "role": "power"
+    },
+    {
+      "name": "GND",
+      "role": "ground"
+    },
+    {
+      "name": "RX",
+      "role": "uart.TX"
+    },
+    {
+      "name": "TX",
+      "role": "uart.RX"
+    }
+  ],
+  "telemetry": [
+    {
+      "id": "lat",
+      "unit": "°",
+      "sim": {
+        "kind": "gps"
+      }
+    },
+    {
+      "id": "lon",
+      "unit": "°",
+      "sim": {
+        "kind": "gps"
+      }
+    },
+    {
+      "id": "alt",
+      "unit": "m",
+      "sim": {
+        "kind": "gps"
+      }
+    },
+    {
+      "id": "sats",
+      "unit": "",
+      "sim": {
+        "kind": "gps"
+      }
+    }
+  ],
+  "datasheet": "https://content.u-blox.com/sites/default/files/products/documents/NEO-6_DataSheet_%28GPS.G6-HW-09005%29.pdf",
+  "art": {
+    "board": "#14532d",
+    "chip": "NEO-6M",
+    "chipShape": "metal-lid",
+    "antenna": true
+  },
+  "monitor": [
+    {
+      "type": "gps",
+      "channels": [
+        "lat",
+        "lon",
+        "alt",
+        "sats"
+      ],
+      "size": "m"
+    }
+  ]
+}

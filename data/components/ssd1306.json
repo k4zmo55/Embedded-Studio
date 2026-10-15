@@ -1,0 +1,54 @@
+{
+  "id": "ssd1306",
+  "name": "SSD1306 OLED 128x64",
+  "category": "Ekran",
+  "description": "0.96\" monokrom OLED ekran, I2C.",
+  "keywords": [
+    "ekran",
+    "oled",
+    "display",
+    "lcd",
+    "gösterge",
+    "gosterge"
+  ],
+  "interface": "i2c",
+  "voltage": {
+    "min": 3.3,
+    "max": 5
+  },
+  "i2c": {
+    "address": "0x3C",
+    "altAddresses": [
+      "0x3D"
+    ],
+    "maxSpeedHz": 400000,
+    "onboardPullups": true
+  },
+  "sampleMs": 0,
+  "pins": [
+    {
+      "name": "VCC",
+      "role": "power"
+    },
+    {
+      "name": "GND",
+      "role": "ground"
+    },
+    {
+      "name": "SCL",
+      "role": "i2c.SCL"
+    },
+    {
+      "name": "SDA",
+      "role": "i2c.SDA"
+    }
+  ],
+  "telemetry": [],
+  "datasheet": "https://cdn-shop.adafruit.com/datasheets/SSD1306.pdf",
+  "art": {
+    "board": "#1d3d6e",
+    "chip": "",
+    "chipShape": "oled"
+  },
+  "monitor": []
+}

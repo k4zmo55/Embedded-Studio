@@ -1,0 +1,65 @@
+{
+  "id": "servo_sg90",
+  "name": "Servo SG90",
+  "category": "Aktüatör",
+  "description": "Mikro servo motor, 50 Hz PWM, 5 V besleme.",
+  "keywords": [
+    "servo",
+    "motor",
+    "aktüatör",
+    "aktuator",
+    "pwm",
+    "açı",
+    "aci"
+  ],
+  "interface": "pwm",
+  "voltage": {
+    "min": 4.8,
+    "max": 6
+  },
+  "pwm": {
+    "frequencyHz": 50
+  },
+  "sampleMs": 20,
+  "pins": [
+    {
+      "name": "VCC",
+      "role": "power"
+    },
+    {
+      "name": "GND",
+      "role": "ground"
+    },
+    {
+      "name": "SIG",
+      "role": "pwm"
+    }
+  ],
+  "telemetry": [
+    {
+      "id": "angle",
+      "unit": "°",
+      "sim": {
+        "base": 90,
+        "amp": 60,
+        "periodS": 8,
+        "noise": 0
+      }
+    }
+  ],
+  "datasheet": "https://www.friendlywire.com/projects/ne555-servo-safe/SG90-datasheet.pdf",
+  "art": {
+    "shape": "servo"
+  },
+  "monitor": [
+    {
+      "type": "gauge",
+      "channels": [
+        "angle"
+      ],
+      "min": 0,
+      "max": 180,
+      "style": "dial"
+    }
+  ]
+}

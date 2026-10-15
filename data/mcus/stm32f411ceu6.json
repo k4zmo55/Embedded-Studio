@@ -1,0 +1,582 @@
+{
+  "id": "stm32f411ceu6",
+  "name": "STM32F411CEU6",
+  "board": "WeAct Black Pill v3",
+  "family": "STM32F4",
+  "core": "Cortex-M4F",
+  "flashKB": 512,
+  "ramKB": 128,
+  "maxClockMHz": 100,
+  "voltage": 3.3,
+  "halHeader": "stm32f4xx_hal.h",
+  "source": "DS10314 alternate function tablosundan seçilmiş alt küme. Üretim öncesi datasheet ile doğrulanmalı.",
+  "peripherals": {
+    "I2C1": {
+      "type": "i2c",
+      "bus": "APB1"
+    },
+    "I2C2": {
+      "type": "i2c",
+      "bus": "APB1"
+    },
+    "I2C3": {
+      "type": "i2c",
+      "bus": "APB1"
+    },
+    "SPI1": {
+      "type": "spi",
+      "bus": "APB2"
+    },
+    "SPI2": {
+      "type": "spi",
+      "bus": "APB1"
+    },
+    "USART1": {
+      "type": "uart",
+      "bus": "APB2"
+    },
+    "USART2": {
+      "type": "uart",
+      "bus": "APB1"
+    },
+    "USART6": {
+      "type": "uart",
+      "bus": "APB2"
+    },
+    "ADC1": {
+      "type": "adc",
+      "bus": "APB2"
+    },
+    "TIM2": {
+      "type": "pwm",
+      "bus": "APB1"
+    },
+    "TIM3": {
+      "type": "pwm",
+      "bus": "APB1"
+    },
+    "TIM4": {
+      "type": "pwm",
+      "bus": "APB1"
+    }
+  },
+  "pins": [
+    {
+      "name": "PA0",
+      "side": "left",
+      "functions": [
+        {
+          "signal": "ADC1_IN0"
+        },
+        {
+          "signal": "TIM2_CH1",
+          "af": 1
+        }
+      ]
+    },
+    {
+      "name": "PA1",
+      "side": "left",
+      "functions": [
+        {
+          "signal": "ADC1_IN1"
+        },
+        {
+          "signal": "TIM2_CH2",
+          "af": 1
+        }
+      ]
+    },
+    {
+      "name": "PA2",
+      "side": "left",
+      "functions": [
+        {
+          "signal": "ADC1_IN2"
+        },
+        {
+          "signal": "USART2_TX",
+          "af": 7
+        },
+        {
+          "signal": "TIM2_CH3",
+          "af": 1
+        }
+      ]
+    },
+    {
+      "name": "PA3",
+      "side": "left",
+      "functions": [
+        {
+          "signal": "ADC1_IN3"
+        },
+        {
+          "signal": "USART2_RX",
+          "af": 7
+        },
+        {
+          "signal": "TIM2_CH4",
+          "af": 1
+        }
+      ]
+    },
+    {
+      "name": "PA4",
+      "side": "left",
+      "functions": [
+        {
+          "signal": "ADC1_IN4"
+        }
+      ]
+    },
+    {
+      "name": "PA5",
+      "side": "left",
+      "functions": [
+        {
+          "signal": "ADC1_IN5"
+        },
+        {
+          "signal": "SPI1_SCK",
+          "af": 5
+        },
+        {
+          "signal": "TIM2_CH1",
+          "af": 1
+        }
+      ]
+    },
+    {
+      "name": "PA6",
+      "side": "left",
+      "functions": [
+        {
+          "signal": "ADC1_IN6"
+        },
+        {
+          "signal": "SPI1_MISO",
+          "af": 5
+        },
+        {
+          "signal": "TIM3_CH1",
+          "af": 2
+        }
+      ]
+    },
+    {
+      "name": "PA7",
+      "side": "left",
+      "functions": [
+        {
+          "signal": "ADC1_IN7"
+        },
+        {
+          "signal": "SPI1_MOSI",
+          "af": 5
+        },
+        {
+          "signal": "TIM3_CH2",
+          "af": 2
+        }
+      ]
+    },
+    {
+      "name": "PA8",
+      "side": "left",
+      "functions": [
+        {
+          "signal": "I2C3_SCL",
+          "af": 4
+        }
+      ]
+    },
+    {
+      "name": "PA9",
+      "side": "left",
+      "functions": [
+        {
+          "signal": "USART1_TX",
+          "af": 7
+        }
+      ]
+    },
+    {
+      "name": "PA10",
+      "side": "left",
+      "functions": [
+        {
+          "signal": "USART1_RX",
+          "af": 7
+        }
+      ]
+    },
+    {
+      "name": "PA11",
+      "side": "left",
+      "functions": [
+        {
+          "signal": "USART6_TX",
+          "af": 8
+        }
+      ],
+      "note": "USB D-"
+    },
+    {
+      "name": "PA12",
+      "side": "left",
+      "functions": [
+        {
+          "signal": "USART6_RX",
+          "af": 8
+        }
+      ],
+      "note": "USB D+"
+    },
+    {
+      "name": "PA13",
+      "side": "left",
+      "functions": [],
+      "reserved": "SWDIO"
+    },
+    {
+      "name": "PA14",
+      "side": "left",
+      "functions": [],
+      "reserved": "SWCLK"
+    },
+    {
+      "name": "PA15",
+      "side": "left",
+      "functions": [
+        {
+          "signal": "TIM2_CH1",
+          "af": 1
+        }
+      ]
+    },
+    {
+      "name": "PB0",
+      "side": "right",
+      "functions": [
+        {
+          "signal": "ADC1_IN8"
+        },
+        {
+          "signal": "TIM3_CH3",
+          "af": 2
+        }
+      ]
+    },
+    {
+      "name": "PB1",
+      "side": "right",
+      "functions": [
+        {
+          "signal": "ADC1_IN9"
+        },
+        {
+          "signal": "TIM3_CH4",
+          "af": 2
+        }
+      ]
+    },
+    {
+      "name": "PB2",
+      "side": "right",
+      "functions": [],
+      "note": "BOOT1"
+    },
+    {
+      "name": "PB3",
+      "side": "right",
+      "functions": [
+        {
+          "signal": "SPI1_SCK",
+          "af": 5
+        },
+        {
+          "signal": "I2C2_SDA",
+          "af": 9
+        },
+        {
+          "signal": "TIM2_CH2",
+          "af": 1
+        }
+      ],
+      "note": "SWO"
+    },
+    {
+      "name": "PB4",
+      "side": "right",
+      "functions": [
+        {
+          "signal": "SPI1_MISO",
+          "af": 5
+        },
+        {
+          "signal": "I2C3_SDA",
+          "af": 9
+        },
+        {
+          "signal": "TIM3_CH1",
+          "af": 2
+        }
+      ]
+    },
+    {
+      "name": "PB5",
+      "side": "right",
+      "functions": [
+        {
+          "signal": "SPI1_MOSI",
+          "af": 5
+        },
+        {
+          "signal": "TIM3_CH2",
+          "af": 2
+        }
+      ]
+    },
+    {
+      "name": "PB6",
+      "side": "right",
+      "functions": [
+        {
+          "signal": "I2C1_SCL",
+          "af": 4
+        },
+        {
+          "signal": "USART1_TX",
+          "af": 7
+        },
+        {
+          "signal": "TIM4_CH1",
+          "af": 2
+        }
+      ]
+    },
+    {
+      "name": "PB7",
+      "side": "right",
+      "functions": [
+        {
+          "signal": "I2C1_SDA",
+          "af": 4
+        },
+        {
+          "signal": "USART1_RX",
+          "af": 7
+        },
+        {
+          "signal": "TIM4_CH2",
+          "af": 2
+        }
+      ]
+    },
+    {
+      "name": "PB8",
+      "side": "right",
+      "functions": [
+        {
+          "signal": "I2C1_SCL",
+          "af": 4
+        },
+        {
+          "signal": "I2C3_SDA",
+          "af": 9
+        },
+        {
+          "signal": "TIM4_CH3",
+          "af": 2
+        }
+      ]
+    },
+    {
+      "name": "PB9",
+      "side": "right",
+      "functions": [
+        {
+          "signal": "I2C1_SDA",
+          "af": 4
+        },
+        {
+          "signal": "TIM4_CH4",
+          "af": 2
+        }
+      ]
+    },
+    {
+      "name": "PB10",
+      "side": "right",
+      "functions": [
+        {
+          "signal": "I2C2_SCL",
+          "af": 4
+        },
+        {
+          "signal": "SPI2_SCK",
+          "af": 5
+        },
+        {
+          "signal": "TIM2_CH3",
+          "af": 1
+        }
+      ]
+    },
+    {
+      "name": "PB12",
+      "side": "right",
+      "functions": []
+    },
+    {
+      "name": "PB13",
+      "side": "right",
+      "functions": [
+        {
+          "signal": "SPI2_SCK",
+          "af": 5
+        }
+      ]
+    },
+    {
+      "name": "PB14",
+      "side": "right",
+      "functions": [
+        {
+          "signal": "SPI2_MISO",
+          "af": 5
+        }
+      ]
+    },
+    {
+      "name": "PB15",
+      "side": "right",
+      "functions": [
+        {
+          "signal": "SPI2_MOSI",
+          "af": 5
+        }
+      ]
+    },
+    {
+      "name": "PC13",
+      "side": "right",
+      "functions": [],
+      "note": "Kart LED'i (aktif düşük)"
+    },
+    {
+      "name": "PC14",
+      "side": "right",
+      "functions": [],
+      "reserved": "LSE OSC32_IN"
+    },
+    {
+      "name": "PC15",
+      "side": "right",
+      "functions": [],
+      "reserved": "LSE OSC32_OUT"
+    }
+  ],
+  "datasheet": "https://www.st.com/resource/en/datasheet/stm32f411ce.pdf",
+  "referenceManual": "https://www.st.com/resource/en/reference_manual/rm0383-stm32f411xce-advanced-armbased-32bit-mcus-stmicroelectronics.pdf",
+  "svdUrl": "https://raw.githubusercontent.com/cmsis-svd/cmsis-svd-data/main/data/STMicro/STM32F411.svd",
+  "device": {
+    "define": "STM32F411xE",
+    "cmsisHeader": "stm32f4xx.h",
+    "startup": "startup_stm32f411xe.s",
+    "flashKB": 512,
+    "ramKB": 128,
+    "openocdTarget": "target/stm32f4x.cfg",
+    "family": "f4"
+  },
+  "clock": {
+    "hsiMHz": 16,
+    "hseMHz": 25,
+    "hseRange": [
+      4,
+      26
+    ],
+    "limits": {
+      "sysclk": 100,
+      "hclk": 100,
+      "apb1": 50,
+      "apb2": 100,
+      "vcoIn": [
+        0.95,
+        2.1
+      ],
+      "vcoOut": [
+        100,
+        432
+      ],
+      "pll48": 48
+    },
+    "pllM": [
+      2,
+      63
+    ],
+    "pllN": [
+      50,
+      432
+    ],
+    "pllP": [
+      2,
+      4,
+      6,
+      8
+    ],
+    "pllQ": [
+      2,
+      15
+    ],
+    "ahb": [
+      1,
+      2,
+      4,
+      8,
+      16,
+      64,
+      128,
+      256,
+      512
+    ],
+    "apb": [
+      1,
+      2,
+      4,
+      8,
+      16
+    ],
+    "flashLatency": [
+      [
+        30,
+        0
+      ],
+      [
+        64,
+        1
+      ],
+      [
+        90,
+        2
+      ],
+      [
+        100,
+        3
+      ]
+    ],
+    "default": {
+      "pllSource": "HSE",
+      "sysclkSource": "PLL",
+      "hseMHz": 25,
+      "M": 25,
+      "N": 200,
+      "P": 2,
+      "Q": 4,
+      "ahb": 1,
+      "apb1": 2,
+      "apb2": 1
+    }
+  }
+}

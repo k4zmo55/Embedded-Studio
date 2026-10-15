@@ -1,0 +1,55 @@
+{
+  "id": "led",
+  "name": "LED",
+  "category": "Temel",
+  "description": "Durum LED'i (seri direnç ile, ~330 Ω).",
+  "keywords": [
+    "led",
+    "ışık",
+    "isik",
+    "gösterge",
+    "durum",
+    "blink"
+  ],
+  "interface": "gpio",
+  "voltage": {
+    "min": 1.8,
+    "max": 5
+  },
+  "sampleMs": 500,
+  "pins": [
+    {
+      "name": "A",
+      "role": "gpio.out"
+    },
+    {
+      "name": "K",
+      "role": "ground"
+    }
+  ],
+  "telemetry": [
+    {
+      "id": "state",
+      "unit": "",
+      "sim": {
+        "base": 0.5,
+        "amp": 0.5,
+        "periodS": 1,
+        "noise": 0,
+        "square": true
+      }
+    }
+  ],
+  "art": {
+    "shape": "led",
+    "color": "#ef4444"
+  },
+  "monitor": [
+    {
+      "type": "lamp",
+      "channels": [
+        "state"
+      ]
+    }
+  ]
+}

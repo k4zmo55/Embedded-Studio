@@ -1,0 +1,122 @@
+{
+  "id": "bme280",
+  "name": "BME280",
+  "category": "Sensör",
+  "description": "Sıcaklık, nem ve basınç sensörü (Bosch).",
+  "keywords": [
+    "sıcaklık",
+    "sicaklik",
+    "nem",
+    "basınç",
+    "basinc",
+    "hava",
+    "temperature",
+    "humidity",
+    "pressure",
+    "weather"
+  ],
+  "interface": "i2c",
+  "voltage": {
+    "min": 1.71,
+    "max": 3.6
+  },
+  "i2c": {
+    "address": "0x76",
+    "altAddresses": [
+      "0x77"
+    ],
+    "maxSpeedHz": 400000,
+    "onboardPullups": true
+  },
+  "sampleMs": 1000,
+  "pins": [
+    {
+      "name": "VCC",
+      "role": "power"
+    },
+    {
+      "name": "GND",
+      "role": "ground"
+    },
+    {
+      "name": "SCL",
+      "role": "i2c.SCL"
+    },
+    {
+      "name": "SDA",
+      "role": "i2c.SDA"
+    }
+  ],
+  "telemetry": [
+    {
+      "id": "temp",
+      "unit": "°C",
+      "sim": {
+        "base": 24,
+        "amp": 1.5,
+        "periodS": 30,
+        "noise": 0.05
+      }
+    },
+    {
+      "id": "hum",
+      "unit": "%",
+      "sim": {
+        "base": 45,
+        "amp": 5,
+        "periodS": 50,
+        "noise": 0.3
+      }
+    },
+    {
+      "id": "press",
+      "unit": "hPa",
+      "sim": {
+        "base": 1013,
+        "amp": 2,
+        "periodS": 80,
+        "noise": 0.1
+      }
+    }
+  ],
+  "datasheet": "https://www.bosch-sensortec.com/media/boschsensortec/downloads/datasheets/bst-bme280-ds002.pdf",
+  "art": {
+    "board": "#6a2c91",
+    "chip": "BME280",
+    "chipShape": "metal-lid"
+  },
+  "monitor": [
+    {
+      "type": "thermo",
+      "channels": [
+        "temp"
+      ],
+      "min": -10,
+      "max": 50
+    },
+    {
+      "type": "gauge",
+      "channels": [
+        "hum"
+      ],
+      "min": 0,
+      "max": 100
+    },
+    {
+      "type": "gauge",
+      "channels": [
+        "press"
+      ],
+      "min": 950,
+      "max": 1060
+    },
+    {
+      "type": "chart",
+      "channels": [
+        "temp",
+        "hum"
+      ],
+      "size": "m"
+    }
+  ]
+}

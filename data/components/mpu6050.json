@@ -1,0 +1,127 @@
+{
+  "id": "mpu6050",
+  "name": "MPU-6050",
+  "category": "Sensör",
+  "description": "6 eksen IMU: 3 eksen ivmeölçer + 3 eksen jiroskop.",
+  "keywords": [
+    "ivme",
+    "jiroskop",
+    "gyro",
+    "imu",
+    "eğim",
+    "egim",
+    "hareket",
+    "accelerometer",
+    "motion",
+    "titreşim"
+  ],
+  "interface": "i2c",
+  "voltage": {
+    "min": 2.375,
+    "max": 3.46
+  },
+  "i2c": {
+    "address": "0x68",
+    "altAddresses": [
+      "0x69"
+    ],
+    "maxSpeedHz": 400000,
+    "onboardPullups": true
+  },
+  "sampleMs": 100,
+  "pins": [
+    {
+      "name": "VCC",
+      "role": "power"
+    },
+    {
+      "name": "GND",
+      "role": "ground"
+    },
+    {
+      "name": "SCL",
+      "role": "i2c.SCL"
+    },
+    {
+      "name": "SDA",
+      "role": "i2c.SDA"
+    },
+    {
+      "name": "INT",
+      "role": "gpio.in"
+    }
+  ],
+  "telemetry": [
+    {
+      "id": "ax",
+      "unit": "g",
+      "sim": {
+        "kind": "imu"
+      }
+    },
+    {
+      "id": "ay",
+      "unit": "g",
+      "sim": {
+        "kind": "imu"
+      }
+    },
+    {
+      "id": "az",
+      "unit": "g",
+      "sim": {
+        "kind": "imu"
+      }
+    },
+    {
+      "id": "gx",
+      "unit": "°/s",
+      "sim": {
+        "kind": "imu"
+      }
+    },
+    {
+      "id": "gy",
+      "unit": "°/s",
+      "sim": {
+        "kind": "imu"
+      }
+    },
+    {
+      "id": "gz",
+      "unit": "°/s",
+      "sim": {
+        "kind": "imu"
+      }
+    }
+  ],
+  "datasheet": "https://cdn.sparkfun.com/datasheets/Components/General%20IC/PS-MPU-6000A.pdf",
+  "art": {
+    "board": "#1d4f91",
+    "chip": "MPU-6050",
+    "chipShape": "qfn"
+  },
+  "monitor": [
+    {
+      "type": "imu",
+      "channels": [
+        "ax",
+        "ay",
+        "az",
+        "gx",
+        "gy",
+        "gz"
+      ],
+      "size": "l"
+    },
+    {
+      "type": "chart",
+      "channels": [
+        "ax",
+        "ay",
+        "az"
+      ],
+      "size": "m"
+    }
+  ]
+}

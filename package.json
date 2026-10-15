@@ -1,0 +1,59 @@
+{
+  "name": "embedded-studio",
+  "displayName": "Embedded Studio",
+  "description": "STM32 için görsel gömülü sistem tasarımı: komponent seçimi, otomatik pin/saat ataması, HAL veya bare-metal + FreeRTOS kod üretimi, canlı monitör ve debug.",
+  "version": "0.2.0",
+  "publisher": "mhmtakfseckin",
+  "license": "MIT",
+  "preview": true,
+  "icon": "media/icon.png",
+  "galleryBanner": {
+    "color": "#16324f",
+    "theme": "dark"
+  },
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Programming Languages",
+    "Debuggers",
+    "Visualization",
+    "Other"
+  ],
+  "keywords": [
+    "stm32",
+    "embedded",
+    "firmware",
+    "freertos",
+    "cubemx",
+    "pinout",
+    "kicad",
+    "hal",
+    "openocd",
+    "st-link"
+  ],
+  "main": "./src/extension.js",
+  "activationEvents": [
+    "workspaceContains:embedded-studio.json"
+  ],
+  "contributes": {
+    "commands": [
+      {
+        "command": "embeddedStudio.openDesigner",
+        "title": "Tasarımcıyı Aç",
+        "category": "Embedded Studio",
+        "icon": "$(circuit-board)"
+      },
+      {
+        "command": "embeddedStudio.newProject",
+        "title": "Yeni Proje",
+        "category": "Embedded Studio"
+      },
+      {
+        "command": "embeddedStudio.generateCode",
+        "title": "Kod Üret",
+        "category": "Embedded Studio"
+      }
+    ]
+  }
+}

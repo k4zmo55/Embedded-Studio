@@ -1,0 +1,61 @@
+{
+  "id": "w25q32",
+  "name": "W25Q32 SPI Flash",
+  "category": "Hafıza",
+  "description": "32 Mbit (4 MB) SPI NOR flash.",
+  "keywords": [
+    "flash",
+    "hafıza",
+    "hafiza",
+    "bellek",
+    "kayıt",
+    "kayit",
+    "log",
+    "memory",
+    "storage"
+  ],
+  "interface": "spi",
+  "voltage": {
+    "min": 2.7,
+    "max": 3.6
+  },
+  "spi": {
+    "maxSpeedHz": 50000000,
+    "mode": 0
+  },
+  "sampleMs": 0,
+  "pins": [
+    {
+      "name": "VCC",
+      "role": "power"
+    },
+    {
+      "name": "GND",
+      "role": "ground"
+    },
+    {
+      "name": "CLK",
+      "role": "spi.SCK"
+    },
+    {
+      "name": "DO",
+      "role": "spi.MISO"
+    },
+    {
+      "name": "DI",
+      "role": "spi.MOSI"
+    },
+    {
+      "name": "CS",
+      "role": "spi.CS"
+    }
+  ],
+  "telemetry": [],
+  "datasheet": "https://www.winbond.com/resource-files/w25q32jv%20revg%2003272018%20plus.pdf",
+  "art": {
+    "board": "#2a2a2a",
+    "chip": "W25Q32",
+    "chipShape": "soic"
+  },
+  "monitor": []
+}

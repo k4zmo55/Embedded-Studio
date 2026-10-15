@@ -1,0 +1,59 @@
+{
+  "id": "potentiometer",
+  "name": "Potansiyometre 10k",
+  "category": "Temel",
+  "description": "Analog giriş (gerilim bölücü).",
+  "keywords": [
+    "potansiyometre",
+    "pot",
+    "analog",
+    "ayar",
+    "adc",
+    "knob"
+  ],
+  "interface": "adc",
+  "voltage": {
+    "min": 0,
+    "max": 5
+  },
+  "sampleMs": 100,
+  "pins": [
+    {
+      "name": "VCC",
+      "role": "power"
+    },
+    {
+      "name": "W",
+      "role": "adc"
+    },
+    {
+      "name": "GND",
+      "role": "ground"
+    }
+  ],
+  "telemetry": [
+    {
+      "id": "raw",
+      "unit": "",
+      "sim": {
+        "base": 2048,
+        "amp": 1500,
+        "periodS": 15,
+        "noise": 8
+      }
+    }
+  ],
+  "art": {
+    "shape": "pot"
+  },
+  "monitor": [
+    {
+      "type": "gauge",
+      "channels": [
+        "raw"
+      ],
+      "min": 0,
+      "max": 4095
+    }
+  ]
+}
