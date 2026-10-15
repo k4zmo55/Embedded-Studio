@@ -799,4 +799,42 @@ ${user('Handlers')}
 `;
 }
 
-module.exports = { makeContext, boardHeader, bspHeader, halBspSource, halBoardSource, regBspSource, regBoardSource, itSource, cIdent, handleOf, indent };
+/**
+ * Profesyonel bare-metal: tasarıma bağlı kesmeler (SysTick, UART, RTOS'a göre SVC/PendSV) üretilen bu dosyada durur;
+ * kullanıcıya ait stm32f4xx_it.c (faultStarter) sadece hata işleyicilerini içerir ve bir daha yazılmaz.
+ */
+function irqSource(x, design, stamp) {
+  const uartIrqs = x.buses.uart.map((p) => `void ${p}_IRQHandler(void)\n{\n  bsp_uart_irq(${x.busId(p)});\n}`);
+  return `${stamp}#include "bsp.h"
+${design.rtos ? '#include "FreeRTOS.h"\n#include "task.h"\n\nextern void xPortSysTickHandler(void);\n' : ''}extern volatile uint32_t bsp_ticks;
+
+/* Kendi 1 ms işinizi eklemek için bu weak fonksiyonu kendi dosyanızda tanımlayın. */
+__attribute__((weak)) void bsp_systick_hook(void) {}
+
+void SysTick_Handler(void)
+{
+  bsp_ticks++;
+${design.rtos ? '  if (xTaskGetSchedulerState() != taskSCHEDULER_NOT_STARTED) {\n    xPortSysTickHandler();\n  }\n' : ''}  bsp_systick_hook();
+}
+${design.rtos ? '\n/* SVC_Handler ve PendSV_Handler FreeRTOSConfig.h içinde port fonksiyonlarına yönlendirildi. */\n' : '\nvoid SVC_Handler(void) {}\nvoid PendSV_Handler(void) {}\n'}
+${uartIrqs.join('\n\n')}
+`;
+}
+
+/** Profesyonel bare-metal: hata işleyicileri. Kendi kesmelerinizi Handlers bloğuna yazın; SysTick/UART bsp_irq.c'de. */
+function faultStarter(stamp, user) {
+  return `${stamp}#include "bsp.h"
+${user('Includes')}
+
+void NMI_Handler(void) { while (1) {} }
+void HardFault_Handler(void) { while (1) {} }
+void MemManage_Handler(void) { while (1) {} }
+void BusFault_Handler(void) { while (1) {} }
+void UsageFault_Handler(void) { while (1) {} }
+void DebugMon_Handler(void) {}
+
+${user('Handlers')}
+`;
+}
+
+module.exports = { makeContext, boardHeader, bspHeader, halBspSource, halBoardSource, regBspSource, regBoardSource, itSource, irqSource, faultStarter, cIdent, handleOf, indent };

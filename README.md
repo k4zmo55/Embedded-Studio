@@ -135,6 +135,8 @@ Klasör yapısı kod altyapısına göre değişir:
 Her iki yapıda da: `CMakeLists.txt` (arm-none-eabi-gcc + Ninja), yapay zekâ ajanları için `AGENTS.md` / `CLAUDE.md` ve son tasarım değişikliğini anlatan `.embedded-studio/LAST_CHANGES.md`.
 Altyapıyı Ayarlar sekmesinden değiştirirseniz bir sonraki "Kod Üret"te kendi dosyalarınız ve USER CODE bloklarınız yeni klasörlere taşınır.
 
+**Profesyonel modda bare-metal:** `main.c` bir kez oluşturulur ve sizindir, `app.c` üretilmez. "Kod Üret" sadece sürücüleri, BSP'yi, init ve kesme dosyalarını yazar; önce bir önizleme gösterir (dosya bazında fark görünümü) ve elle değiştirdiğiniz üretilmiş dosyanın üzerine yazmaz (yeni hali `.new`). Her sürücü başlığında bu projeye göre bir kullanım örneği vardır.
+
 - Tasarım değişmediyse **hiçbir dosyaya dokunulmaz**.
 - Bir sensörü çıkarırsanız sürücüsü kaldırılır ama **ona yazdığınız kod silinmez**; dosyanın sonunda `#if 0` bloğunda durur.
 - Üretilen kod her push'ta Linux'ta **ARM GCC ile dört varyantta** (HAL / register × RTOS / RTOS'suz) `-Wall -Wextra` altında derlenir.

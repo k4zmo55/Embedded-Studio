@@ -559,3 +559,8 @@ body.mode-pro .comp-card { width: 300px; }
 body.mode-pro .wizard-card { padding: 12px 16px; }
 body.mode-pro .settings { gap: 10px; padding-top: 14px; }
 body.mode-pro .note { padding: 3px 8px; }
+
+/* ---- Kod Üret önizlemesi ---- */
+.gen-preview { display: flex; flex-direction: column; gap: 8px; max-height: 60vh; overflow-y: auto; }
+.gen-preview button.link { display: block; background: none; border: none; padding: 1px 0; color: var(--info); text-align: left; cursor: pointer; font-size: 12px; }
+.gen-preview button.link:hover { text-decoration: underline; }

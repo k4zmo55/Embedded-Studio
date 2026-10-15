@@ -18,14 +18,15 @@ const ids = ['usb_uart', 'bme280', 'mpu6050', 'ssd1306', 'w25q32', 'neo6m', 'led
 
 (async () => {
   await packs.ensurePacks(cache, ['core', 'device', 'hal', 'freertos'], (m) => console.log('  ' + m));
-  const variants = [['hal', true], ['hal', false], ['register', true], ['register', false]];
+  // [altyapı, RTOS, mod]: Profesyonel bare-metal'de main.c/app.c kullanıcının (araç sadece başlangıç main.c'si yazar)
+  const variants = [['hal', true], ['hal', false], ['register', true], ['register', false], ['register', true, 'pro'], ['register', false, 'pro']];
   let failed = 0;
-  for (const [framework, rtos] of variants) {
-    const name = `t_${framework}_${rtos ? 'rtos' : 'bare'}`;
+  for (const [framework, rtos, mode = 'beginner'] of variants) {
+    const name = `t_${framework}_${rtos ? 'rtos' : 'bare'}${mode === 'pro' ? '_pro' : ''}`;
     const root = path.join(outRoot, name);
     fs.rmSync(root, { recursive: true, force: true });
     const design = {
-      mcuId: 'stm32f411ceu6', framework, rtos, project: { name },
+      mcuId: 'stm32f411ceu6', framework, rtos, mode, project: { name },
       instances: ids.map((c, i) => ({ id: 'i' + i, componentId: c, label: `${c.toUpperCase()}_1` })), locks: {}
     };
     const mcu = lib.mcus[design.mcuId];

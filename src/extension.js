@@ -19,6 +19,7 @@ const i18n = require('./i18n');
 const { t } = i18n;
 
 const DESIGN_FILE = 'embedded-studio.json';
+const PREVIEW_SCHEME = 'embedded-studio-preview';
 
 /** @param {vscode.ExtensionContext} context */
 function activate(context) {
@@ -33,6 +34,13 @@ function activate(context) {
     vscode.commands.registerCommand('embeddedStudio.newProject', async () => (await Studio.show(context)).post({ type: 'welcome', ...welcomeInfo(context) })),
     vscode.commands.registerCommand('embeddedStudio.generateCode', async () => (await Studio.show(context)).generateCode())
   );
+
+  // Kod Üret önizlemesinde "yazılacak içerik" bu şemayla açılır (vscode.diff'in sağ tarafı)
+  if (vscode.workspace.registerTextDocumentContentProvider) {
+    context.subscriptions.push(vscode.workspace.registerTextDocumentContentProvider(PREVIEW_SCHEME, {
+      provideTextDocumentContent: (uri) => (Studio.current?.preview?.contents || {})[uri.path.replace(/^\//, '')] ?? ''
+    }));
+  }
 
   const status = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 100);
   status.text = '$(circuit-board) Embedded Studio';
@@ -225,6 +233,12 @@ class Studio {
       }
       case 'generate':
         await this.generateCode();
+        break;
+      case 'generate.apply':
+        await this.generateCode({ confirmed: true });
+        break;
+      case 'gen.diff':
+        await this.openPreviewDiff(m.path);
         break;
       case 'settings.preview':
         this.post({ type: 'settings.preview', seq: m.seq, ...this.previewSettings(m.settings) });
@@ -429,7 +443,12 @@ class Studio {
   }
 
   // ------------------------------------------------------------------ kod üretimi
-  async generateCode() {
+  /**
+   * Kod üretimi. Profesyonel modda önce önizleme (gen.preview): eklenecek/güncellenecek/kaldırılacak dosyalar ve
+   * kullanıcının değiştirdiği üretilmiş dosyalar; kullanıcı onaylayınca (generate.apply) yazılır.
+   * @param {{ confirmed?: boolean }} [opts]
+   */
+  async generateCode(opts = {}) {
     if (!this.design) return;
     if (!this.root) return this.toast('error', t('Kod üretmek için bir proje klasörü açın.'));
     const { result, clock } = this.compute();
@@ -454,9 +473,23 @@ class Studio {
       instances: this.design.instances.map((i) => ({ id: i.id, label: i.label, componentId: i.componentId, name: this.lib.components[i.componentId]?.name })),
       connections: result.connections.map((c) => ({ instId: c.instId, compPin: c.compPin, mcuPin: c.mcuPin, signal: c.signal, label: label(c.instId) }))
     };
+    const pro = this.design.mode === 'pro';
+    const info = { fingerprint: designFingerprint(this.design, GENERATOR_VERSION), snapshot, protect: pro };
+    if (pro && !opts.confirmed) {
+      const preview = writeProject(this.root, gen, { ...info, dryRun: true });
+      if (preview.upToDate) {
+        vscode.window.showInformationMessage(t('Kod güncel: tasarımda değişiklik yok, hiçbir dosyaya dokunulmadı.'));
+        return;
+      }
+      this.preview = preview;
+      const { contents, ...rest } = preview;
+      this.post({ type: 'gen.preview', report: rest, owned: this.design.framework === 'register' });
+      return;
+    }
+    this.preview = null;
     // Klasör yapısı değiştiyse (HAL ↔ bare-metal) kullanıcı dosyalarını yeni yerlerine taşı
     const moved = relocateLayout(this.root, this.design.framework, gen.files);
-    const report = writeProject(this.root, gen, { fingerprint: designFingerprint(this.design, GENERATOR_VERSION), snapshot });
+    const report = writeProject(this.root, gen, info);
     if (moved.length) {
       const old = moved[0].from.split('/')[0];
       removeEmptyDirs(this.root, ['Core/Inc', 'Core/Src', 'Drivers/Components', 'inc', 'src', 'drivers']);
@@ -471,14 +504,26 @@ class Studio {
       report.added.length && t('{0} yeni', report.added.length),
       report.updated.length && t('{0} güncellendi', report.updated.length),
       report.removed.length && t('{0} kaldırıldı', report.removed.length),
-      report.preserved.length && t('{0} taşındı', report.preserved.length)
+      report.preserved.length && t('{0} taşındı', report.preserved.length),
+      report.conflicts.length && t('{0} korundu (.new)', report.conflicts.length)
     ].filter(Boolean).join(', ') || t('dosya içerikleri aynı');
     const warn = report.orphans.length ? ' ' + t('Kaldırılan sensörlere ait kodunuz korunup dosya sonuna taşındı.') : '';
-    const choice = await vscode.window.showInformationMessage(t('Kod üretildi: {0}.', parts) + warn, t('Değişiklikler'), 'app.c');
+    const appFile = `${layout(this.design.framework).src}/${pro && this.design.framework === 'register' ? 'main.c' : 'app.c'}`;
+    const choice = await vscode.window.showInformationMessage(t('Kod üretildi: {0}.', parts) + warn, t('Değişiklikler'), path.basename(appFile));
     if (choice) {
-      const target = choice === 'app.c' ? `${layout(this.design.framework).src}/app.c` : `${STATE_DIR}/LAST_CHANGES.md`;
+      const target = choice === t('Değişiklikler') ? `${STATE_DIR}/LAST_CHANGES.md` : appFile;
       await vscode.window.showTextDocument(vscode.Uri.file(path.join(this.root, target)));
     }
+  }
+
+  /** Önizlemedeki bir dosya için VS Code fark görünümü: soldaki diskteki hali, sağdaki yazılacak hali. */
+  async openPreviewDiff(rel) {
+    if (!this.preview || !(rel in this.preview.contents) || !this.root) return;
+    const right = vscode.Uri.parse(`${PREVIEW_SCHEME}:/${rel}`);
+    const target = rel.endsWith('.new') ? rel.slice(0, -4) : rel;
+    const abs = path.join(this.root, target);
+    if (fs.existsSync(abs)) await vscode.commands.executeCommand('vscode.diff', vscode.Uri.file(abs), right, t('{0} (mevcut ↔ üretilecek)', target));
+    else await vscode.window.showTextDocument(right, { preview: true });
   }
 
   // ------------------------------------------------------------------ kütüphane
@@ -719,7 +764,7 @@ class Studio {
     const webview = this.panel.webview;
     const media = (f) => webview.asWebviewUri(vscode.Uri.joinPath(this.context.extensionUri, 'media', f));
     const nonce = [...Array(32)].map(() => Math.random().toString(36)[2]).join('');
-    const scripts = ['i18n.js', 'core.js', 'art.js', 'wizard.js', 'design.js', 'creator.js', 'clock.js', 'widgets.js', 'monitor.js', 'debug.js', 'settings.js', 'main.js'];
+    const scripts = ['i18n.js', 'core.js', 'art.js', 'wizard.js', 'design.js', 'creator.js', 'clock.js', 'widgets.js', 'monitor.js', 'debug.js', 'settings.js', 'genpreview.js', 'main.js'];
     return `<!doctype html>
 <html lang="${i18n.getLanguage()}">
 <head>

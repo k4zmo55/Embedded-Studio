@@ -170,6 +170,63 @@ test('altyapı değişince kullanıcı dosyaları ve USER CODE yeni klasöre ta�
   fs.rmSync(dir, { recursive: true, force: true });
 });
 
+test('profesyonel bare-metal: app.c yok, main.c başlangıç, kesmeler bsp_irq.c, sürücüde kullanım örneği', () => {
+  const d = design([inst('usb_uart'), inst('bme280'), inst('neo6m')], { framework: 'register', mode: 'pro' });
+  const files = generate(d, lib, assign(d, lib), computeClock(mcu, d.clock), {}).files;
+  const kind = (p) => (files.find((f) => f.path === p) || {}).kind;
+  assert.ok(!kind('src/app.c') && !kind('inc/app.h'), 'app.c/app.h üretilmemeli');
+  assert.strictEqual(kind('src/main.c'), 'once');
+  assert.strictEqual(kind('src/bsp_irq.c'), 'generated');
+  const irq = files.find((f) => f.path === 'src/bsp_irq.c').content;
+  assert.ok(/void SysTick_Handler/.test(irq) && /USART\d_IRQHandler/.test(irq));
+  assert.ok(!/SysTick_Handler/.test(files.find((f) => f.path === 'src/stm32f4xx_it.c').content), 'SysTick iki yerde olmamalı');
+  const h = files.find((f) => f.path === 'drivers/bme280.h').content;
+  assert.ok(h.startsWith('// Kullanım örneği (bu projedeki BME280_1'), h.slice(0, 80));
+  assert.ok(/bme280_init\(&bme280_1, BSP_I2C\d/.test(h), 'gerçek bus ile örnek');
+  // HAL ve acemi bare-metal değişmedi
+  const beg = generate({ ...d, mode: 'beginner' }, lib, assign(d, lib), computeClock(mcu, d.clock), {}).files.map((f) => f.path);
+  assert.ok(beg.includes('src/app.c') && !beg.includes('src/bsp_irq.c'));
+});
+test('profesyonel: önizleme diske yazmaz; elle değiştirilen üretilmiş dosya korunur (.new); main.c\'ye dokunulmaz', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'es-pro-'));
+  const run = (d, extra = {}) => writeProject(dir, generate(d, lib, assign(d, lib), computeClock(mcu, d.clock), {}),
+    { fingerprint: designFingerprint(d, GENERATOR_VERSION), snapshot: { instances: [], connections: [] }, protect: true, ...extra });
+  const d = design([inst('usb_uart'), inst('bme280')], { framework: 'register', mode: 'pro' });
+  const dry = run(d, { dryRun: true });
+  assert.ok(dry.added.includes('src/main.c') && dry.contents['src/main.c'], 'önizleme içerik verir');
+  assert.ok(!fs.existsSync(path.join(dir, 'src')), 'önizleme diske yazmamalı');
+  run(d);
+  const main = path.join(dir, 'src/main.c'), bspC = path.join(dir, 'src/bsp.c');
+  fs.writeFileSync(main, '/* benim main.c */\nint main(void) { for (;;) {} }\n');
+  fs.appendFileSync(bspC, '\n/* elle yama */\n');
+  const d2 = design([inst('usb_uart'), inst('bme280'), inst('mpu6050')], { framework: 'register', mode: 'pro' });
+  const preview = run(d2, { dryRun: true });
+  assert.ok(preview.conflicts.includes('src/bsp.c'), JSON.stringify(preview.conflicts));
+  assert.ok(!fs.existsSync(bspC + '.new'), 'önizlemede .new yazılmamalı');
+  const rep = run(d2);
+  assert.deepStrictEqual(rep.conflicts, ['src/bsp.c']);
+  assert.ok(fs.readFileSync(bspC, 'utf8').includes('/* elle yama */'), 'yama korunmalı');
+  assert.ok(fs.existsSync(bspC + '.new'), 'yeni hali .new olarak');
+  assert.strictEqual(fs.readFileSync(main, 'utf8'), '/* benim main.c */\nint main(void) { for (;;) {} }\n', 'main.c dokunulmamalı');
+  assert.ok(fs.existsSync(path.join(dir, 'drivers/mpu6050.c')), 'yeni sürücü eklenmeli');
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+test('acemi → profesyonel geçişi: app.c silinmez, eski kesme kodu çakışmaz', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'es-mode-'));
+  const run = (d) => writeProject(dir, generate(d, lib, assign(d, lib), computeClock(mcu, d.clock), {}),
+    { fingerprint: designFingerprint(d, GENERATOR_VERSION), snapshot: { instances: [], connections: [] }, protect: d.mode === 'pro' });
+  const beg = design([inst('usb_uart'), inst('bme280')], { framework: 'register' });
+  run(beg);
+  const it = path.join(dir, 'src/stm32f4xx_it.c');
+  fs.writeFileSync(it, fs.readFileSync(it, 'utf8').replace('/* USER CODE BEGIN Handlers */\n', '/* USER CODE BEGIN Handlers */\nvoid EXTI0_IRQHandler(void) {}\n'));
+  run({ ...beg, mode: 'pro' });
+  assert.ok(fs.existsSync(path.join(dir, 'src/app.c')), 'app.c kullanıcıda kalmalı');
+  const itText = fs.readFileSync(it, 'utf8');
+  assert.ok(!/^void SysTick_Handler/m.test(itText), 'SysTick artık bsp_irq.c\'de');
+  assert.ok(itText.includes('void EXTI0_IRQHandler(void) {}'), 'kullanıcının kesmesi korunmalı');
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
 console.log('Kütüphane, telemetri, debug');
 test('tüm hazır komponentler doğrulamadan geçer', () => {
   for (const c of Object.values(lib.components)) assert.deepStrictEqual(validateComponent(c), [], c.id);

@@ -70,6 +70,7 @@ function designFingerprint(design, generatorVersion) {
     mcuId: design.mcuId,
     framework: design.framework,
     rtos: !!design.rtos,
+    owned: design.framework === 'register' && design.mode === 'pro', // profesyonel bare-metal farklı dosyalar üretir
     project: design.project && design.project.name,
     clock: design.clock || null,
     instances: design.instances.map((i) => ({ id: i.id, c: i.componentId, l: i.label, o: i.options || null })),
@@ -102,13 +103,20 @@ function diffSnapshots(prev, next) {
 /**
  * @param {string} root proje kök klasörü
  * @param {{ files: { path: string, content: string, kind: string }[] }} gen generator çıktısı
- * @param {{ fingerprint: string, snapshot: any, force?: boolean }} info
+ * @param {{ fingerprint: string, snapshot: any, force?: boolean, dryRun?: boolean, protect?: boolean }} info
+ *   dryRun: diske yazmadan raporu ve yazılacak içerikleri (report.contents) döndürür (önizleme için).
+ *   protect: kullanıcının elle değiştirdiği üretilmiş dosyanın üzerine yazılmaz; yeni hali <dosya>.new olarak bırakılır.
  */
 function writeProject(root, gen, info) {
   const stateDir = path.join(root, STATE_DIR);
   const manifestPath = path.join(stateDir, 'manifest.json');
   const manifest = readJson(manifestPath) || { files: {} };
-  const report = { upToDate: false, added: [], updated: [], unchanged: [], removed: [], preserved: [], orphans: [], changes: [] };
+  const report = { upToDate: false, added: [], updated: [], unchanged: [], removed: [], preserved: [], conflicts: [], orphans: [], changes: [], contents: {} };
+  const dry = !!info.dryRun;
+  const put = (rel, content) => {
+    report.contents[rel] = content;
+    if (!dry) write(path.join(root, rel), content);
+  };
 
   const allPresent = gen.files.every((f) => fs.existsSync(path.join(root, f.path)));
   if (!info.force && manifest.fingerprint === info.fingerprint && allPresent) {
@@ -123,7 +131,7 @@ function writeProject(root, gen, info) {
     let content = f.content;
     if (f.kind === 'once') {
       if (!exists) {
-        write(abs, content);
+        put(f.path, content);
         report.added.push(f.path);
       }
       continue;
@@ -135,13 +143,21 @@ function writeProject(root, gen, info) {
     }
     newManifest.files[f.path] = sha1(content);
     if (!exists) {
-      write(abs, content);
+      put(f.path, content);
       report.added.push(f.path);
-    } else if (fs.readFileSync(abs, 'utf8') !== content) {
-      write(abs, content);
-      report.updated.push(f.path);
-    } else {
+      continue;
+    }
+    const current = fs.readFileSync(abs, 'utf8');
+    if (current === content) {
       report.unchanged.push(f.path);
+    } else if (info.protect && f.kind === 'generated' && manifest.files[f.path] && sha1(current) !== manifest.files[f.path]) {
+      // Kullanıcı bu üretilmiş dosyayı değiştirmiş: üzerine yazma, yeni hali yanına koy; kayıtta eski özet kalsın ki tekrar algılansın
+      put(`${f.path}.new`, content);
+      newManifest.files[f.path] = manifest.files[f.path];
+      report.conflicts.push(f.path);
+    } else {
+      put(f.path, content);
+      report.updated.push(f.path);
     }
   }
 
@@ -150,18 +166,25 @@ function writeProject(root, gen, info) {
     if (newManifest.files[rel]) continue;
     const abs = path.join(root, rel);
     if (!fs.existsSync(abs)) continue;
-    if (sha1(fs.readFileSync(abs, 'utf8')) === hash) {
-      fs.unlinkSync(abs);
+    const text = fs.readFileSync(abs, 'utf8');
+    // Profesyonel modda artık üretilmeyen kullanıcı dosyaları (USER CODE içeren app.c gibi) kullanıcınındır: dokunma
+    if (info.protect && text.includes('USER CODE BEGIN')) continue;
+    if (sha1(text) === hash) {
+      if (!dry) fs.unlinkSync(abs);
       report.removed.push(rel);
     } else {
-      const dest = path.join(stateDir, 'removed', rel);
-      fs.mkdirSync(path.dirname(dest), { recursive: true });
-      fs.renameSync(abs, dest);
+      if (!dry) {
+        const dest = path.join(stateDir, 'removed', rel);
+        fs.mkdirSync(path.dirname(dest), { recursive: true });
+        fs.renameSync(abs, dest);
+      }
       report.preserved.push(rel);
     }
   }
 
   report.changes = diffSnapshots(manifest.snapshot, info.snapshot);
+  if (dry) return report;
+  report.contents = {};
   fs.mkdirSync(stateDir, { recursive: true });
   fs.writeFileSync(manifestPath, JSON.stringify(newManifest, null, 2) + '\n');
   fs.writeFileSync(path.join(stateDir, 'LAST_CHANGES.md'), changesMarkdown(report, newManifest.generatedAt));
@@ -192,6 +215,8 @@ ${list(r.updated)}
 ${list(r.removed)}
 ### Kullanıcı değiştirmişti: .embedded-studio/removed/ altına taşındı
 ${list(r.preserved)}
+### Kullanıcı değiştirmişti: üzerine yazılmadı, yeni hali yanında \`.new\` uzantılı
+${list(r.conflicts)}
 ${r.orphans.length ? `
 ## Dikkat: sahipsiz kullanıcı kodu
 Tasarımdan kaldırılan bölümlere ait kullanıcı kodu silinmedi; ilgili dosyanın sonunda \`Orphaned\` bloğunda (\`#if 0\`) duruyor:

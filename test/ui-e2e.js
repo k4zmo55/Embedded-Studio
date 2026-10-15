@@ -736,6 +736,24 @@ async function until(fn, ms = 8000, what = 'koşul') {
     await until(() => cdp.eval(`!!document.querySelector('.popover .comp-card')`), 3000, 'kart');
     assert.ok(await cdp.eval(`!document.querySelector('.popover .card-art')`), 'pro modda çizim yok');
     await cdp.mouse('mouseMoved', 5, 5);
+    // Pro: Kod Üret önce önizleme gösterir; elle değiştirilen üretilmiş dosya korunur (.new)
+    const bspC = path.join(PROJECT, 'Core/Src/bsp.c');
+    fs.appendFileSync(bspC, '\n/* elle yama */\n');
+    await cdp.click('#tab-design');
+    await cdp.click(`([...document.querySelectorAll('.lib-item')].find((e) => e.querySelector('.name').textContent === 'LED'))`);
+    await until(() => design().instances.some((i) => i.componentId === 'led'), 3000, 'LED eklendi');
+    await cdp.click('#generate');
+    await until(() => cdp.eval(`!!document.querySelector('.gen-preview')`), 8000, 'önizleme penceresi');
+    assert.ok(!fs.existsSync(bspC + '.new'), 'önizleme diske yazmamalı');
+    await cdp.shot('26-kod-uret-onizleme');
+    const before = recorded.openFolder.length;
+    await cdp.click(`([...document.querySelectorAll('.gen-preview button.link')].find((b) => b.textContent === 'Core/Src/bsp.c.new'))`);
+    await until(() => recorded.openFolder.slice(before).some((a) => a[0] === 'vscode.diff'), 3000, 'fark görünümü');
+    await cdp.click('#gen-apply');
+    await until(() => fs.existsSync(bspC + '.new'), 8000, '.new yazıldı');
+    assert.ok(fs.readFileSync(bspC, 'utf8').includes('/* elle yama */'), 'yama korunmalı');
+    fs.writeFileSync(bspC, fs.readFileSync(bspC + '.new', 'utf8'));
+    fs.rmSync(bspC + '.new');
     // Acemi'ye dönüş
     await cdp.click('#tab-settings');
     await cdp.click(`(document.querySelector('input[name=set-mode][value=beginner]').closest('label'))`);

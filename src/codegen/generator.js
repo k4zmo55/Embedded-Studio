@@ -69,6 +69,8 @@ function generate(design, lib, result, clock, opts = {}) {
   const name = (design.project && design.project.name) || 'embedded_app';
   const mcu = lib.mcus[design.mcuId];
   const P = layout(framework);
+  // Profesyonel + bare-metal: main.c / app.c kullanıcının; araç sadece sürücü, BSP, kesme, derleme dosyalarını yazar
+  const owned = framework === 'register' && design.mode === 'pro';
   const x = bsp.makeContext(design, lib, result, clock);
   /** @type {{ path: string, content: string, kind: 'generated'|'user'|'once' }[]} */
   const files = [];
@@ -83,7 +85,15 @@ function generate(design, lib, result, clock, opts = {}) {
   add(`${P.inc}/bsp.h`, bsp.bspHeader(x, result, stamp));
   add(`${P.src}/bsp.c`, framework === 'hal' ? bsp.halBspSource(x, stamp) : bsp.regBspSource(x, stamp));
   add(`${P.src}/board.c`, framework === 'hal' ? bsp.halBoardSource(x, design, stamp) : bsp.regBoardSource(x, design, stamp));
-  add(`${P.src}/stm32f4xx_it.c`, bsp.itSource(x, design, framework, userStamp, (n) => userBlock(n)), 'user');
+  const starterStamp = `/* Embedded Studio başlangıç dosyası (${name} / ${mcu.name}). Bir kez oluşturuldu; artık tamamen sizindir,
+ * Embedded Studio bu dosyaya bir daha yazmaz. */\n`;
+  if (owned) {
+    add(`${P.src}/bsp_irq.c`, bsp.irqSource(x, design, stamp));
+    // USER CODE bloklu: Acemi moddan geçişte eski SysTick/UART işleyicileri (artık bsp_irq.c'de) çakışmasın, kullanıcı kodu korunsun
+    add(`${P.src}/stm32f4xx_it.c`, bsp.faultStarter(userStamp, (n) => userBlock(n)), 'user');
+  } else {
+    add(`${P.src}/stm32f4xx_it.c`, bsp.itSource(x, design, framework, userStamp, (n) => userBlock(n)), 'user');
+  }
 
   // ---- Komponent bağlamları ----
   const insts = design.instances
@@ -196,7 +206,9 @@ void Telemetry_Task(const char *name, const char *state, unsigned prio, unsigned
   const driverFiles = {};
   for (const c of ctxs) Object.assign(driverFiles, c.driver.files || {});
   // Sürücüler drivers.js'de 'Drivers/Components/x.c' olarak tanımlı; yerleşime göre taşınır
-  for (const [p, content] of Object.entries(driverFiles)) add(p.replace(/^Drivers\/Components\//, `${P.drivers}/`), `/* Embedded Studio sürücüsü. Komponent tasarımdan çıkarılırsa bu dosya da kaldırılır. */\n${content}`);
+  const usageFor = {};
+  for (const c of ctxs) for (const p of Object.keys(c.driver.files || {})) if (p.endsWith('.h') && !usageFor[p]) usageFor[p] = usageComment(c);
+  for (const [p, content] of Object.entries(driverFiles)) add(p.replace(/^Drivers\/Components\//, `${P.drivers}/`), `${usageFor[p] || ''}/* Embedded Studio sürücüsü. Komponent tasarımdan çıkarılırsa bu dosya da kaldırılır. */\n${content}`);
 
   // ---- Uygulama ----
   const includes = [...new Set(ctxs.map((c) => c.driver.include).filter(Boolean))];
@@ -306,7 +318,7 @@ ${indent(userBlock('Tasks'))}
   vTaskStartScheduler();
   Error_Handler(); /* buraya gelinirse heap yetersizdir */
 }`;
-    add(`${P.inc}/FreeRTOSConfig.h`, freertosConfig(plan, userStamp), 'user');
+    add(`${P.inc}/FreeRTOSConfig.h`, freertosConfig(plan, owned ? starterStamp : userStamp, !owned), owned ? 'once' : 'user');
   } else {
     start = `/* ---- Süper döngü (RTOS yok) ---- */
 void App_Start(void)
@@ -323,7 +335,7 @@ ${indent(userBlock('Loop'), 4)}
 }`;
   }
 
-  add(`${P.inc}/app.h`, `${userStamp}#ifndef APP_H
+  if (!owned) add(`${P.inc}/app.h`, `${userStamp}#ifndef APP_H
 #define APP_H
 
 void App_Init(void);
@@ -334,7 +346,7 @@ ${userBlock('Prototypes')}
 #endif
 `, 'user');
 
-  add(`${P.src}/app.c`, `${userStamp}#include "app.h"
+  if (!owned) add(`${P.src}/app.c`, `${userStamp}#include "app.h"
 #include "bsp.h"
 #include "telemetry.h"
 ${includes.map((i) => `#include "${i}"`).join('\n')}
@@ -363,7 +375,8 @@ ${start}
 ${userBlock('Functions')}
 `, 'user');
 
-  add(`${P.src}/main.c`, `${userStamp}#include "board.h"
+  if (owned) add(`${P.src}/main.c`, starterMain(design, starterStamp, ctxs), 'once');
+  else add(`${P.src}/main.c`, `${userStamp}#include "board.h"
 #include "app.h"
 ${userBlock('Includes')}
 
@@ -402,6 +415,59 @@ ${indent(userBlock('PostInit'))}
   return { files, meta: { name, framework, version: GENERATOR_VERSION } };
 }
 
+/**
+ * Sürücü başlığının başına eklenen kullanım örneği: bu projedeki gerçek bus/adres/pinlerle
+ * (Embedded Studio'nun app.c'de ürettiği kodun aynısı). Satır yorumu (//) kullanılır ki koddaki blok yorumlar bozulmasın.
+ */
+function usageComment(c) {
+  const code = (s) => (s || '').split('\n').filter((l) => l.trim() && !/USER CODE|Telemetry_/.test(l));
+  const d = c.driver;
+  const ctx = { ...c, user: '' };
+  const lines = [
+    `Kullanım örneği (bu projedeki ${c.L} için; kendi dosyanıza kopyalayabilirsiniz):`,
+    '',
+    `  #include "${d.include}"`,
+    ...(d.globals ? ['', ...code(d.globals(ctx)).map((l) => '  ' + l)] : []),
+    ...(d.init ? ['', '  /* Board_Init() sonrası, bir kez: */', ...code(d.init(ctx)).map((l) => '  ' + l)] : []),
+    ...(d.poll ? ['', `  /* Periyodik${c.comp.sampleMs ? ` (her ${c.comp.sampleMs} ms)` : ''}: */`, ...code(d.poll(ctx)).map((l) => '  ' + l)] : []),
+    ...(d.rx ? ['', '  /* UART alma kesmesinden (bsp_uart_rx_callback içinde): */', ...code(d.rx(ctx)).map((l) => '  ' + l)] : [])
+  ];
+  return lines.map((l) => `// ${l}`.trimEnd()).join('\n') + '\n';
+}
+
+/** Profesyonel bare-metal: bir kez oluşturulan main.c. Uygulama kodunu kullanıcı yazar. */
+function starterMain(design, stamp, ctxs) {
+  const drivers = [...new Set(ctxs.map((c) => c.driver.include).filter(Boolean))];
+  return `${stamp}#include "board.h"
+#include "bsp.h"
+${design.rtos ? '#include "FreeRTOS.h"\n#include "task.h"\n' : ''}
+/* Seçtiğiniz komponentlerin sürücüleri drivers/ altında; her başlığın başında bu projeye göre bir kullanım örneği var${drivers.length ? `:\n * ${drivers.join(', ')}` : '.'} */
+
+int main(void)
+{
+  Board_Init(); /* saat, GPIO ve çevre birimleri (Embedded Studio üretir: board.c) */
+${design.rtos ? `
+  /* xTaskCreate(...) ile task'larınızı oluşturun. */
+  vTaskStartScheduler();
+` : ''}
+  for (;;) {
+  }
+}
+${design.rtos ? `
+void vApplicationStackOverflowHook(TaskHandle_t task, char *task_name)
+{
+  (void)task;
+  (void)task_name;
+  Error_Handler();
+}
+
+void vApplicationMallocFailedHook(void)
+{
+  Error_Handler();
+}
+` : ''}`;
+}
+
 const mdStamp = () => '<!-- Embedded Studio tarafından üretildi. Kendi notlarınızı USER CODE bloğuna yazın. -->\n';
 
 function halConf(template, x, stamp) {
@@ -420,7 +486,8 @@ function halConf(template, x, stamp) {
   return `${stamp}/* STM32CubeF4 stm32f4xx_hal_conf_template.h tabanlıdır; sadece kullanılan modüller açık. */\n${body}`;
 }
 
-function freertosConfig(plan, stamp) {
+/** stats=false: çalışma zamanı istatistikleri kapalı (profesyonel modda sayaç fonksiyonlarını kullanıcı yazmaz). */
+function freertosConfig(plan, stamp, stats = true) {
   return `${stamp}#ifndef FREERTOS_CONFIG_H
 #define FREERTOS_CONFIG_H
 
@@ -447,11 +514,13 @@ uint32_t ulGetRunTimeCounter(void);
 #define configSUPPORT_DYNAMIC_ALLOCATION        1
 #define configSUPPORT_STATIC_ALLOCATION         0
 
-/* Embedded Studio task monitörü için */
+${stats ? `/* Embedded Studio task monitörü için */
 #define configUSE_TRACE_FACILITY                1
 #define configGENERATE_RUN_TIME_STATS           1
 #define portCONFIGURE_TIMER_FOR_RUN_TIME_STATS() vConfigureRunTimeCounter()
-#define portGET_RUN_TIME_COUNTER_VALUE()        ulGetRunTimeCounter()
+#define portGET_RUN_TIME_COUNTER_VALUE()        ulGetRunTimeCounter()` : `/* Task CPU istatistikleri için 1 yapın ve vConfigureRunTimeCounter / ulGetRunTimeCounter fonksiyonlarını yazın. */
+#define configUSE_TRACE_FACILITY                1
+#define configGENERATE_RUN_TIME_STATS           0`}
 
 #define INCLUDE_vTaskDelay                      1
 #define INCLUDE_xTaskDelayUntil                 1
@@ -717,14 +786,24 @@ ${userFiles}
 
 ## Nereye ne yazılır
 
-| Amaç | Dosya / blok |
+${framework === 'register' && design.mode === 'pro' ? `Bu proje **profesyonel bare-metal** modunda: uygulama kodunu kullanıcı yazar. \`src/main.c\`, \`src/stm32f4xx_it.c\`${design.rtos ? ', `inc/FreeRTOSConfig.h`' : ''} bir kez
+başlangıç olarak oluşturuldu ve artık tamamen kullanıcınındır; Embedded Studio bunlara ve \`src/\` altındaki diğer kullanıcı dosyalarına yazmaz.
+
+| Amaç | Dosya |
+|---|---|
+| Uygulama kodu | \`src/main.c\` ve kendi \`src/*.c\` dosyalarınız (CMake otomatik toplar) |
+| Sensör sürücüsünü kullanmak | \`drivers/<sürücü>.h\` başındaki "Kullanım örneği" (bu projenin bus/adres/pinleriyle) |
+| 1 ms periyodik iş | Kendi dosyanızda \`void bsp_systick_hook(void)\` tanımlayın (weak) |
+| UART'tan gelen byte | Kendi dosyanızda \`void bsp_uart_rx_callback(uint8_t bus, uint8_t byte)\` tanımlayın (weak) |
+| Hata işleyicileri | \`src/stm32f4xx_it.c\` (SysTick ve UART kesmeleri üretilen \`src/bsp_irq.c\`'de) |
+| Ek kaynak / derleme ayarı | \`CMakeLists.txt\` → \`Sources\`, \`Targets\` |` : `| Amaç | Dosya / blok |
 |---|---|
 | Sensör verisini işlemek | \`app.c\` → \`Poll_<SENSÖR>()\` içindeki \`USER CODE BEGIN <SENSÖR>\` (okunan değişkenler kapsamda) |
 | Global değişken / yardımcı fonksiyon | \`app.c\` → \`Globals\`, \`Functions\` |
 | Başlangıç kodu | \`app.c\` → \`Init\`; \`main.c\` → \`PreInit\` / \`PostInit\` |
 | ${design.rtos ? 'Kendi FreeRTOS task\'ları | `app.c` → `Tasks` (vTaskStartScheduler öncesi xTaskCreate)' : 'Ana döngü işi | `app.c` → `Loop`'} |
 | Kesme işleyicileri | \`stm32f4xx_it.c\` → \`Handlers\` |
-| Ek kaynak / derleme ayarı | \`CMakeLists.txt\` → \`Sources\`, \`Targets\` |
+| Ek kaynak / derleme ayarı | \`CMakeLists.txt\` → \`Sources\`, \`Targets\` |`}
 
 ## Donanım özeti
 

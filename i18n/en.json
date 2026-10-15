@@ -550,5 +550,18 @@
   "Mod sadece arayüzü değiştirir; dosyalara dokunmaz.": "The mode only changes the interface; it does not touch any files.",
   "Proje STM32CubeMX klasör yapısına geçer (Core/, Drivers/) ve STM32 HAL sürücüleri eklenir. Kendi dosyalarınız ve USER CODE blokları yeni klasörlere taşınır.": "The project switches to the STM32CubeMX folder layout (Core/, Drivers/) and the STM32 HAL drivers are added. Your own files and USER CODE blocks are moved to the new folders.",
   "Proje sade bare-metal klasör yapısına geçer (inc/, src/, startup/, linker/, cmsis/, drivers/). Kendi dosyalarınız ve USER CODE blokları yeni klasörlere taşınır; HAL klasörü (Drivers/STM32F4xx_HAL_Driver) derlenmez ama silinmez.": "The project switches to the plain bare-metal folder layout (inc/, src/, startup/, linker/, cmsis/, drivers/). Your own files and USER CODE blocks are moved to the new folders; the HAL folder (Drivers/STM32F4xx_HAL_Driver) is no longer built but is not deleted.",
-  "Klasör yapısı değişti: {0} kullanıcı dosyası yeni yerine taşındı (ör. {1} → {2}). Eski \"{3}\" klasöründe kalanlar derlenmez.": "The folder layout changed: {0} user files were moved to their new place (e.g. {1} → {2}). Anything left in the old \"{3}\" folder is not built."
+  "Klasör yapısı değişti: {0} kullanıcı dosyası yeni yerine taşındı (ör. {1} → {2}). Eski \"{3}\" klasöründe kalanlar derlenmez.": "The folder layout changed: {0} user files were moved to their new place (e.g. {1} → {2}). Anything left in the old \"{3}\" folder is not built.",
+  "{0} korundu (.new)": "{0} kept (.new)",
+  "{0} (mevcut ↔ üretilecek)": "{0} (current ↔ to be generated)",
+  "Farkı göster": "Show diff",
+  "Bare-metal profesyonel mod: main.c ve kendi dosyalarınıza dokunulmaz; sadece sürücü, BSP, kesme ve derleme dosyaları yazılır.": "Professional bare-metal mode: main.c and your own files are never touched; only driver, BSP, interrupt and build files are written.",
+  "Dosyaya tıklayınca mevcut hali ile üretilecek hali yan yana açılır.": "Click a file to open its current and generated versions side by side.",
+  "Güncellenecek": "Will be updated",
+  "Değiştirdiğiniz üretilmiş dosyalar": "Generated files you have edited",
+  "Üzerine yazılmaz; yeni hali yanına .new uzantısıyla yazılır.": "They are not overwritten; the new version is written next to them with a .new extension.",
+  "Değiştirdiğiniz, artık üretilmeyen dosyalar": "Edited files that are no longer generated",
+  ".embedded-studio/removed/ altına taşınır.": "Moved to .embedded-studio/removed/.",
+  "Kaldırılan sensörlere ait kodunuz silinmez; dosyanın sonundaki \"Orphaned\" bloğuna taşınır.": "Your code for removed sensors is not deleted; it is moved to the \"Orphaned\" block at the end of the file.",
+  "Dosya içerikleri aynı; sadece kayıt güncellenir.": "File contents are unchanged; only the record is updated.",
+  "Kod Üret: önizleme": "Generate Code: preview"
 }
