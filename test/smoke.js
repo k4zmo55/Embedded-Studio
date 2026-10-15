@@ -7,7 +7,7 @@ const { loadLibrary, validateComponent, componentTemplate } = require('../src/li
 const { assign } = require('../src/engine/pinAssigner');
 const { computeClock, solveClock } = require('../src/engine/clock');
 const { generate, GENERATOR_VERSION } = require('../src/codegen/generator');
-const { writeProject, designFingerprint, mergeUserBlocks } = require('../src/codegen/merge');
+const { writeProject, designFingerprint, mergeUserBlocks, relocateLayout } = require('../src/codegen/merge');
 const { parseLine } = require('../src/monitor/telemetry');
 const { simModel, SimTarget } = require('../src/debug/session');
 const { builtinStm32f4 } = require('../src/debug/registers');
@@ -128,12 +128,46 @@ test('mergeUserBlocks: CMake ve markdown blokları', () => {
   const r = mergeUserBlocks('a\n# USER CODE BEGIN X\n# USER CODE END X\n', 'z\n# USER CODE BEGIN X\nset(A 1)\n# USER CODE END X\n', 'CMakeLists.txt');
   assert.ok(r.content.includes('set(A 1)'));
 });
-test('register altyapısı + RTOS dosyaları üretilir', () => {
-  const d = design([inst('usb_uart'), inst('potentiometer'), inst('servo_sg90')], { framework: 'register', rtos: true });
+test('bare-metal: sade klasör yapısı (inc/ src/ drivers/ linker/), HAL dosyası yok', () => {
+  const d = design([inst('usb_uart'), inst('bme280'), inst('servo_sg90')], { framework: 'register', rtos: true });
   const r = assign(d, lib);
-  const files = generate(d, lib, r, computeClock(mcu, d.clock), {}).files.map((f) => f.path);
-  assert.ok(files.includes('Core/Inc/FreeRTOSConfig.h'));
-  assert.ok(!files.includes('Core/Inc/stm32f4xx_hal_conf.h'));
+  const g = generate(d, lib, r, computeClock(mcu, d.clock), {});
+  const files = g.files.map((f) => f.path);
+  for (const f of ['inc/FreeRTOSConfig.h', 'inc/board.h', 'src/main.c', 'src/app.c', 'src/bsp.c', 'drivers/bme280.c', 'linker/STM32F411CEU6_FLASH.ld']) assert.ok(files.includes(f), f);
+  assert.ok(!files.some((f) => f.startsWith('Core/') || f.startsWith('Drivers/') || /hal_conf/.test(f)), files.join(' '));
+  const cmake = g.files.find((f) => f.path === 'CMakeLists.txt').content;
+  for (const s of ['src/*.c drivers/*.c', 'startup/system_stm32f4xx.c', 'startup/startup_stm32f411xe.s', 'cmsis/core', 'cmsis/device', 'rtos/FreeRTOS/tasks.c', 'linker/STM32F411CEU6_FLASH.ld']) assert.ok(cmake.includes(s), s);
+  assert.ok(!/Drivers|Middlewares|Core\//.test(cmake), 'CMake HAL yolları içermemeli');
+});
+test('HAL: CubeMX klasör yapısı korunur', () => {
+  const d = design([inst('usb_uart'), inst('bme280')]);
+  const files = generate(d, lib, assign(d, lib), computeClock(mcu, d.clock), {}).files.map((f) => f.path);
+  for (const f of ['Core/Inc/stm32f4xx_hal_conf.h', 'Core/Src/main.c', 'Drivers/Components/bme280.c', 'STM32F411CEU6_FLASH.ld']) assert.ok(files.includes(f), f);
+});
+test('altyapı değişince kullanıcı dosyaları ve USER CODE yeni klasöre taşınır', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'es-layout-'));
+  const run = (d) => {
+    const g = generate(d, lib, assign(d, lib), computeClock(mcu, d.clock), {});
+    const moved = relocateLayout(dir, d.framework, g.files);
+    writeProject(dir, g, { fingerprint: designFingerprint(d, GENERATOR_VERSION), snapshot: { instances: [], connections: [] } });
+    return moved;
+  };
+  const hal = design([inst('usb_uart'), inst('bme280')]);
+  assert.deepStrictEqual(run(hal), [], 'ilk üretimde taşıma yok');
+  const app = path.join(dir, 'Core/Src/app.c');
+  fs.writeFileSync(app, fs.readFileSync(app, 'utf8').replace('/* USER CODE BEGIN Globals */\n', '/* USER CODE BEGIN Globals */\nstatic int benim_kodum;\n'));
+  fs.writeFileSync(path.join(dir, 'Core/Src/kontrol.c'), 'int kontrol(void) { return 1; }\n');
+  const moved = run({ ...hal, framework: 'register' });
+  assert.ok(moved.some((m) => m.from === 'Core/Src/app.c' && m.to === 'src/app.c'), JSON.stringify(moved));
+  assert.ok(moved.some((m) => m.to === 'src/kontrol.c'), 'kullanıcının kendi dosyası');
+  assert.ok(fs.readFileSync(path.join(dir, 'src/app.c'), 'utf8').includes('static int benim_kodum;'), 'USER CODE korunmalı');
+  assert.ok(!fs.existsSync(path.join(dir, 'Core/Src/bsp.c')) && !fs.existsSync(path.join(dir, 'Core/Inc/stm32f4xx_hal_conf.h')), 'eski üretilmiş dosyalar kaldırılmalı');
+  assert.ok(!fs.existsSync(path.join(dir, 'Drivers/Components/bme280.c')) && fs.existsSync(path.join(dir, 'drivers/bme280.c')));
+  // Geri dönüş: HAL
+  run(hal);
+  assert.ok(fs.readFileSync(path.join(dir, 'Core/Src/app.c'), 'utf8').includes('static int benim_kodum;'));
+  assert.ok(fs.existsSync(path.join(dir, 'Core/Src/kontrol.c')));
+  fs.rmSync(dir, { recursive: true, force: true });
 });
 
 console.log('Kütüphane, telemetri, debug');

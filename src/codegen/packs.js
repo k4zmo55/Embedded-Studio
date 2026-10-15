@@ -7,6 +7,7 @@
  */
 const fs = require('fs');
 const path = require('path');
+const { layout } = require('./layout');
 const { execFile } = require('child_process');
 
 const REPOS = {
@@ -59,32 +60,33 @@ function copyFile(src, dst) {
 
 /** Projede eksik olan paket parçalarının listesi. */
 function missingInProject(root, mcu, framework, rtos) {
+  const L = layout(framework);
   const need = [];
-  if (!fs.existsSync(path.join(root, 'Drivers/CMSIS/Include/core_cm4.h'))) need.push('core');
-  if (!fs.existsSync(path.join(root, 'Drivers/CMSIS/Device/ST/STM32F4xx/Source/Templates/gcc', mcu.device.startup))) need.push('device');
-  if (framework === 'hal' && !fs.existsSync(path.join(root, 'Drivers/STM32F4xx_HAL_Driver/Inc/stm32f4xx_hal.h'))) need.push('hal');
-  if (rtos && !fs.existsSync(path.join(root, 'Middlewares/FreeRTOS/tasks.c'))) need.push('freertos');
+  if (!fs.existsSync(path.join(root, L.cmsisCore, 'core_cm4.h'))) need.push('core');
+  if (!fs.existsSync(path.join(root, L.startupDir, mcu.device.startup)) || !fs.existsSync(path.join(root, L.systemC))) need.push('device');
+  if (framework === 'hal' && !fs.existsSync(path.join(root, L.hal, 'Inc/stm32f4xx_hal.h'))) need.push('hal');
+  if (rtos && !fs.existsSync(path.join(root, L.rtos, 'tasks.c'))) need.push('freertos');
   return need;
 }
 
-/** Önbellekteki paketlerden projeye gerekenleri kopyalar. */
-function installIntoProject(cache, root, mcu, keys) {
+/** Önbellekteki paketlerden projeye gerekenleri, altyapının klasör yapısına göre kopyalar (bkz. layout.js). */
+function installIntoProject(cache, root, mcu, keys, framework = 'hal') {
+  const L = layout(framework);
   const h = (p) => p.endsWith('.h');
   for (const key of keys) {
     const src = path.join(cache, key);
-    if (key === 'core') copyDir(path.join(src, 'CMSIS/Core/Include'), path.join(root, 'Drivers/CMSIS/Include'), h);
+    if (key === 'core') copyDir(path.join(src, 'CMSIS/Core/Include'), path.join(root, L.cmsisCore), h);
     if (key === 'device') {
-      const dst = path.join(root, 'Drivers/CMSIS/Device/ST/STM32F4xx');
-      copyDir(path.join(src, 'Include'), path.join(dst, 'Include'), h);
-      copyFile(path.join(src, 'Source/Templates/system_stm32f4xx.c'), path.join(dst, 'Source/Templates/system_stm32f4xx.c'));
-      copyFile(path.join(src, 'Source/Templates/gcc', mcu.device.startup), path.join(dst, 'Source/Templates/gcc', mcu.device.startup));
+      copyDir(path.join(src, 'Include'), path.join(root, L.deviceInc), h);
+      copyFile(path.join(src, 'Source/Templates/system_stm32f4xx.c'), path.join(root, L.systemC));
+      copyFile(path.join(src, 'Source/Templates/gcc', mcu.device.startup), path.join(root, L.startupDir, mcu.device.startup));
     }
     if (key === 'hal') {
-      copyDir(path.join(src, 'Inc'), path.join(root, 'Drivers/STM32F4xx_HAL_Driver/Inc'));
-      copyDir(path.join(src, 'Src'), path.join(root, 'Drivers/STM32F4xx_HAL_Driver/Src'), (n) => !n.includes('template'));
+      copyDir(path.join(src, 'Inc'), path.join(root, layout('hal').hal, 'Inc'));
+      copyDir(path.join(src, 'Src'), path.join(root, layout('hal').hal, 'Src'), (n) => !n.includes('template'));
     }
     if (key === 'freertos') {
-      const dst = path.join(root, 'Middlewares/FreeRTOS');
+      const dst = path.join(root, L.rtos);
       copyDir(path.join(src, 'include'), path.join(dst, 'include'), h);
       for (const f of ['tasks.c', 'queue.c', 'list.c', 'timers.c', 'event_groups.c', 'stream_buffer.c', 'LICENSE.md']) {
         if (fs.existsSync(path.join(src, f))) copyFile(path.join(src, f), path.join(dst, f));

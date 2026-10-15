@@ -66,7 +66,8 @@ src/
   library.js            Komponent kütüphanesi + doğrulama (validateComponent)
   engine/pinAssigner.js Pin/çevre birimi atama (kısıt çözücü)
   engine/clock.js       Saat ağacı modeli + otomatik çözücü
-  codegen/              generator · bsp (HAL/register) · drivers · merge (USER CODE) · packs
+  codegen/              generator · layout (HAL / bare-metal klasör yapısı) · bsp · drivers · merge (USER CODE) · packs
+  i18n.js               Arayüz dili (t() + i18n/en.json)
   debug/                OpenOCD TCL istemcisi, simülasyon, register/SVD tanımları
   monitor/telemetry.js  Telemetri protokolü + simülatör
   ai/advisor.js         Asistan (şimdilik kural tabanlı)

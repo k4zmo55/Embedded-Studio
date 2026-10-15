@@ -13,6 +13,7 @@
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
+const { layout } = require('./layout');
 
 const STATE_DIR = '.embedded-studio';
 const sha1 = (s) => crypto.createHash('sha1').update(s).digest('hex');
@@ -200,4 +201,51 @@ Ajan için görev: bu kodu yeni tasarıma uygun yere taşıyın ya da kullanıc�
 ` : ''}`;
 }
 
-module.exports = { writeProject, mergeUserBlocks, extractBlocks, designFingerprint, diffSnapshots, STATE_DIR };
+/**
+ * Son üretim başka bir klasör yapısındaysa (altyapı HAL ↔ bare-metal değişti ya da proje eski sürümle üretildi)
+ * kullanıcıya ait dosyaları yeni yerlerine taşır; böylece writeProject USER CODE bloklarını yeni yerde birleştirir.
+ * Taşınanlar: üretimin izlemediği (kullanıcının eklediği) dosyalar ve yeni üretimde 'user' türünde olanlar (app.c, main.c…).
+ * Üretilmiş dosyalar taşınmaz; writeProject eskilerini kaldırır. Hedefte aynı adlı dosya varsa dokunulmaz.
+ * @param {string} root @param {'hal'|'register'} framework @param {{ path: string, kind: string }[]} genFiles
+ * @returns {{ from: string, to: string }[]}
+ */
+function relocateLayout(root, framework, genFiles) {
+  const manifest = readJson(path.join(root, STATE_DIR, 'manifest.json'));
+  if (!manifest) return [];
+  const to = layout(framework);
+  const tracked = Object.keys(manifest.files || {});
+  const from = [layout('hal'), layout('register')].find((L) => L.src !== to.src && tracked.some((p) => p.startsWith(L.src + '/')));
+  if (!from) return [];
+  const userTargets = new Set(genFiles.filter((f) => f.kind === 'user').map((f) => f.path));
+  const moved = [];
+  for (const key of ['inc', 'src', 'drivers']) {
+    const srcDir = path.join(root, from[key]);
+    if (!fs.existsSync(srcDir)) continue;
+    const walk = (dir) => fs.readdirSync(dir, { withFileTypes: true }).flatMap((e) => (e.isDirectory() ? walk(path.join(dir, e.name)) : [path.join(dir, e.name)]));
+    for (const abs of walk(srcDir)) {
+      const rel = path.relative(srcDir, abs).split(path.sep).join('/');
+      const oldRel = `${from[key]}/${rel}`;
+      const newRel = `${to[key]}/${rel}`;
+      if (tracked.includes(oldRel) && !userTargets.has(newRel)) continue; // üretilmiş dosya: writeProject kaldırır
+      const dest = path.join(root, newRel);
+      if (fs.existsSync(dest)) continue;
+      fs.mkdirSync(path.dirname(dest), { recursive: true });
+      fs.renameSync(abs, dest);
+      moved.push({ from: oldRel, to: newRel });
+    }
+  }
+  return moved;
+}
+
+/** Boşalan klasörleri (ör. taşımadan sonra Core/Src) siler; içinde dosya kalan klasörlere dokunmaz. */
+function removeEmptyDirs(root, rels) {
+  for (const rel of rels) {
+    let dir = path.join(root, rel);
+    while (dir.startsWith(root) && dir !== root && fs.existsSync(dir) && fs.readdirSync(dir).length === 0) {
+      fs.rmdirSync(dir);
+      dir = path.dirname(dir);
+    }
+  }
+}
+
+module.exports = { writeProject, mergeUserBlocks, extractBlocks, designFingerprint, diffSnapshots, relocateLayout, removeEmptyDirs, STATE_DIR };

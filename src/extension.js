@@ -9,7 +9,8 @@ const { assign } = require('./engine/pinAssigner');
 const { computeClock, solveClock } = require('./engine/clock');
 const { analyze, ruleBasedProvider } = require('./ai/advisor');
 const { generate, GENERATOR_VERSION } = require('./codegen/generator');
-const { writeProject, designFingerprint, STATE_DIR } = require('./codegen/merge');
+const { writeProject, designFingerprint, relocateLayout, removeEmptyDirs, STATE_DIR } = require('./codegen/merge');
+const { layout } = require('./codegen/layout');
 const packs = require('./codegen/packs');
 const { parseLine, Simulator } = require('./monitor/telemetry');
 const { OpenOcdTarget, SimTarget, simModel, elfSymbols } = require('./debug/session');
@@ -370,7 +371,7 @@ class Studio {
       await vscode.window.withProgress({ location: vscode.ProgressLocation.Notification, title: 'Embedded Studio', cancellable: false }, async (p) => {
         await packs.ensurePacks(cache, need, (msg) => p.report({ message: msg }));
         p.report({ message: t('Projeye kopyalanıyor...') });
-        packs.installIntoProject(cache, root, mcu, need);
+        packs.installIntoProject(cache, root, mcu, need, framework);
       });
       return true;
     } catch (e) {
@@ -406,8 +407,8 @@ class Studio {
     if (mcuChanged) notes.push({ level: 'warn', text: t('MCU değişince elle seçilmiş pin kilitleri ({0}) ve saat ayarları sıfırlanır; pinler yeniden atanır.', locks) });
     if (s.framework !== cur.framework) {
       notes.push({ level: 'info', text: s.framework === 'hal'
-        ? t('STM32 HAL sürücüleri projeye eklenir ve derlemeye girer.')
-        : t('Kod register seviyesinde üretilir. HAL klasörü (Drivers/STM32F4xx_HAL_Driver) derlemeden çıkar ama silinmez.') });
+        ? t('Proje STM32CubeMX klasör yapısına geçer (Core/, Drivers/) ve STM32 HAL sürücüleri eklenir. Kendi dosyalarınız ve USER CODE blokları yeni klasörlere taşınır.')
+        : t('Proje sade bare-metal klasör yapısına geçer (inc/, src/, startup/, linker/, cmsis/, drivers/). Kendi dosyalarınız ve USER CODE blokları yeni klasörlere taşınır; HAL klasörü (Drivers/STM32F4xx_HAL_Driver) derlenmez ama silinmez.') });
     }
     if (!!s.rtos !== !!cur.rtos) {
       notes.push({ level: 'info', text: s.rtos
@@ -453,7 +454,14 @@ class Studio {
       instances: this.design.instances.map((i) => ({ id: i.id, label: i.label, componentId: i.componentId, name: this.lib.components[i.componentId]?.name })),
       connections: result.connections.map((c) => ({ instId: c.instId, compPin: c.compPin, mcuPin: c.mcuPin, signal: c.signal, label: label(c.instId) }))
     };
+    // Klasör yapısı değiştiyse (HAL ↔ bare-metal) kullanıcı dosyalarını yeni yerlerine taşı
+    const moved = relocateLayout(this.root, this.design.framework, gen.files);
     const report = writeProject(this.root, gen, { fingerprint: designFingerprint(this.design, GENERATOR_VERSION), snapshot });
+    if (moved.length) {
+      const old = moved[0].from.split('/')[0];
+      removeEmptyDirs(this.root, ['Core/Inc', 'Core/Src', 'Drivers/Components', 'inc', 'src', 'drivers']);
+      vscode.window.showInformationMessage(t('Klasör yapısı değişti: {0} kullanıcı dosyası yeni yerine taşındı (ör. {1} → {2}). Eski "{3}" klasöründe kalanlar derlenmez.', moved.length, moved[0].from, moved[0].to, old));
+    }
     this.post({ type: 'generated', report });
     if (report.upToDate) {
       vscode.window.showInformationMessage(t('Kod güncel: tasarımda değişiklik yok, hiçbir dosyaya dokunulmadı.'));
@@ -468,7 +476,7 @@ class Studio {
     const warn = report.orphans.length ? ' ' + t('Kaldırılan sensörlere ait kodunuz korunup dosya sonuna taşındı.') : '';
     const choice = await vscode.window.showInformationMessage(t('Kod üretildi: {0}.', parts) + warn, t('Değişiklikler'), 'app.c');
     if (choice) {
-      const target = choice === 'app.c' ? 'Core/Src/app.c' : `${STATE_DIR}/LAST_CHANGES.md`;
+      const target = choice === 'app.c' ? `${layout(this.design.framework).src}/app.c` : `${STATE_DIR}/LAST_CHANGES.md`;
       await vscode.window.showTextDocument(vscode.Uri.file(path.join(this.root, target)));
     }
   }

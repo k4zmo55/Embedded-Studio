@@ -521,8 +521,6 @@
   "komponent": "component",
   "Dosya listesi hesaplanamadı: {0}": "Could not compute the file list: {0}",
   "MCU değişince elle seçilmiş pin kilitleri ({0}) ve saat ayarları sıfırlanır; pinler yeniden atanır.": "Changing the MCU resets manually locked pins ({0}) and the clock settings; pins are reassigned.",
-  "STM32 HAL sürücüleri projeye eklenir ve derlemeye girer.": "The STM32 HAL drivers are added to the project and built.",
-  "Kod register seviyesinde üretilir. HAL klasörü (Drivers/STM32F4xx_HAL_Driver) derlemeden çıkar ama silinmez.": "Code is generated at register level. The HAL folder (Drivers/STM32F4xx_HAL_Driver) is no longer built but is not deleted.",
   "Her sensör ayrı bir FreeRTOS task'ında çalışır; FreeRTOS kaynakları projeye eklenir.": "Each sensor runs in its own FreeRTOS task; the FreeRTOS sources are added to the project.",
   "Sensörler süper döngüde okunur. FreeRTOS klasörü (Middlewares/FreeRTOS) derlemeden çıkar ama silinmez.": "Sensors are polled in the super loop. The FreeRTOS folder (Middlewares/FreeRTOS) is no longer built but is not deleted.",
   "USER CODE blokları arasına yazdığınız kod korunur.": "Code you wrote between USER CODE blocks is kept.",
@@ -549,5 +547,8 @@
   "Çalışma modu": "Working mode",
   "Görsel tasarım: komponent seç, şemada bağla, pinleri ve saati asistan atasın, örnek kod üretilsin.": "Visual design: pick components, wire them in the schematic, let the assistant assign pins and clocks, get example code.",
   "Debug ve test öncelikli, yoğun ve sade arayüz. Tasarım ekranı isteğe bağlı bir araç olarak kalır.": "Debug and test first, with a dense, plain interface. The design screen stays as an optional tool.",
-  "Mod sadece arayüzü değiştirir; dosyalara dokunmaz.": "The mode only changes the interface; it does not touch any files."
+  "Mod sadece arayüzü değiştirir; dosyalara dokunmaz.": "The mode only changes the interface; it does not touch any files.",
+  "Proje STM32CubeMX klasör yapısına geçer (Core/, Drivers/) ve STM32 HAL sürücüleri eklenir. Kendi dosyalarınız ve USER CODE blokları yeni klasörlere taşınır.": "The project switches to the STM32CubeMX folder layout (Core/, Drivers/) and the STM32 HAL drivers are added. Your own files and USER CODE blocks are moved to the new folders.",
+  "Proje sade bare-metal klasör yapısına geçer (inc/, src/, startup/, linker/, cmsis/, drivers/). Kendi dosyalarınız ve USER CODE blokları yeni klasörlere taşınır; HAL klasörü (Drivers/STM32F4xx_HAL_Driver) derlenmez ama silinmez.": "The project switches to the plain bare-metal folder layout (inc/, src/, startup/, linker/, cmsis/, drivers/). Your own files and USER CODE blocks are moved to the new folders; the HAL folder (Drivers/STM32F4xx_HAL_Driver) is no longer built but is not deleted.",
+  "Klasör yapısı değişti: {0} kullanıcı dosyası yeni yerine taşındı (ör. {1} → {2}). Eski \"{3}\" klasöründe kalanlar derlenmez.": "The folder layout changed: {0} user files were moved to their new place (e.g. {1} → {2}). Anything left in the old \"{3}\" folder is not built."
 }

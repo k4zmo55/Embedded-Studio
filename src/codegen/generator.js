@@ -12,9 +12,10 @@
 const { DRIVERS } = require('./drivers');
 const { parseSignal } = require('../engine/pinAssigner');
 const bsp = require('./bsp');
+const { layout, join } = require('./layout');
 const { cIdent, indent } = bsp;
 
-const GENERATOR_VERSION = 2;
+const GENERATOR_VERSION = 3; // 3: bare-metal projeler sade klasör yapısında (inc/, src/, startup/, linker/, cmsis/, drivers/)
 
 /** Hazır sürücüsü olmayan (kullanıcının yüklediği) komponentler: pinler ve bus hazır, okuma kodu kullanıcıda. */
 const GENERIC_DRIVER = {
@@ -67,6 +68,7 @@ function generate(design, lib, result, clock, opts = {}) {
   const framework = design.framework === 'register' ? 'register' : 'hal';
   const name = (design.project && design.project.name) || 'embedded_app';
   const mcu = lib.mcus[design.mcuId];
+  const P = layout(framework);
   const x = bsp.makeContext(design, lib, result, clock);
   /** @type {{ path: string, content: string, kind: 'generated'|'user'|'once' }[]} */
   const files = [];
@@ -77,11 +79,11 @@ function generate(design, lib, result, clock, opts = {}) {
  * Kodunuzu sadece USER CODE BEGIN/END blokları arasına yazın; yeniden üretimde korunur. */\n`;
 
   // ---- BSP katmanı ----
-  add('Core/Inc/board.h', bsp.boardHeader(x, design, result, framework, stamp));
-  add('Core/Inc/bsp.h', bsp.bspHeader(x, result, stamp));
-  add('Core/Src/bsp.c', framework === 'hal' ? bsp.halBspSource(x, stamp) : bsp.regBspSource(x, stamp));
-  add('Core/Src/board.c', framework === 'hal' ? bsp.halBoardSource(x, design, stamp) : bsp.regBoardSource(x, design, stamp));
-  add('Core/Src/stm32f4xx_it.c', bsp.itSource(x, design, framework, userStamp, (n) => userBlock(n)), 'user');
+  add(`${P.inc}/board.h`, bsp.boardHeader(x, design, result, framework, stamp));
+  add(`${P.inc}/bsp.h`, bsp.bspHeader(x, result, stamp));
+  add(`${P.src}/bsp.c`, framework === 'hal' ? bsp.halBspSource(x, stamp) : bsp.regBspSource(x, stamp));
+  add(`${P.src}/board.c`, framework === 'hal' ? bsp.halBoardSource(x, design, stamp) : bsp.regBoardSource(x, design, stamp));
+  add(`${P.src}/stm32f4xx_it.c`, bsp.itSource(x, design, framework, userStamp, (n) => userBlock(n)), 'user');
 
   // ---- Komponent bağlamları ----
   const insts = design.instances
@@ -112,7 +114,7 @@ function generate(design, lib, result, clock, opts = {}) {
   });
 
   // ---- Telemetri ----
-  add('Core/Inc/telemetry.h', `${stamp}#ifndef TELEMETRY_H
+  add(`${P.inc}/telemetry.h`, `${stamp}#ifndef TELEMETRY_H
 #define TELEMETRY_H
 
 #include <stdint.h>
@@ -131,7 +133,7 @@ void Telemetry_Task(const char *name, const char *state, unsigned prio, unsigned
 
 #endif
 `);
-  add('Core/Src/telemetry.c', `${stamp}#include "telemetry.h"
+  add(`${P.src}/telemetry.c`, `${stamp}#include "telemetry.h"
 #include "bsp.h"
 #include <stdio.h>
 #include <string.h>
@@ -193,7 +195,8 @@ void Telemetry_Task(const char *name, const char *state, unsigned prio, unsigned
   // ---- Sürücü dosyaları ----
   const driverFiles = {};
   for (const c of ctxs) Object.assign(driverFiles, c.driver.files || {});
-  for (const [p, content] of Object.entries(driverFiles)) add(p, `/* Embedded Studio sürücüsü. Komponent tasarımdan çıkarılırsa bu dosya da kaldırılır. */\n${content}`);
+  // Sürücüler drivers.js'de 'Drivers/Components/x.c' olarak tanımlı; yerleşime göre taşınır
+  for (const [p, content] of Object.entries(driverFiles)) add(p.replace(/^Drivers\/Components\//, `${P.drivers}/`), `/* Embedded Studio sürücüsü. Komponent tasarımdan çıkarılırsa bu dosya da kaldırılır. */\n${content}`);
 
   // ---- Uygulama ----
   const includes = [...new Set(ctxs.map((c) => c.driver.include).filter(Boolean))];
@@ -303,7 +306,7 @@ ${indent(userBlock('Tasks'))}
   vTaskStartScheduler();
   Error_Handler(); /* buraya gelinirse heap yetersizdir */
 }`;
-    add('Core/Inc/FreeRTOSConfig.h', freertosConfig(plan, userStamp), 'user');
+    add(`${P.inc}/FreeRTOSConfig.h`, freertosConfig(plan, userStamp), 'user');
   } else {
     start = `/* ---- Süper döngü (RTOS yok) ---- */
 void App_Start(void)
@@ -320,7 +323,7 @@ ${indent(userBlock('Loop'), 4)}
 }`;
   }
 
-  add('Core/Inc/app.h', `${userStamp}#ifndef APP_H
+  add(`${P.inc}/app.h`, `${userStamp}#ifndef APP_H
 #define APP_H
 
 void App_Init(void);
@@ -331,7 +334,7 @@ ${userBlock('Prototypes')}
 #endif
 `, 'user');
 
-  add('Core/Src/app.c', `${userStamp}#include "app.h"
+  add(`${P.src}/app.c`, `${userStamp}#include "app.h"
 #include "bsp.h"
 #include "telemetry.h"
 ${includes.map((i) => `#include "${i}"`).join('\n')}
@@ -360,7 +363,7 @@ ${start}
 ${userBlock('Functions')}
 `, 'user');
 
-  add('Core/Src/main.c', `${userStamp}#include "board.h"
+  add(`${P.src}/main.c`, `${userStamp}#include "board.h"
 #include "app.h"
 ${userBlock('Includes')}
 
@@ -377,12 +380,12 @@ ${indent(userBlock('PostInit'))}
 `, 'user');
 
   // ---- HAL yapılandırması ----
-  if (framework === 'hal') add('Core/Inc/stm32f4xx_hal_conf.h', halConf(opts.halConfTemplate, x, stamp));
+  if (framework === 'hal') add(`${P.inc}/stm32f4xx_hal_conf.h`, halConf(opts.halConfTemplate, x, stamp));
 
   // ---- Derleme sistemi ----
-  add('CMakeLists.txt', cmakeLists(name, mcu, framework, design, clock), 'user');
+  add('CMakeLists.txt', cmakeLists(name, mcu, framework, design, clock, P), 'user');
   add('cmake/arm-none-eabi.cmake', TOOLCHAIN);
-  add(`${mcu.name}_FLASH.ld`, linkerScript(mcu));
+  add(join(P.linkerDir, `${mcu.name}_FLASH.ld`), linkerScript(mcu));
   add('.vscode/tasks.json', tasksJson(name, mcu), 'once');
   add('.vscode/launch.json', launchJson(name, mcu), 'once');
   add('.vscode/settings.json', JSON.stringify({ 'files.autoSave': 'afterDelay', 'files.autoSaveDelay': 1000, 'cmake.configureOnOpen': false }, null, 2) + '\n', 'once');
@@ -490,7 +493,7 @@ set(CMAKE_FIND_ROOT_PATH_MODE_LIBRARY ONLY)
 set(CMAKE_FIND_ROOT_PATH_MODE_INCLUDE ONLY)
 `;
 
-function cmakeLists(name, mcu, framework, design, clock) {
+function cmakeLists(name, mcu, framework, design, clock, P) {
   const dev = mcu.device;
   return `# Embedded Studio tarafından üretildi. Kendi eklemelerinizi USER CODE bloklarına yazın.
 cmake_minimum_required(VERSION 3.20)
@@ -504,24 +507,24 @@ endif()
 
 set(MCU_FLAGS -mcpu=cortex-m4 -mthumb -mfpu=fpv4-sp-d16 -mfloat-abi=hard)
 
-file(GLOB APP_SOURCES CONFIGURE_DEPENDS Core/Src/*.c Drivers/Components/*.c)
+file(GLOB APP_SOURCES CONFIGURE_DEPENDS ${P.src}/*.c ${P.drivers}/*.c)
 set(DEVICE_SOURCES
-  Drivers/CMSIS/Device/ST/STM32F4xx/Source/Templates/system_stm32f4xx.c
-  Drivers/CMSIS/Device/ST/STM32F4xx/Source/Templates/gcc/${dev.startup})
-${framework === 'hal' ? `file(GLOB HAL_SOURCES Drivers/STM32F4xx_HAL_Driver/Src/stm32f4xx_hal*.c)
+  ${P.systemC}
+  ${P.startupDir}/${dev.startup})
+${framework === 'hal' ? `file(GLOB HAL_SOURCES ${P.hal}/Src/stm32f4xx_hal*.c)
 list(FILTER HAL_SOURCES EXCLUDE REGEX "template")` : 'set(HAL_SOURCES "")'}
 ${design.rtos ? `set(RTOS_SOURCES
-  Middlewares/FreeRTOS/tasks.c Middlewares/FreeRTOS/queue.c Middlewares/FreeRTOS/list.c Middlewares/FreeRTOS/timers.c
-  Middlewares/FreeRTOS/portable/GCC/ARM_CM4F/port.c Middlewares/FreeRTOS/portable/MemMang/heap_4.c)` : 'set(RTOS_SOURCES "")'}
+  ${P.rtos}/tasks.c ${P.rtos}/queue.c ${P.rtos}/list.c ${P.rtos}/timers.c
+  ${P.rtos}/portable/GCC/ARM_CM4F/port.c ${P.rtos}/portable/MemMang/heap_4.c)` : 'set(RTOS_SOURCES "")'}
 ${userBlock('Sources', 'cmake')}
 
 add_executable(\${PROJECT_NAME} \${APP_SOURCES} \${DEVICE_SOURCES} \${HAL_SOURCES} \${RTOS_SOURCES})
 
 target_include_directories(\${PROJECT_NAME} PRIVATE
-  Core/Inc
-  Drivers/Components
-  Drivers/CMSIS/Include
-  Drivers/CMSIS/Device/ST/STM32F4xx/Include${framework === 'hal' ? '\n  Drivers/STM32F4xx_HAL_Driver/Inc' : ''}${design.rtos ? '\n  Middlewares/FreeRTOS/include\n  Middlewares/FreeRTOS/portable/GCC/ARM_CM4F' : ''})
+  ${P.inc}
+  ${P.drivers}
+  ${P.cmsisCore}
+  ${P.deviceInc}${framework === 'hal' ? `\n  ${P.hal}/Inc` : ''}${design.rtos ? `\n  ${P.rtos}/include\n  ${P.rtos}/portable/GCC/ARM_CM4F` : ''})
 
 target_compile_definitions(\${PROJECT_NAME} PRIVATE ${dev.define} HSE_VALUE=${Math.round(clock.config.hseMHz * 1e6)}U${framework === 'hal' ? ' USE_HAL_DRIVER' : ''})
 target_compile_options(\${PROJECT_NAME} PRIVATE \${MCU_FLAGS} -ffunction-sections -fdata-sections -g3
@@ -529,7 +532,7 @@ target_compile_options(\${PROJECT_NAME} PRIVATE \${MCU_FLAGS} -ffunction-section
 # Uyarılar sadece uygulama kodunda (HAL/FreeRTOS kaynaklarında değil)
 set_source_files_properties(\${APP_SOURCES} PROPERTIES COMPILE_OPTIONS "-Wall;-Wextra")
 target_link_options(\${PROJECT_NAME} PRIVATE \${MCU_FLAGS}
-  -T\${CMAKE_CURRENT_SOURCE_DIR}/${mcu.name}_FLASH.ld
+  -T\${CMAKE_CURRENT_SOURCE_DIR}/${join(P.linkerDir, `${mcu.name}_FLASH.ld`)}
   --specs=nano.specs --specs=nosys.specs
   -Wl,--gc-sections -Wl,-Map=\${PROJECT_NAME}.map -Wl,--print-memory-usage -Wl,--no-warn-rwx-segments)
 
@@ -707,7 +710,7 @@ ${generated}
 ${userFiles}
 3. **Yeni sensör eklemek / çıkarmak / pin değiştirmek için kodu elle değiştirmeyin.** Kullanıcıdan bunu Embedded Studio
    tasarımcısında yapmasını ve "Kod Üret" demesini isteyin. Eklenti sürücüyü ekler/kaldırır, pinleri ve init kodunu günceller.
-4. Yeni, tamamen size ait dosyalar (ör. \`Core/Src/control.c\`) serbestçe eklenebilir; CMake \`Core/Src/*.c\` dosyalarını otomatik toplar.
+4. Yeni, tamamen size ait dosyalar (ör. \`${layout(framework).src}/control.c\`) serbestçe eklenebilir; CMake \`${layout(framework).src}/*.c\` dosyalarını otomatik toplar.
 5. Donanıma erişim için \`bsp.h\` API'sini kullanın (\`bsp_i2c_read\`, \`bsp_gpio_write\`, ...). ${framework === 'hal' ? 'HAL fonksiyonları da kullanılabilir.' : 'Bu proje bare-metal (register) altyapısındadır; HAL yoktur, CMSIS register tanımlarını kullanın.'}
 6. Telemetri için \`telemetry.h\`: \`Telemetry_Value("KANAL.ad", deger)\`. Embedded Studio monitörü bu kanalları otomatik çizer.
 7. Son tasarım değişikliği ve hangi dosyaların etkilendiği: \`.embedded-studio/LAST_CHANGES.md\`. Bir göreve başlamadan önce okuyun.

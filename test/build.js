@@ -31,7 +31,7 @@ const ids = ['usb_uart', 'bme280', 'mpu6050', 'ssd1306', 'w25q32', 'neo6m', 'led
     const mcu = lib.mcus[design.mcuId];
     const result = assign(design, lib);
     const clock = computeClock(mcu, design.clock);
-    packs.installIntoProject(cache, root, mcu, packs.missingInProject(root, mcu, framework, rtos));
+    packs.installIntoProject(cache, root, mcu, packs.missingInProject(root, mcu, framework, rtos), framework);
     const gen = generate(design, lib, result, clock, { halConfTemplate: packs.halConfTemplate(cache, root) });
     writeProject(root, gen, { fingerprint: designFingerprint(design, GENERATOR_VERSION), snapshot: { instances: [], connections: [] } });
     try {

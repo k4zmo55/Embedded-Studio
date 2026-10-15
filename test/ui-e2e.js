@@ -696,10 +696,21 @@ async function until(fn, ms = 8000, what = 'koşul') {
     await cdp.click('#set-apply');
     await until(() => design().framework === 'register', 4000, 'bare-metal uygulandı');
     await until(() => cdp.eval(`document.querySelector('#proj-summary').textContent.includes('bare-metal')`), 3000, 'özet güncellendi');
-    // Geri al
+    // Kod Üret: sade klasör yapısı, kullanıcı kodu taşınır
+    const P = (p) => path.join(PROJECT, p);
+    await cdp.click('#generate');
+    await until(() => fs.existsSync(P('src/app.c')) && fs.existsSync(P('linker/STM32F411CEU6_FLASH.ld')) && fs.existsSync(P('startup/system_stm32f4xx.c')), 20000, 'bare-metal dosyaları');
+    assert.ok(fs.readFileSync(P('src/app.c'), 'utf8').includes('static uint32_t benim_sayacim;'), 'kullanıcı kodu taşınmalı');
+    assert.ok(!fs.existsSync(P('Core/Src/app.c')) && !fs.existsSync(P('Core/Src/bsp.c')), 'eski yerde kalmamalı');
+    assert.ok(recorded.info.some((m) => m.startsWith('Klasör yapısı değişti')), 'taşıma bildirimi');
+    execSync('cmake -S . -B build-bm -G Ninja -DCMAKE_TOOLCHAIN_FILE=cmake/arm-none-eabi.cmake && cmake --build build-bm', { cwd: PROJECT, stdio: 'pipe' });
+    // HAL'e geri dön ve tekrar üret
     await setFw('hal');
     await cdp.click('#set-apply');
     await until(() => design().framework === 'hal', 4000, 'HAL geri geldi');
+    await cdp.click('#generate');
+    await until(() => fs.existsSync(P('Core/Src/app.c')) && !fs.existsSync(P('src/app.c')), 20000, 'HAL dosyaları');
+    assert.ok(fs.readFileSync(P('Core/Src/app.c'), 'utf8').includes('static uint32_t benim_sayacim;'));
     await cdp.click('#tab-design');
   });
   await step('Çalışma modu: Profesyonel sekme sırası, kısayollar, çizimsiz kartlar; Acemi\'ye dönüş', async () => {

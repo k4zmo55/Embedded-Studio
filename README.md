@@ -118,15 +118,22 @@ baud hatasını, SPI hızını ve timer ön bölücüsünü gösterir. Ayarlar �
 
 ### Kod üretimi
 
-```
-Core/Src/app.c          ← sizin kodunuz USER CODE bloklarında
-Core/Src/board.c        ← saat, GPIO, I2C/SPI/UART/ADC/TIM init (HAL veya register)
-Core/Src/bsp.c          ← sürücülerin kullandığı ortak donanım API'si
-Drivers/Components/     ← sensör sürücüleri (BME280, MPU-6050, NMEA...)
-CMakeLists.txt          ← arm-none-eabi-gcc + Ninja
-AGENTS.md, CLAUDE.md    ← yapay zekâ ajanları için proje kuralları
-.embedded-studio/LAST_CHANGES.md ← son tasarım değişikliği
-```
+Klasör yapısı kod altyapısına göre değişir:
+
+| | STM32 HAL (CubeMX / CubeIDE ile aynı) | Bare-metal (sade) |
+|---|---|---|
+| Sizin kodunuz (USER CODE blokları) | `Core/Src/app.c`, `Core/Src/main.c` | `src/app.c`, `src/main.c` |
+| Başlıklar | `Core/Inc/` | `inc/` |
+| Saat, GPIO, çevre birimi init / ortak donanım API'si | `Core/Src/board.c`, `Core/Src/bsp.c` | `src/board.c`, `src/bsp.c` |
+| Sadece seçilen sensör sürücüleri | `Drivers/Components/` | `drivers/` |
+| CMSIS çekirdek ve cihaz başlıkları | `Drivers/CMSIS/` | `cmsis/core/`, `cmsis/device/` |
+| Startup ve `system_stm32f4xx.c` | `Drivers/CMSIS/Device/…/Templates/` | `startup/` |
+| Linker script | `STM32F411CEU6_FLASH.ld` | `linker/STM32F411CEU6_FLASH.ld` |
+| HAL sürücüleri | `Drivers/STM32F4xx_HAL_Driver/` | — |
+| FreeRTOS (açıksa) | `Middlewares/FreeRTOS/` | `rtos/FreeRTOS/` |
+
+Her iki yapıda da: `CMakeLists.txt` (arm-none-eabi-gcc + Ninja), yapay zekâ ajanları için `AGENTS.md` / `CLAUDE.md` ve son tasarım değişikliğini anlatan `.embedded-studio/LAST_CHANGES.md`.
+Altyapıyı Ayarlar sekmesinden değiştirirseniz bir sonraki "Kod Üret"te kendi dosyalarınız ve USER CODE bloklarınız yeni klasörlere taşınır.
 
 - Tasarım değişmediyse **hiçbir dosyaya dokunulmaz**.
 - Bir sensörü çıkarırsanız sürücüsü kaldırılır ama **ona yazdığınız kod silinmez**; dosyanın sonunda `#if 0` bloğunda durur.
