@@ -67,6 +67,7 @@ function welcomeInfo(context) {
 function migrate(design, lib) {
   const d = { ...design };
   d.framework = d.framework === 'register' ? 'register' : 'hal';
+  d.mode = d.mode === 'pro' ? 'pro' : 'beginner';
   d.project = d.project || { name: 'embedded_app' };
   d.instances = d.instances || [];
   d.locks = d.locks || {};
@@ -337,7 +338,7 @@ class Studio {
     if (fs.existsSync(path.join(dir, DESIGN_FILE))) return this.toast('error', t('Bu klasörde zaten bir Embedded Studio projesi var.'));
     fs.mkdirSync(dir, { recursive: true });
     const design = migrate({
-      mcuId: m.mcuId, framework: m.framework, rtos: !!m.rtos, project: { name: m.name },
+      mcuId: m.mcuId, framework: m.framework, rtos: !!m.rtos, mode: m.mode, project: { name: m.name },
       instances: [{ id: 'c1', componentId: 'usb_uart', label: 'USB_UART_1' }], locks: {}
     }, this.lib);
     fs.writeFileSync(path.join(dir, DESIGN_FILE), JSON.stringify(design, null, 2) + '\n');

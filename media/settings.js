@@ -21,6 +21,14 @@
       h('span', { class: 'choice-desc', text: desc }));
   }
 
+  function modeChoice(value, title, desc) {
+    const sel = (state.design.mode || 'beginner') === value;
+    return h('label', { class: `choice${sel ? ' selected' : ''}` },
+      h('input', { type: 'radio', name: 'set-mode', value, checked: sel, onchange: () => { state.design.mode = value; update(); } }),
+      h('span', { class: 'choice-title', text: title }),
+      h('span', { class: 'choice-desc', text: desc }));
+  }
+
   function requestPreview() {
     preview = null;
     if (changed()) post({ type: 'settings.preview', seq: ++seq, settings: draft });
@@ -75,6 +83,13 @@
       h('section', { class: 'wizard-card' },
         h('div', { class: 'set-row' }, h('span', { class: 'label', text: t('Proje adı') }), h('span', { class: 'mono', text: (state.design.project || {}).name || '' })),
         h('div', { class: 'set-row' }, h('span', { class: 'label', text: t('Konum') }), h('span', { class: 'mono hint', text: proj.root || '' }))),
+      h('section', { class: 'wizard-card' },
+        h('div', { class: 'field' },
+          h('span', { class: 'label', text: t('Çalışma modu') }),
+          h('div', { class: 'choices two' },
+            modeChoice('beginner', t('Acemi'), t('Görsel tasarım: komponent seç, şemada bağla, pinleri ve saati asistan atasın, örnek kod üretilsin.')),
+            modeChoice('pro', t('Profesyonel'), t('Debug ve test öncelikli, yoğun ve sade arayüz. Tasarım ekranı isteğe bağlı bir araç olarak kalır.')))),
+        h('p', { class: 'hint', text: t('Mod sadece arayüzü değiştirir; dosyalara dokunmaz.') })),
       h('section', { class: 'wizard-card' },
         h('p', { class: 'hint', text: t('Bu ayarlar projenin kimliğidir ve üretilen dosyaların yapısını belirler. Değiştirmeden önce etkilenen dosyaları kontrol edin.') }),
         h('div', { class: 'field' },

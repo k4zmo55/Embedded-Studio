@@ -275,8 +275,9 @@ table.pins select { width: 100%; font-size: 12px; padding: 1px 2px; }
 .ds { display: flex; align-items: center; gap: 6px; margin-top: 8px; }
 
 /* ---- Bildirim ---- */
-#toasts { position: fixed; right: 14px; top: 52px; z-index: 1200; display: flex; flex-direction: column; gap: 6px; align-items: flex-end; pointer-events: none; }
-#toasts .toast { pointer-events: auto; cursor: pointer; }
+#toasts { position: fixed; right: 14px; top: 88px; z-index: 1200; display: flex; flex-direction: column; gap: 6px; align-items: flex-end; pointer-events: none; }
+/* Bildirimler tıklamayı engellemez: altındaki butonlar (Derle, Yükle…) her zaman kullanılabilir */
+#toasts .toast { pointer-events: none; }
 .toast { background: var(--menu); color: var(--menu-fg); border: 1px solid var(--border); border-left: 3px solid var(--info); border-radius: 4px; padding: 7px 12px; box-shadow: 0 4px 12px var(--shadow); max-width: 420px; font-size: 12px; transition: opacity 0.4s, transform 0.4s; }
 .toast.warn { border-left-color: var(--warn); }
 .toast.error { border-left-color: var(--err); }
@@ -542,3 +543,19 @@ table.regs.core td:first-child { width: 44px; }
 .set-files.mod { border-left-color: var(--warn); }
 .set-files-head { font-weight: 600; margin-bottom: 3px; }
 .proj-summary { font-family: var(--mono); font-size: 12px; min-width: 0; overflow: hidden; text-overflow: ellipsis; flex-shrink: 1; color: var(--fg); border: 1px solid var(--border); }
+
+/* ---- Çalışma modu ---- */
+.mode-badge { font-size: 10px; font-weight: 600; letter-spacing: 0.05em; text-transform: uppercase; padding: 1px 6px; border-radius: 3px; border: 1px solid var(--border); color: var(--muted); white-space: nowrap; flex-shrink: 0; }
+.mode-badge.pro { color: var(--info); border-color: color-mix(in srgb, var(--info) 50%, transparent); }
+/* Profesyonel mod: yoğun, sade. Modül çizimleri yok (JS tarafı), boşluklar ve satır yükseklikleri küçük. */
+body.mode-pro { font-size: 12px; }
+body.mode-pro header#topbar { min-height: 34px; padding: 3px 10px; gap: 10px; }
+body.mode-pro .tabs button { padding: 2px 10px; }
+body.mode-pro .pane-head { padding-top: 6px; padding-bottom: 4px; }
+body.mode-pro .lib-item { padding: 2px 6px; }
+body.mode-pro table.pins td, body.mode-pro table.regs td, body.mode-pro table.tasks td, body.mode-pro .grid-table td { padding-top: 1px; padding-bottom: 1px; }
+body.mode-pro .conn-card { margin-bottom: 6px; }
+body.mode-pro .comp-card { width: 300px; }
+body.mode-pro .wizard-card { padding: 12px 16px; }
+body.mode-pro .settings { gap: 10px; padding-top: 14px; }
+body.mode-pro .note { padding: 3px 8px; }

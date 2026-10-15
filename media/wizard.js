@@ -2,7 +2,7 @@
 (function () {
   const { h, $, post, on, icon, t } = ES;
   let info = null;
-  const form = { name: 'embedded_app', location: '', mcuId: '', framework: 'hal', rtos: false, downloadPacks: true };
+  const form = { name: 'embedded_app', location: '', mode: 'beginner', mcuId: '', framework: 'hal', rtos: false, downloadPacks: true };
 
   function choice(group, value, title, desc, extra) {
     return h('label', { class: `choice${form[group] === value ? ' selected' : ''}` },
@@ -35,6 +35,11 @@
               h('span', { class: 'choice-title', text: t('Yeni klasör') }),
               h('span', { class: 'choice-desc', text: form.location && form.location !== 'here' ? where : t('Proje adıyla yeni bir klasör oluşturulur ve VS Code onu açar.') }),
               h('button', { class: 'ghost small', onclick: (e) => { e.preventDefault(); post({ type: 'project.pickFolder' }); } }, t('Klasör seç…'))))),
+        h('div', { class: 'field' },
+          h('span', { class: 'label', text: t('Çalışma modu') }),
+          h('div', { class: 'choices two' },
+            choice('mode', 'beginner', t('Acemi'), t('Görsel tasarım: komponent seç, şemada bağla, pinleri ve saati asistan atasın, örnek kod üretilsin.')),
+            choice('mode', 'pro', t('Profesyonel'), t('Debug ve test öncelikli, yoğun ve sade arayüz. Tasarım ekranı isteğe bağlı bir araç olarak kalır.')))),
         h('div', { class: 'field' },
           h('label', { for: 'w-mcu', text: t('Mikrodenetleyici') }),
           h('select', { id: 'w-mcu', onchange: (e) => (form.mcuId = e.target.value) },

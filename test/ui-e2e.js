@@ -702,6 +702,35 @@ async function until(fn, ms = 8000, what = 'koşul') {
     await until(() => design().framework === 'hal', 4000, 'HAL geri geldi');
     await cdp.click('#tab-design');
   });
+  await step('Çalışma modu: Profesyonel sekme sırası, kısayollar, çizimsiz kartlar; Acemi\'ye dönüş', async () => {
+    assert.strictEqual(design().mode, 'beginner', 'sihirbaz varsayılanı Acemi');
+    assert.ok(await cdp.eval(`!document.body.classList.contains('mode-pro') && document.querySelector('#mode-badge').textContent === 'Acemi'`));
+    const order = () => cdp.eval(`[...document.querySelectorAll('#topbar .tabs button')].filter((b) => !b.hidden).map((b) => b.id.slice(4))`);
+    assert.deepStrictEqual(await order(), ['design', 'clock', 'monitor', 'debug', 'settings']);
+    await cdp.click('#tab-settings');
+    await cdp.click(`(document.querySelector('input[name=set-mode][value=pro]').closest('label'))`);
+    await until(() => design().mode === 'pro', 4000, 'pro kaydedildi');
+    await until(() => cdp.eval(`document.body.classList.contains('mode-pro') && document.querySelector('#debug').classList.contains('active')`), 3000, 'pro: debug ana sekme');
+    assert.deepStrictEqual(await order(), ['debug', 'monitor', 'clock', 'design', 'settings']);
+    assert.strictEqual(await cdp.eval(`document.querySelector('#mode-badge').textContent`), 'Profesyonel');
+    await cdp.shot('25-pro-mod');
+    // Alt+3 → moddaki 3. sekme (Clock)
+    await cdp.send('Input.dispatchKeyEvent', { type: 'keyDown', key: '3', code: 'Digit3', windowsVirtualKeyCode: 51, modifiers: 1 });
+    await cdp.send('Input.dispatchKeyEvent', { type: 'keyUp', key: '3', code: 'Digit3', windowsVirtualKeyCode: 51, modifiers: 1 });
+    await until(() => cdp.eval(`document.querySelector('#clock').classList.contains('active')`), 3000, 'Alt+3');
+    // Pro modda bilgi kartında modül çizimi yok, asistan kapalı başlar
+    await cdp.click('#tab-design');
+    assert.ok(await cdp.eval(`document.querySelector('#design').classList.contains('dock-closed')`), 'asistan kapalı');
+    await cdp.hover(`([...document.querySelectorAll('.lib-item')].find((e) => e.querySelector('.name').textContent === 'BME280'))`);
+    await until(() => cdp.eval(`!!document.querySelector('.popover .comp-card')`), 3000, 'kart');
+    assert.ok(await cdp.eval(`!document.querySelector('.popover .card-art')`), 'pro modda çizim yok');
+    await cdp.mouse('mouseMoved', 5, 5);
+    // Acemi'ye dönüş
+    await cdp.click('#tab-settings');
+    await cdp.click(`(document.querySelector('input[name=set-mode][value=beginner]').closest('label'))`);
+    await until(() => design().mode === 'beginner', 4000, 'acemi kaydedildi');
+    await until(() => cdp.eval(`!document.body.classList.contains('mode-pro') && document.querySelector('#design').classList.contains('active')`), 3000, 'acemi: tasarım ana sekme');
+  });
   await step('İngilizce arayüz: ayar değişince yeniden yüklenir, ekranda Türkçe metin kalmaz', async () => {
     settings.language = 'en';
     configListeners.forEach((fn) => fn({ affectsConfiguration: (s) => s === 'embeddedStudio.language' }));

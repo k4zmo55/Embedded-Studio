@@ -13,7 +13,6 @@
   "{0} başarılı": "{0} succeeded",
   "{0} başarısız (Terminal'e bakın)": "{0} failed (see the Terminal)",
   "Kapat": "Close",
-  "Kapatmak için tıklayın": "Click to dismiss",
   "Komponentleri seç, pinleri asistan atasın, kodu üret, kartı programla ve canlı izle.": "Pick components, let the assistant assign pins, generate code, flash the board and watch it live.",
   "Yeni proje": "New project",
   "Proje adı": "Project name",
@@ -543,5 +542,12 @@
   "Proje ayarları": "Project settings",
   "Bu ayarlar projenin kimliğidir ve üretilen dosyaların yapısını belirler. Değiştirmeden önce etkilenen dosyaları kontrol edin.": "These settings define the project and the structure of the generated files. Check the affected files before changing them.",
   "Etki": "Impact",
-  "Uygula": "Apply"
+  "Uygula": "Apply",
+  "Çalışma modu (Ayarlar sekmesinden değiştirilir)": "Working mode (change it in the Settings tab)",
+  "Profesyonel": "Professional",
+  "Acemi": "Beginner",
+  "Çalışma modu": "Working mode",
+  "Görsel tasarım: komponent seç, şemada bağla, pinleri ve saati asistan atasın, örnek kod üretilsin.": "Visual design: pick components, wire them in the schematic, let the assistant assign pins and clocks, get example code.",
+  "Debug ve test öncelikli, yoğun ve sade arayüz. Tasarım ekranı isteğe bağlı bir araç olarak kalır.": "Debug and test first, with a dense, plain interface. The design screen stays as an optional tool.",
+  "Mod sadece arayüzü değiştirir; dosyalara dokunmaz.": "The mode only changes the interface; it does not touch any files."
 }

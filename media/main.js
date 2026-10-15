@@ -11,6 +11,7 @@
         h('span', { class: 'proj', id: 'proj-name' }),
         // MCU / altyapı / RTOS burada sadece özet; değiştirmek için Ayarlar sekmesi (etkilenen dosyalar orada gösterilir)
         h('button', { class: 'ghost small proj-summary', id: 'proj-summary', title: t('Proje ayarlarını aç'), onclick: () => setTab('settings') }),
+        h('span', { class: 'mode-badge', id: 'mode-badge', title: t('Çalışma modu (Ayarlar sekmesinden değiştirilir)') }),
         h('span', { class: 'save-state', id: 'save-state', title: t('Tasarım her değişiklikte otomatik kaydedilir') }),
         h('span', { class: 'spacer' }),
         h('nav', { class: 'tabs', role: 'tablist' }, ...TABS.map(([id, label]) => h('button', { id: `tab-${id}`, role: 'tab', onclick: () => setTab(id) }, label))),
@@ -44,6 +45,29 @@
     state.lib = m.lib;
   });
 
+  /** Moda göre sekme sırası, görünürlük, gövde sınıfı; mod değiştiyse modun ana sekmesine geç. */
+  function applyMode() {
+    const id = (state.design && state.design.mode) === 'pro' ? 'pro' : 'beginner';
+    const m = ES.mode();
+    document.body.classList.toggle('mode-pro', id === 'pro');
+    const nav = document.querySelector('#topbar .tabs');
+    TABS.forEach(([tab]) => ($(`tab-${tab}`).hidden = !m.tabs.includes(tab)));
+    m.tabs.forEach((tab, i) => {
+      const b = $(`tab-${tab}`);
+      b.title = `Alt+${i + 1}`;
+      nav.append(b);
+    });
+    $('mode-badge').textContent = id === 'pro' ? t('Profesyonel') : t('Acemi');
+    $('mode-badge').className = `mode-badge ${id}`;
+    if (ui.modeSeen !== id) {
+      // Modun ilk açılışı: modun ana sekmesi ve varsayılan asistan durumu
+      ui.modeSeen = id;
+      ui.assistantOpen = m.assistant;
+      saveUi();
+      setTab(m.home);
+    } else if (!m.tabs.includes(ui.tab)) setTab(m.home);
+  }
+
   ES.on('state', (m) => {
     ES.showWelcome(false);
     state.design = m.design;
@@ -54,6 +78,7 @@
     const mcu = state.lib.mcus[state.design.mcuId];
     $('proj-summary').textContent = [mcu ? mcu.name : state.design.mcuId, state.design.framework === 'hal' ? 'HAL' : 'bare-metal', state.design.rtos ? 'FreeRTOS' : t('RTOS yok')].join(' · ');
     $('proj-name').textContent = state.design.project ? state.design.project.name : '';
+    applyMode(); // önce: asistan paneli ve ana sekme moda göre ayarlansın, sonra çizilsin
     for (const [id] of TABS) ES.tabs[id].render();
   });
 
@@ -74,6 +99,14 @@
     if (m.report.orphans && m.report.orphans.length) ES.toast('warn', t('Kaldırılan sensörlere ait kodunuz silinmedi; ilgili dosyanın sonundaki "Orphaned" bloğunda.'));
   });
   ES.on('task.done', (m) => ES.toast(m.ok ? 'info' : 'error', m.ok ? t('{0} başarılı', m.name) : t('{0} başarısız (Terminal\'e bakın)', m.name)));
+
+  // Alt+1…9: sekmeler arasında geçiş (moddaki sıraya göre)
+  document.addEventListener('keydown', (e) => {
+    if (!e.altKey || e.ctrlKey || e.metaKey || !state.design || document.body.classList.contains('welcome-mode')) return;
+    const n = Number(e.key);
+    const tab = n >= 1 && ES.mode().tabs[n - 1];
+    if (tab) { e.preventDefault(); setTab(tab); }
+  });
 
   // Ctrl+Z / Ctrl+Y (Ctrl+Shift+Z): tasarım ve clock değişikliklerini geri al / yinele
   document.addEventListener('keydown', (e) => {

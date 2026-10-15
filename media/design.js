@@ -169,7 +169,7 @@
     }
     if (c.telemetry && c.telemetry.length) rows.push([t('Ölçümler'), c.telemetry.map((m) => `${m.id}${m.unit ? ` (${m.unit})` : ''}`).join(', ')]);
     return h('div', { class: 'comp-card' },
-      h('div', { class: 'card-art' }, ES.art(c)),
+      ES.mode().art ? h('div', { class: 'card-art' }, ES.art(c)) : null,
       h('div', { class: 'card-body' },
         h('div', { class: 'card-title' }, h('strong', { text: inst ? inst.label : c.name }), h('span', { class: `iface k-${c.interface}`, text: KIND_LABEL[c.interface] || c.interface })),
         inst ? h('div', { class: 'hint', text: c.name }) : null,
@@ -275,7 +275,7 @@
       width: 520,
       body: h('div', { class: 'conn-modal' },
         h('div', { class: 'conn-modal-top' },
-          h('div', { class: 'conn-modal-art' }, ES.art(c)),
+          ES.mode().art ? h('div', { class: 'conn-modal-art' }, ES.art(c)) : null,
           h('div', {},
             h('div', { class: 'hint', text: c.name }),
             addrSel,
@@ -686,6 +686,7 @@
   ES.tabs.design = {
     mount,
     render() {
+      applyLayout();
       $('undo').disabled = !ES.canUndo();
       $('redo').disabled = !ES.canRedo();
       renderLibrary();

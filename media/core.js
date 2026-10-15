@@ -213,16 +213,24 @@ window.ES = (function () {
   function toast(level, text) {
     let box = $('toasts');
     if (!box) document.body.append((box = h('div', { id: 'toasts', 'aria-live': 'polite' })));
-    // Aynı mesaj üst üste gelmesin; en fazla 4 bildirim; hatalar daha uzun kalır, tıklayınca kapanır.
+    // Aynı mesaj üst üste gelmesin; en fazla 4 bildirim; hatalar daha uzun kalır.
     for (const old of box.children) if (old.textContent === text) old.remove();
     while (box.children.length >= 4) box.firstChild.remove();
-    const el = h('div', { class: `toast ${level}`, role: level === 'error' ? 'alert' : 'status', title: t('Kapatmak için tıklayın') }, h('span', { text }));
+    const el = h('div', { class: `toast ${level}`, role: level === 'error' ? 'alert' : 'status' }, h('span', { text }));
     const close = () => { el.classList.add('out'); setTimeout(() => el.remove(), 400); };
-    el.onclick = close;
     box.append(el);
     setTimeout(close, level === 'error' ? 9000 : level === 'warn' ? 6500 : 4200);
   }
   on('toast', (m) => toast(m.level, m.text));
+
+  // ---- çalışma modları ----
+  // Hangi sekme hangi modda ve hangi sırada görünür: tek yapılandırma. Yeni panel eklerken buraya ekleyin.
+  //  home: mod ilk açıldığında gelinen sekme · art: kartlarda modül çizimi · assistant: asistan paneli açık başlar
+  const MODES = {
+    beginner: { tabs: ['design', 'clock', 'monitor', 'debug', 'settings'], home: 'design', art: true, assistant: true },
+    pro: { tabs: ['debug', 'monitor', 'clock', 'design', 'settings'], home: 'debug', art: false, assistant: false }
+  };
+  const mode = () => MODES[state.design && state.design.mode] || MODES.beginner;
 
   const isTyping = () => {
     const a = document.activeElement;
@@ -231,5 +239,5 @@ window.ES = (function () {
   const hex = (v, w = 8) => '0x' + (v >>> 0).toString(16).toUpperCase().padStart(w, '0');
   const KIND_LABEL = { i2c: 'I2C', spi: 'SPI', uart: 'UART', gpio: 'GPIO', adc: 'ADC', pwm: 'PWM' };
 
-  return { t, h, s, $, cIdent, on, emit, post, state, ui, saveUi, update, undo, redo, canUndo: () => hist.undo.length > 0, canRedo: () => hist.redo.length > 0, icon, contextMenu, closeMenu, modal, showTip, placeTip, hideTip, toast, isTyping, hex, KIND_LABEL, tabs: {} };
+  return { t, h, s, $, cIdent, on, emit, post, state, ui, saveUi, update, undo, redo, canUndo: () => hist.undo.length > 0, canRedo: () => hist.redo.length > 0, icon, contextMenu, closeMenu, modal, showTip, placeTip, hideTip, toast, isTyping, hex, KIND_LABEL, MODES, mode, tabs: {} };
 })();
