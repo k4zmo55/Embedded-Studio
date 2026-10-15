@@ -1,0 +1,5 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Katkı rehberi
+    url: https://github.com/k4zmo55/Embedded-Studio/blob/main/CONTRIBUTING.md
+    about: Nasıl katkı yapılır, komponent nasıl eklenir

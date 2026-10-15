@@ -1,0 +1,43 @@
+name: Hata bildirimi
+description: Bir şey beklendiği gibi çalışmıyor
+labels: [hata]
+body:
+  - type: textarea
+    id: ne-oldu
+    attributes:
+      label: Ne oldu?
+      description: Gördüğün hatayı ve ne beklediğini kısaca yaz.
+    validations:
+      required: true
+  - type: textarea
+    id: adimlar
+    attributes:
+      label: Nasıl tekrarlanır?
+      placeholder: |
+        1. Tasarıma BME280 ve MPU-6050 ekle
+        2. Kod Üret'e bas
+        3. ...
+    validations:
+      required: true
+  - type: dropdown
+    id: alan
+    attributes:
+      label: Hangi bölüm?
+      options: [Sihirbaz, Tasarım / şema, Komponent oluşturucu, Clock, Kod üretimi, Derleme / yükleme, Monitör, Debug, Diğer]
+    validations:
+      required: true
+  - type: input
+    id: surum
+    attributes:
+      label: Eklenti ve VS Code sürümü
+      placeholder: Embedded Studio 0.3.0, VS Code 1.105, Windows 11
+  - type: dropdown
+    id: altyapi
+    attributes:
+      label: Kod altyapısı
+      options: [STM32 HAL, Bare-metal (register), Bilmiyorum / ilgisiz]
+  - type: textarea
+    id: ek
+    attributes:
+      label: Ekran görüntüsü, embedded-studio.json, hata çıktısı
+      description: Varsa ekle. Derleme hatasıysa Terminal çıktısını yapıştır.

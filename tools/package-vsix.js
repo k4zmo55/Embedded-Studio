@@ -20,9 +20,26 @@ function walk(dir, out = []) {
   return out;
 }
 
+// Marketplace sayfası göreli yolları çözemez: README/CHANGELOG'daki görselleri GitHub raw, bağlantıları GitHub blob adresine çevir (vsce gibi).
+const repo = ((pkg.repository && pkg.repository.url) || '').replace(/\.git$/, '').replace('https://github.com/', '');
+function absolutize(md) {
+  if (!repo) return md;
+  const raw = `https://raw.githubusercontent.com/${repo}/main/`;
+  const blob = `https://github.com/${repo}/blob/main/`;
+  const fix = (url, image) => (/^(https?:|#|mailto:|data:)/.test(url) ? url : (image ? raw : blob) + url.replace(/^\.\//, ''));
+  return md
+    .replace(/(!?)\[([^\]]*)\]\(([^)\s]+)\)/g, (_, bang, text, url) => `${bang}[${text}](${fix(url, !!bang)})`)
+    .replace(/<img([^>]*?)src="([^"]+)"/g, (_, pre, url) => `<img${pre}src="${fix(url, true)}"`)
+    .replace(/<a([^>]*?)href="([^"]+)"/g, (_, pre, url) => `<a${pre}href="${fix(url, false)}"`);
+}
+
 // ---- dosya listesi ----
 const entries = [];
-for (const [src, dst] of Object.entries(INCLUDE_FILES)) entries.push({ name: `extension/${dst}`, data: fs.readFileSync(path.join(ROOT, src)) });
+for (const [src, dst] of Object.entries(INCLUDE_FILES)) {
+  let data = fs.readFileSync(path.join(ROOT, src));
+  if (src.endsWith('.md')) data = Buffer.from(absolutize(data.toString('utf8')));
+  entries.push({ name: `extension/${dst}`, data });
+}
 for (const d of INCLUDE_DIRS) {
   for (const f of walk(path.join(ROOT, d))) entries.push({ name: `extension/${path.relative(ROOT, f).split(path.sep).join('/')}`, data: fs.readFileSync(f) });
 }

@@ -1,0 +1,34 @@
+name: Testler
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  smoke:
+    name: Birim testleri
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: node test/smoke.js
+
+  build:
+    name: Üretilen kodu derle (HAL / register × RTOS)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: ARM araç zinciri
+        run: sudo apt-get update && sudo apt-get install -y gcc-arm-none-eabi libnewlib-arm-none-eabi ninja-build cmake
+      - name: Paket önbelleği
+        uses: actions/cache@v4
+        with:
+          path: ~/es-packs
+          key: es-packs-v1
+      - run: node test/build.js ~/es-packs ~/es-build

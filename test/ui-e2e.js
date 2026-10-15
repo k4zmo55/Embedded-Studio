@@ -133,19 +133,36 @@ class Cdp {
     return r;
   }
   async mouse(type, x, y, button = 'none', clickCount = 0) { await this.send('Input.dispatchMouseEvent', { type, x, y, button, clickCount, buttons: button === 'left' ? 1 : button === 'right' ? 2 : 0 }); }
+  async glide(x, y) {
+    if (REC && this.lastX !== undefined) {
+      const steps = 10;
+      for (let i = 1; i < steps; i++) {
+        const t = i / steps, e = t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2;
+        await this.mouse('mouseMoved', this.lastX + (x - this.lastX) * e, this.lastY + (y - this.lastY) * e);
+        await sleep(22);
+      }
+    }
+    this.lastX = x;
+    this.lastY = y;
+    await this.mouse('mouseMoved', x, y);
+  }
   async click(sel, button = 'left') {
     const { x, y } = await this.rect(sel);
-    await this.mouse('mouseMoved', x, y);
+    await this.glide(x, y);
+    await beat(180);
     await this.mouse('mousePressed', x, y, button, 1);
     await this.mouse('mouseReleased', x, y, button, 1);
     await sleep(120);
   }
-  async hover(sel) { const { x, y } = await this.rect(sel); await this.mouse('mouseMoved', x, y); }
+  async hover(sel) { const { x, y } = await this.rect(sel); await this.glide(x, y); }
   async key(key, code, vk) {
     await this.send('Input.dispatchKeyEvent', { type: 'keyDown', key, code, windowsVirtualKeyCode: vk });
     await this.send('Input.dispatchKeyEvent', { type: 'keyUp', key, code, windowsVirtualKeyCode: vk });
   }
-  async type(text) { await this.send('Input.insertText', { text }); }
+  async type(text) {
+    if (!REC) return this.send('Input.insertText', { text });
+    for (const ch of text) { await this.send('Input.insertText', { text: ch }); await sleep(45); }
+  }
   async shot(name) {
     const r = await this.send('Page.captureScreenshot', { format: 'png' });
     fs.writeFileSync(path.join(SHOTS, `${name}.png`), Buffer.from(r.data, 'base64'));
@@ -153,6 +170,44 @@ class Cdp {
   }
 }
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+// ------------------------------------------------------------------ demo kaydı (README GIF'leri)
+// ES_RECORD=<klasör> verilirse sahneler JPEG kare olarak kaydedilir; imleç görünür olur, hareketler yumuşar.
+const REC = process.env.ES_RECORD;
+const rec = { scene: null, n: 0, busy: false };
+const beat = (ms = 450) => (REC ? sleep(ms) : Promise.resolve());
+function startRecorder(cdp) {
+  if (!REC) return;
+  fs.mkdirSync(REC, { recursive: true });
+  setInterval(async () => {
+    if (!rec.scene || rec.busy) return;
+    rec.busy = true;
+    try {
+      const r = await cdp.send('Page.captureScreenshot', { format: 'jpeg', quality: 82 });
+      fs.writeFileSync(path.join(REC, `${rec.scene}_${String(rec.n++).padStart(5, '0')}_${Date.now()}.jpg`), Buffer.from(r.data, 'base64'));
+    } catch { /* kare atla */ }
+    rec.busy = false;
+  }, 120);
+}
+const scene = (name) => { rec.scene = REC ? name : null; };
+const CURSOR_JS = `(() => {
+  if (document.getElementById('demo-cursor')) return;
+  const c = document.createElement('div');
+  c.id = 'demo-cursor';
+  c.innerHTML = '<svg width="22" height="22" viewBox="0 0 22 22"><path d="M3 2l14 8-6 1.6L8 18z" fill="#fff" stroke="#111" stroke-width="1.4" stroke-linejoin="round"/></svg>';
+  c.style.cssText = 'position:fixed;left:0;top:0;z-index:99999;pointer-events:none;transform:translate(-3px,-2px);transition:none';
+  document.body.appendChild(c);
+  const ring = document.createElement('div');
+  ring.style.cssText = 'position:fixed;width:28px;height:28px;margin:-14px 0 0 -14px;border-radius:50%;border:2px solid #4aa3ff;z-index:99998;pointer-events:none;opacity:0;transition:opacity .35s, transform .35s';
+  document.body.appendChild(ring);
+  document.addEventListener('mousemove', (e) => { c.style.left = e.clientX + 'px'; c.style.top = e.clientY + 'px'; }, true);
+  document.addEventListener('mousedown', (e) => {
+    ring.style.left = e.clientX + 'px'; ring.style.top = e.clientY + 'px';
+    ring.style.borderColor = e.button === 2 ? '#f5a524' : '#4aa3ff';
+    ring.style.transition = 'none'; ring.style.opacity = '1'; ring.style.transform = 'scale(.6)';
+    requestAnimationFrame(() => { ring.style.transition = 'opacity .45s, transform .45s'; ring.style.opacity = '0'; ring.style.transform = 'scale(1.6)'; });
+  }, true);
+})()`;
 async function until(fn, ms = 8000, what = 'koşul') {
   const t0 = Date.now();
   for (;;) {
@@ -208,6 +263,11 @@ async function until(fn, ms = 8000, what = 'koşul') {
   await cdp.send('Page.enable');
   await cdp.send('Emulation.setDeviceMetricsOverride', { width: 1500, height: 920, deviceScaleFactor: 1, mobile: false });
   await cdp.send('Page.navigate', { url: ORIGIN + '/' });
+  if (REC) {
+    await sleep(1500);
+    await cdp.eval(CURSOR_JS);
+    startRecorder(cdp);
+  }
   const steps = [];
   const step = async (name, fn) => {
     try { await fn(); steps.push([name, true]); console.log(`  ✓ ${name}`); }
@@ -237,9 +297,11 @@ async function until(fn, ms = 8000, what = 'koşul') {
     assert.ok(fs.existsSync(path.join(PROJECT, '.vscode/settings.json')));
   });
   await step('Kütüphaneden komponent ekle (6 adet) + otomatik kayıt', async () => {
+    scene('tasarim');
     for (const name of ['BME280', 'MPU-6050', 'SSD1306 OLED 128x64', 'u-blox NEO-6M GPS', 'LED', 'Servo SG90']) {
       await cdp.click(`([...document.querySelectorAll('.lib-item')].find((e) => e.querySelector('.name').textContent === ${JSON.stringify(name)}))`);
       await sleep(250);
+      await beat(250);
     }
     await until(() => design().instances.length === 7, 5000, 'otomatik kayıt');
     await until(() => cdp.eval(`document.querySelector('#save-state').textContent.includes('Kaydedildi') || document.querySelector('#save-state').textContent.includes('Otomatik')`), 4000, 'kaydedildi göstergesi');
@@ -249,6 +311,7 @@ async function until(fn, ms = 8000, what = 'koşul') {
   await step('Komponent üzerine gelince bilgi kartı (resimli)', async () => {
     await cdp.hover(`([...document.querySelectorAll('#schematic .comp')].find((g) => g.textContent.includes('MPU6050_1')).querySelector('.sym-body'))`);
     await until(() => cdp.eval(`!!document.querySelector('.popover .card-art svg')`), 3000, 'popover');
+    await beat(1600);
     await cdp.shot('03-bilgi-karti');
     await cdp.mouse('mouseMoved', 5, 5);
   });
@@ -257,12 +320,15 @@ async function until(fn, ms = 8000, what = 'koşul') {
     const labels = await cdp.eval(`[...document.querySelectorAll('.ctx-menu .ctx-label')].map((e) => e.textContent)`);
     assert.deepStrictEqual(labels, ['Bağlantılar…', 'Yönü değiştir (aynala)', 'Datasheet', 'Sil']);
     assert.ok(await cdp.eval(`!!document.querySelector('.ctx-menu .ctx-item svg rect[fill="#e5484d"]')`), 'PDF ikonu');
+    await beat(900);
     await cdp.shot('04-sag-tik');
   });
   await step('Bağlantılar penceresi: pin değiştir + Kaydet', async () => {
     await cdp.click(`([...document.querySelectorAll('.ctx-item')].find((e) => e.textContent.includes('Bağlantılar')))`);
     await until(() => cdp.eval(`!!document.querySelector('.modal')`), 2000, 'modal');
+    await beat(700);
     await cdp.eval(`(() => { const s = document.querySelector('.modal table.pins select'); s.value = 'PB8'; s.dispatchEvent(new Event('change')); })()`);
+    await beat(900);
     await cdp.shot('05-baglantilar-penceresi');
     assert.ok(!design().locks['c' + ''], 'Kaydet öncesi değişmemeli');
     const before = JSON.stringify(design().locks);
@@ -285,7 +351,9 @@ async function until(fn, ms = 8000, what = 'koşul') {
     await cdp.click(`([...document.querySelectorAll('.ctx-item')].find((e) => e.textContent.includes('aynala')))`);
     await until(() => design().instances.find((i) => i.label === 'BME280_1').mirror === true, 3000, 'mirror');
     await sleep(300);
+    await beat(1200);
     await cdp.shot('06-aynalanmis');
+    scene(null);
   });
   await step('Datasheet indir (PDF) ve aç', async () => {
     await cdp.click(`([...document.querySelectorAll('#schematic .comp')].find((g) => g.textContent.includes('BME280_1')).querySelector('.sym-body'))`, 'right');
@@ -343,6 +411,7 @@ async function until(fn, ms = 8000, what = 'koşul') {
   const setInput = (sel, value) => cdp.eval(`(() => { const el = ${sel}; el.value = ${JSON.stringify(value)}; el.dispatchEvent(new Event('input', { bubbles: true })); el.dispatchEvent(new Event('change', { bubbles: true })); })()`);
   const compFile = (id) => path.join(PROJECT, '.embedded-studio/components', `${id}.json`);
   await step('Komponent oluşturucu: sıfırdan komponent, doğrulama, kaydet ve tasarıma ekle', async () => {
+    scene('olusturucu');
     await cdp.click('#lib-add');
     await cdp.click(`([...document.querySelectorAll('.ctx-item')].find((e) => e.textContent.includes('Yeni komponent')))`);
     await until(() => cdp.eval(`!!document.querySelector('.creator #cf-name')`), 3000, 'oluşturucu');
@@ -373,6 +442,8 @@ async function until(fn, ms = 8000, what = 'koşul') {
     assert.strictEqual(c.monitor[0].type, 'thermo');
     assert.ok(!c.spi && !c.uart && !c.imageUri && !c.source, 'temiz çıktı');
     await until(() => design().instances.some((i) => i.componentId === 'sicaklik_sensoru_tmp102'), 4000, 'tasarıma eklendi');
+    await beat(1500);
+    scene(null);
     assert.ok(!(await cdp.eval(`!!document.querySelector('.creator')`)), 'pencere kapanmalı');
   });
   await step('Komponent oluşturucu: düzenle (sağ tık), kopyasını düzenle, kaydedilmemiş uyarısı', async () => {
@@ -422,7 +493,9 @@ async function until(fn, ms = 8000, what = 'koşul') {
     await cdp.click('#toggle-right');
   });
   await step('Clock: geçersiz ayar kırmızı, otomatik çöz 84 MHz', async () => {
+    scene('clock');
     await cdp.click('#tab-clock');
+    await beat(800);
     await sleep(300);
     await cdp.eval(`(() => { const s = document.querySelector('select[aria-label=apb1]'); s.value = '1'; s.dispatchEvent(new Event('change')); })()`);
     await until(() => cdp.eval(`!!document.querySelector('.ck-freq.bad')`), 3000, 'hata vurgusu');
@@ -431,6 +504,8 @@ async function until(fn, ms = 8000, what = 'koşul') {
     await cdp.click(`([...document.querySelectorAll('.clock-bar button')].find((b) => b.textContent === 'Otomatik çöz'))`);
     await until(() => cdp.eval(`document.querySelector('#clk-summary').textContent.startsWith('SYSCLK 84 MHz') && !document.querySelector('.ck-freq.bad')`), 3000, 'çözüm');
     await sleep(500);
+    await beat(1500);
+    scene(null);
     await cdp.shot('11-clock');
   });
   await step('Kod Üret: dosyalar + ikinci üretimde dosyalara dokunulmaz', async () => {
@@ -472,9 +547,12 @@ async function until(fn, ms = 8000, what = 'koşul') {
     await until(() => design().instances.some((i) => i.componentId === 'mpu6050'), 3000, 'geri ekleme');
   });
   await step('Monitör: canlı veri, 3B IMU, GPS, gösterge, task tablosu', async () => {
+    scene('monitor');
     await cdp.click('#tab-monitor');
     await cdp.click('#mon-toggle');
     await sleep(5000);
+    await beat(4000);
+    scene(null);
     assert.ok(await count('.w-card') >= 6);
     await until(async () => (await count('table.tasks tr')) >= 4, 6000, 'task tablosu').catch(async (e) => {
       throw new Error(e.message + ' | tasks: ' + await cdp.eval(`document.querySelectorAll('table.tasks').length + ' tablo, #tasks=' + document.querySelectorAll('#tasks').length + ' ' + (document.querySelector('#tasks') || {}).innerHTML?.slice(0, 160)`));
@@ -503,6 +581,7 @@ async function until(fn, ms = 8000, what = 'koşul') {
     await cdp.click('#mon-toggle');
   });
   await step('Debug (simülasyon): register, bit alanları, durdur, core, bellek, ELF değişkeni', async () => {
+    scene('debug');
     await cdp.click('#tab-debug');
     await cdp.click('#dbg-conn');
     await until(() => cdp.eval(`document.querySelector('#dbg-state').textContent === 'ÇALIŞIYOR'`), 5000, 'bağlantı');
@@ -520,6 +599,8 @@ async function until(fn, ms = 8000, what = 'koşul') {
     await cdp.click(`([...document.querySelectorAll('.sym')].find((e) => e.textContent.startsWith('bme280_1_ok')))`);
     await until(() => cdp.eval(`document.querySelectorAll('#dbg-watch tr').length === 1`), 3000, 'izleme');
     await sleep(800);
+    await beat(1500);
+    scene(null);
     await cdp.shot('16-debug');
   });
   await step('Debug: OpenOCD kart yokken anlaşılır hata', async () => {

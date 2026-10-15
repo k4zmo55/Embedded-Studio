@@ -1,0 +1,25 @@
+name: Komponent / MCU isteği
+description: Kütüphanede olmasını istediğin bir sensör, modül ya da mikrodenetleyici
+labels: [komponent]
+body:
+  - type: input
+    id: ad
+    attributes:
+      label: Komponent veya MCU adı
+      placeholder: BMP280, INA219, STM32F446RE...
+    validations:
+      required: true
+  - type: dropdown
+    id: arayuz
+    attributes:
+      label: Arayüz
+      options: [I2C, SPI, UART, GPIO, Analog, PWM, MCU, Bilmiyorum]
+  - type: input
+    id: datasheet
+    attributes:
+      label: Datasheet bağlantısı
+  - type: textarea
+    id: not
+    attributes:
+      label: Not
+      description: Komponent oluşturucu ile kendin hazırladıysan dışa aktardığın JSON'u buraya yapıştırabilirsin.

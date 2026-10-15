@@ -5,6 +5,14 @@
   "version": "0.3.0",
   "publisher": "mhmtakfseckin",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/k4zmo55/Embedded-Studio.git"
+  },
+  "bugs": {
+    "url": "https://github.com/k4zmo55/Embedded-Studio/issues"
+  },
+  "homepage": "https://github.com/k4zmo55/Embedded-Studio#readme",
   "preview": true,
   "icon": "media/icon.png",
   "galleryBanner": {

@@ -1,0 +1,24 @@
+name: Özellik isteği
+description: Yeni bir özellik ya da iyileştirme öner
+labels: [öneri]
+body:
+  - type: textarea
+    id: sorun
+    attributes:
+      label: Hangi sorunu çözüyor?
+      description: Şu an neyi yapmak zor ya da imkânsız?
+    validations:
+      required: true
+  - type: textarea
+    id: oneri
+    attributes:
+      label: Önerin
+      description: Nasıl çalışmasını hayal ediyorsun? Taslak çizim ya da örnek ekleyebilirsin.
+    validations:
+      required: true
+  - type: checkboxes
+    id: katki
+    attributes:
+      label: Katkı
+      options:
+        - label: Bunu kendim geliştirmek isterim (yardımla)
