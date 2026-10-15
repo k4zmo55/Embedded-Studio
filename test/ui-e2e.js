@@ -478,9 +478,14 @@ async function until(fn, ms = 8000, what = 'koşul') {
     await cdp.click(`([...document.querySelectorAll('.lib-item')].find((e) => e.querySelector('.name').textContent === 'BME280'))`, 'right');
     await cdp.click(`([...document.querySelectorAll('.ctx-item')].find((e) => e.textContent.includes('Kopyasını')))`);
     await until(() => cdp.eval(`document.querySelector('#cf-id') && document.querySelector('#cf-id').value === 'bme280_ozel'`), 3000, 'kopya');
-    await until(() => cdp.eval(`!document.querySelector('#cf-save').disabled`), 3000, 'kopya geçerli');
-    await cdp.click('#cf-save');
+    await until(() => cdp.eval(`!document.querySelector('#cf-save').disabled && document.querySelector('#cf-errors').textContent.includes('Kaydetmeye hazır')`), 3000, 'kopya doğrulandı');
+    // Çift tıklama: ikinci istek gönderilmemeli ("zaten var" uyarısı çıkmamalı)
+    const warnsBefore = recorded.warn.length;
+    await cdp.eval(`(() => { const b = document.querySelector('#cf-save'); b.click(); b.click(); })()`);
     await until(() => fs.existsSync(compFile('bme280_ozel')), 4000, 'kopya dosyası');
+    await until(() => cdp.eval(`!document.querySelector('.creator')`), 3000, 'kopya penceresi kapandı');
+    await sleep(300);
+    assert.strictEqual(recorded.warn.length, warnsBefore, 'çift tıklamada üzerine yazma uyarısı çıkmamalı: ' + recorded.warn.slice(warnsBefore).join(' | '));
     assert.strictEqual(JSON.parse(fs.readFileSync(compFile('bme280_ozel'), 'utf8')).telemetry.length, 3);
   });
   await step('Asistan: öneri ve ekleme', async () => {

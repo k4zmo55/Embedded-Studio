@@ -44,6 +44,8 @@
   let idTouched = false;   // kullanıcı kimliği elle değiştirdi mi
   let dirty = false;
   let errors = [];
+  let validated = false;  // eklentiden ilk doğrulama sonucu geldi mi
+  let saving = false;     // kaydetme isteği yanıt bekliyor (çift tıklamayı engeller)
   let seq = 0;
   let dlg = null;
   let validateTimer = 0;
@@ -297,15 +299,18 @@
       h('div', { class: 'cf-prev-symbol' }, symbol(d)),
       h('div', { class: 'cf-prev-head', text: 'Bilgi kartı' }),
       h('div', { class: 'cf-prev-card' }, ES.compCard(c)),
-      h('div', { class: 'cf-prev-head' }, 'Doğrulama ', errors.length ? h('span', { class: 'badge err', text: String(errors.length) }) : h('span', { class: 'badge ok', text: '✓' })),
-      h('div', { class: 'notes', id: 'cf-errors' }, ...(errors.length
+      h('div', { class: 'cf-prev-head' }, 'Doğrulama ', !validated ? h('span', { class: 'badge', text: '…' }) : errors.length ? h('span', { class: 'badge err', text: String(errors.length) }) : h('span', { class: 'badge ok', text: '✓' })),
+      h('div', { class: 'notes', id: 'cf-errors' }, ...(!validated
+        ? [h('div', { class: 'note info' }, h('span', { class: 'ic', text: '…' }), h('span', { text: 'Doğrulanıyor…' }))]
+        : errors.length
         ? errors.map((e) => h('div', { class: 'note error' }, h('span', { class: 'ic', text: '✕' }), h('span', { text: e })))
         : [h('div', { class: 'note info' }, h('span', { class: 'ic', text: '✓' }), h('span', { text: 'Kaydetmeye hazır.' }))])),
       h('details', { class: 'cf-json' }, h('summary', { text: 'JSON' }), h('pre', { text: JSON.stringify(output(), null, 2) })));
     const save = $('cf-save');
-    if (save) save.disabled = errors.length > 0;
+    const blocked = saving || !validated || errors.length > 0;
+    if (save) save.disabled = blocked;
     const saveAdd = $('cf-save-add');
-    if (saveAdd) saveAdd.disabled = errors.length > 0;
+    if (saveAdd) saveAdd.disabled = blocked;
   }
 
   // ================================================================ aç / kaydet
@@ -316,6 +321,8 @@
     idTouched = mode !== 'new';
     dirty = false;
     errors = [];
+    validated = false;
+    saving = false;
     const warn = h('span', { class: 'cf-warn', id: 'cf-warn' });
     const body = h('div', { class: 'creator' }, h('div', { class: 'cf-form', id: 'cf-form' }), h('aside', { class: 'cf-preview', id: 'cf-preview' }));
     let confirmClose = false;
@@ -346,13 +353,17 @@
   }
 
   function save(addToDesign) {
+    if (!validated || saving) return;
     if (errors.length) return toast('warn', 'Önce doğrulama hatalarını düzeltin.');
+    saving = true;
+    renderPreview();
     post({ type: 'comp.save', component: output(), originalId, addToDesign });
   }
 
   ES.on('comp.validation', (m) => {
     if (!draft || m.seq !== seq) return;
     errors = m.errors;
+    validated = true;
     renderPreview();
   });
   ES.on('comp.image', (m) => {
@@ -363,8 +374,10 @@
   });
   ES.on('comp.result', (m) => {
     if (!draft) return;
+    saving = false;
     if (!m.ok) {
-      if (m.errors && m.errors.length) { errors = m.errors; renderPreview(); }
+      if (m.errors && m.errors.length) errors = m.errors;
+      renderPreview();
       return;
     }
     dirty = false;
