@@ -108,7 +108,7 @@
     if (structural) renderForm();
     renderPreview();
     clearTimeout(validateTimer);
-    validateTimer = setTimeout(() => post({ type: 'comp.validate', seq: ++seq, component: output() }), 150);
+    validateTimer = setTimeout(() => { if (draft) post({ type: 'comp.validate', seq: ++seq, component: output() }); }, 150);
   }
 
   // ================================================================ form
@@ -170,7 +170,11 @@
       const special = t.sim && t.sim.kind;
       if (!t.sim) t.sim = { base: 0, amp: 1, periodS: 10, noise: 0 };
       return h('div', { class: 'cf-tel' },
-        text(t.id, (v) => (t.id = v.trim()), { class: 'mono', placeholder: 'ad (ör. temp)', 'aria-label': `Ölçüm ${i + 1} adı` }),
+        text(t.id, (v) => {
+          const old = t.id;
+          t.id = v.trim();
+          for (const w of d.monitor) w.channels = w.channels.map((c) => (c === old ? t.id : c));
+        }, { class: 'mono', placeholder: 'ad (ör. temp)', 'aria-label': `Ölçüm ${i + 1} adı`, onchange: () => change(true) }),
         text(t.unit, (v) => (t.unit = v), { placeholder: 'birim', class: 'unit', 'aria-label': `Ölçüm ${i + 1} birimi` }),
         special ? h('span', { class: 'hint', text: `simülasyon: ${t.sim.kind}` }) : h('span', { class: 'cf-sim', title: 'Simülasyonda üretilecek değer: taban ± genlik, periyot saniye' },
           'sim', num(t.sim.base, (v) => (t.sim.base = v ?? 0), { title: 'taban', 'aria-label': 'taban' }),
@@ -234,7 +238,15 @@
         h('p', { class: 'hint', text: ids.length ? 'Boş bırakılırsa tüm ölçümler tek grafikte gösterilir.' : 'Önce bir ölçüm ekleyin.' }),
         ...monRows,
         h('div', { class: 'cf-actions' },
-          h('button', { class: 'ghost small', id: 'cf-add-mon', disabled: !ids.length, onclick: () => { d.monitor.push({ type: ids.length === 1 ? 'gauge' : 'chart', channels: ids.slice(0, ids.length === 1 ? 1 : 3) }); change(true); } }, icon('plus', 11), 'Widget ekle'))),
+          h('button', {
+            class: 'ghost small', id: 'cf-add-mon', disabled: !ids.length,
+            onclick: () => {
+              const now = d.telemetry.map((t) => t.id).filter(Boolean);
+              if (!now.length) return;
+              d.monitor.push({ type: now.length === 1 ? 'gauge' : 'chart', channels: now.slice(0, now.length === 1 ? 1 : 3) });
+              change(true);
+            }
+          }, icon('plus', 11), 'Widget ekle'))),
       section('Görünüm',
         h('div', { class: 'cf-row' },
           field('Kart rengi', h('input', { type: 'color', value: d.art.board || '#1d4f91', oninput: (e) => { d.art.board = e.target.value; change(false); } })),
@@ -320,7 +332,7 @@
         warn.replaceChildren('Kaydedilmemiş değişiklikler var. Yine de kapatmak için tekrar Kapat\'a basın.');
         return false;
       },
-      onClose: () => { dlg = null; draft = null; },
+      onClose: () => { clearTimeout(validateTimer); dlg = null; draft = null; },
       buttons: [
         { label: 'Kapat' },
         { label: 'Kaydet', id: 'cf-save', action: () => { save(false); return false; } },

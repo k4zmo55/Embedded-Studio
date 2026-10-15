@@ -116,6 +116,8 @@ window.ES = (function () {
   /** { title, body, buttons: [{ label, primary, action, id }], width, className,
    *    beforeClose: () => false ise kapatma iptal (ör. kaydedilmemiş değişiklik) } */
   function modal(opts) {
+    hideTip();
+    closeMenu();
     const close = (force) => {
       if (!force && opts.beforeClose && opts.beforeClose() === false) return;
       overlay.remove();
@@ -145,6 +147,7 @@ window.ES = (function () {
   function showTip(x, y, content, delay = 350) {
     clearTimeout(tipTimer);
     tipTimer = setTimeout(() => {
+      if (document.querySelector('.modal-overlay')) return; // pencere açıkken arkadaki kartlar görünmesin
       hideTip();
       tipEl = h('div', { class: 'popover' }, content);
       document.body.append(tipEl);

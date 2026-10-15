@@ -15,7 +15,8 @@ const EXT = path.join(__dirname, '..');
 const WORK = path.resolve(process.argv[2] || path.join(require('os').tmpdir(), 'es-ui-e2e'));
 const CACHE = path.resolve(process.argv[3] || path.join(WORK, 'cache'));
 const BROWSER = process.argv[4] || 'C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe';
-const PORT = 47311, CDP_PORT = 9333;
+// Her çalıştırmada farklı port: önceki (takılmış) bir çalıştırmayla çakışmasın.
+const PORT = 40000 + Math.floor(Math.random() * 9000), CDP_PORT = 30000 + Math.floor(Math.random() * 9000);
 const ORIGIN = `http://127.0.0.1:${PORT}`;
 const PROJECT = path.join(WORK, 'proje');
 const SHOTS = path.join(WORK, 'shots');
@@ -64,6 +65,7 @@ require.cache.vscode = { id: 'vscode', filename: 'vscode', loaded: true, exports
 
 // createWebviewPanel'ı sar: son webview'ı tut
 let lastWebview = null;
+let browserProc = null;
 const origCreate = vscodeFake.window.createWebviewPanel;
 vscodeFake.window.createWebviewPanel = (...a) => { const p = origCreate(...a); lastWebview = p.webview; return p; };
 
@@ -112,14 +114,21 @@ class Cdp {
     if (m.method === 'Runtime.consoleAPICalled' && m.params.type === 'error') this.logs.push('console.error ' + m.params.args.map((a) => a.value || a.description).join(' '));
     if (m.method === 'Log.entryAdded' && m.params.entry.level === 'error') this.logs.push('log ' + m.params.entry.text + ' ' + (m.params.entry.url || ''));
   }
-  send(method, params = {}) { const id = ++this.id; this.ws.send(JSON.stringify({ id, method, params })); return new Promise((resolve, reject) => this.pending.set(id, { resolve, reject })); }
+  send(method, params = {}) {
+    const id = ++this.id;
+    this.ws.send(JSON.stringify({ id, method, params }));
+    return new Promise((resolve, reject) => {
+      const t = setTimeout(() => { this.pending.delete(id); reject(new Error(`CDP yanıt vermedi: ${method} ${JSON.stringify(params).slice(0, 160)}`)); }, 20000);
+      this.pending.set(id, { resolve: (v) => { clearTimeout(t); resolve(v); }, reject: (e) => { clearTimeout(t); reject(e); } });
+    });
+  }
   async eval(expr) {
     const r = await this.send('Runtime.evaluate', { expression: expr, awaitPromise: true, returnByValue: true });
     if (r.exceptionDetails) throw new Error('eval: ' + (r.exceptionDetails.exception?.description || r.exceptionDetails.text));
     return r.result.value;
   }
   async rect(sel) {
-    const r = await this.eval(`(() => { const el = ${sel.startsWith('(') ? sel : `document.querySelector(${JSON.stringify(sel)})`}; if (!el) return null; const b = el.getBoundingClientRect(); return { x: b.x + b.width / 2, y: b.y + b.height / 2, w: b.width, h: b.height }; })()`);
+    const r = await this.eval(`(() => { const el = ${sel.startsWith('(') ? sel : `document.querySelector(${JSON.stringify(sel)})`}; if (!el) return null; el.scrollIntoView({ block: 'nearest', inline: 'nearest' }); const b = el.getBoundingClientRect(); return { x: b.x + b.width / 2, y: b.y + b.height / 2, w: b.width, h: b.height }; })()`);
     if (!r) throw new Error('Bulunamadı: ' + sel);
     return r;
   }
@@ -188,6 +197,8 @@ async function until(fn, ms = 8000, what = 'koşul') {
   const profile = path.join(WORK, 'edge-profile');
   fs.rmSync(profile, { recursive: true, force: true });
   const browser = spawn(BROWSER, ['--headless=new', `--remote-debugging-port=${CDP_PORT}`, `--user-data-dir=${profile}`, '--window-size=1500,920', '--hide-scrollbars', 'about:blank'], { stdio: 'ignore' });
+  browserProc = browser;
+  process.on('exit', () => { try { browser.kill(); } catch {} });
   const targets = await until(async () => { try { return (await (await fetch(`http://127.0.0.1:${CDP_PORT}/json`)).json()).filter((t) => t.type === 'page'); } catch { return null; } }, 15000, 'tarayıcı');
   const ws = new WebSocket(targets[0].webSocketDebuggerUrl);
   await new Promise((r) => (ws.onopen = r));
@@ -329,6 +340,67 @@ async function until(fn, ms = 8000, what = 'koşul') {
     await cdp.click(`([...document.querySelectorAll('.lib-item')].find((e) => e.querySelector('.name').textContent === 'BMP180'))`);
     await until(() => design().instances.some((i) => i.componentId === 'bmp180'), 3000, 'kullanıcı komponenti tasarımda');
   });
+  const setInput = (sel, value) => cdp.eval(`(() => { const el = ${sel}; el.value = ${JSON.stringify(value)}; el.dispatchEvent(new Event('input', { bubbles: true })); el.dispatchEvent(new Event('change', { bubbles: true })); })()`);
+  const compFile = (id) => path.join(PROJECT, '.embedded-studio/components', `${id}.json`);
+  await step('Komponent oluşturucu: sıfırdan komponent, doğrulama, kaydet ve tasarıma ekle', async () => {
+    await cdp.click('#lib-add');
+    await cdp.click(`([...document.querySelectorAll('.ctx-item')].find((e) => e.textContent.includes('Yeni komponent')))`);
+    await until(() => cdp.eval(`!!document.querySelector('.creator #cf-name')`), 3000, 'oluşturucu');
+    await cdp.click('#cf-name');
+    await cdp.type('Sıcaklık Sensörü TMP102');
+    assert.strictEqual(await cdp.eval(`document.querySelector('#cf-id').value`), 'sicaklik_sensoru_tmp102');
+    await setInput(`document.querySelector('#cf-addr')`, '0x48');
+    await cdp.click('#cf-add-tel');
+    await setInput(`document.querySelector('.cf-tel input')`, 'temp');
+    await setInput(`document.querySelectorAll('.cf-tel input')[1]`, '°C');
+    await cdp.click('#cf-add-mon');
+    await cdp.eval(`(() => { const s = document.querySelector('.cf-mon select'); s.value = 'thermo'; s.dispatchEvent(new Event('change')); })()`);
+    await sleep(600); // doğrulama yanıtı
+    await until(() => cdp.eval(`!!document.querySelector('#cf-errors .note.info') && !document.querySelector('#cf-save-add').disabled`), 3000, 'geçerli');
+    assert.ok(await cdp.eval(`document.querySelector('.cf-mon .cf-chans input').checked`), 'widget güncel ölçüme bağlı');
+    await cdp.shot('18-komponent-olusturucu');
+    // Hata: tekrar eden pin adı → kaydet kapalı
+    await setInput(`document.querySelectorAll('.cf-pin input')[1]`, 'VCC');
+    await until(() => cdp.eval(`[...document.querySelectorAll('#cf-errors .note.error')].some((e) => e.textContent.includes('tekrar ediyor')) && document.querySelector('#cf-save-add').disabled`), 3000, 'hata gösterimi');
+    await cdp.shot('19-olusturucu-hata');
+    await setInput(`document.querySelectorAll('.cf-pin input')[1]`, 'GND');
+    await until(() => cdp.eval(`!document.querySelector('#cf-save-add').disabled`), 3000, 'düzeldi');
+    await cdp.click('#cf-save-add');
+    await until(() => fs.existsSync(compFile('sicaklik_sensoru_tmp102')), 4000, 'dosya');
+    const c = JSON.parse(fs.readFileSync(compFile('sicaklik_sensoru_tmp102'), 'utf8'));
+    assert.strictEqual(c.i2c.address, '0x48');
+    assert.deepStrictEqual(c.telemetry.map((t) => t.id), ['temp']);
+    assert.strictEqual(c.monitor[0].type, 'thermo');
+    assert.ok(!c.spi && !c.uart && !c.imageUri && !c.source, 'temiz çıktı');
+    await until(() => design().instances.some((i) => i.componentId === 'sicaklik_sensoru_tmp102'), 4000, 'tasarıma eklendi');
+    assert.ok(!(await cdp.eval(`!!document.querySelector('.creator')`)), 'pencere kapanmalı');
+  });
+  await step('Komponent oluşturucu: düzenle (sağ tık), kopyasını düzenle, kaydedilmemiş uyarısı', async () => {
+    await cdp.click(`([...document.querySelectorAll('.lib-item')].find((e) => e.querySelector('.name').textContent === 'Sıcaklık Sensörü TMP102'))`, 'right');
+    await cdp.click(`([...document.querySelectorAll('.ctx-item')].find((e) => e.textContent.includes('Düzenle')))`);
+    await until(() => cdp.eval(`document.querySelector('.modal-title').textContent.startsWith('Komponenti düzenle')`), 3000, 'düzenleme');
+    assert.ok(await cdp.eval(`document.querySelector('#cf-id').disabled`), 'tasarımda kullanılan kimlik kilitli');
+    await setInput(`[...document.querySelectorAll('.cf-field')].find((f) => f.textContent.startsWith('Açıklama')).querySelector('input')`, 'TI TMP102 dijital sıcaklık sensörü');
+    await cdp.click('#cf-save');
+    await until(() => JSON.parse(fs.readFileSync(compFile('sicaklik_sensoru_tmp102'), 'utf8')).description.startsWith('TI TMP102'), 4000, 'güncelleme');
+    // Kaydedilmemiş değişiklik uyarısı
+    await cdp.click('#lib-add');
+    await cdp.click(`([...document.querySelectorAll('.ctx-item')].find((e) => e.textContent.includes('Yeni komponent')))`);
+    await cdp.click('#cf-name');
+    await cdp.type('Taslak');
+    await cdp.click(`([...document.querySelectorAll('.modal-foot button')].find((b) => b.textContent === 'Kapat'))`);
+    assert.ok(await cdp.eval(`!!document.querySelector('.creator') && document.querySelector('#cf-warn').textContent.includes('Kaydedilmemiş')`), 'uyarı');
+    await cdp.click(`([...document.querySelectorAll('.modal-foot button')].find((b) => b.textContent === 'Kapat'))`);
+    await until(() => cdp.eval(`!document.querySelector('.creator')`), 2000, 'kapandı');
+    // Hazır komponentin kopyası
+    await cdp.click(`([...document.querySelectorAll('.lib-item')].find((e) => e.querySelector('.name').textContent === 'BME280'))`, 'right');
+    await cdp.click(`([...document.querySelectorAll('.ctx-item')].find((e) => e.textContent.includes('Kopyasını')))`);
+    await until(() => cdp.eval(`document.querySelector('#cf-id') && document.querySelector('#cf-id').value === 'bme280_ozel'`), 3000, 'kopya');
+    await until(() => cdp.eval(`!document.querySelector('#cf-save').disabled`), 3000, 'kopya geçerli');
+    await cdp.click('#cf-save');
+    await until(() => fs.existsSync(compFile('bme280_ozel')), 4000, 'kopya dosyası');
+    assert.strictEqual(JSON.parse(fs.readFileSync(compFile('bme280_ozel'), 'utf8')).telemetry.length, 3);
+  });
   await step('Asistan: öneri ve ekleme', async () => {
     await cdp.click('#ask');
     await cdp.type('Servo motoru potansiyometre ile kontrol eden bir cihaz');
@@ -365,6 +437,7 @@ async function until(fn, ms = 8000, what = 'koşul') {
     await cdp.click('#generate');
     await until(() => fs.existsSync(path.join(PROJECT, 'Core/Src/app.c')), 20000, 'kod üretimi');
     assert.ok(fs.existsSync(path.join(PROJECT, 'AGENTS.md')));
+    assert.ok(fs.readFileSync(path.join(PROJECT, 'Core/Src/app.c'), 'utf8').includes('USER CODE BEGIN SICAKLIK_SENSORU_TMP102_1'), 'oluşturulan komponent kodda');
     assert.ok(/clk\.APB1CLKDivider|osc\.PLL\.PLLN = /.test(fs.readFileSync(path.join(PROJECT, 'Core/Src/board.c'), 'utf8')));
     const mtime = fs.statSync(path.join(PROJECT, 'Core/Src/app.c')).mtimeMs;
     recorded.info.length = 0;
@@ -469,5 +542,5 @@ async function until(fn, ms = 8000, what = 'koşul') {
   browser.kill();
   srv.close();
   process.exit(failed.length ? 1 : 0);
-})().catch((e) => { console.error(e); process.exit(1); });
+})().catch((e) => { console.error(e); try { browserProc && browserProc.kill(); } catch {} process.exit(1); });
 

@@ -26,7 +26,8 @@ Sonra derle, karta yükle, sensör değerlerini ve RTOS task'larını canlı izl
 - **Delete / Backspace** ile seçili komponenti silme; üzerine gelince resimli bilgi kartı.
 - Otomatik pin ve çevre birimi ataması: alternatif fonksiyon uyumu, çakışma, I2C adres çakışması (ör. ikinci BME280 → 0x77).
   Bir pini elle seçtiğinizde geri kalan atama ona göre yeniden çözülür.
-- Kütüphaneye kendi komponentinizi **JSON** dosyasıyla ekleyin (Kütüphane → Ekle → Örnek şablon).
+- **Komponent oluşturucu:** Kütüphane → Ekle → *Yeni komponent oluştur*. Form ve canlı önizleme ile kendi sensörünüzü tanımlayın;
+  hazır bir komponente sağ tıklayıp *Kopyasını düzenle* ile başlayabilirsiniz. JSON dosyası olarak içe/dışa aktarma da var.
 - Her değişiklik otomatik kaydedilir.
 
 ### Clock

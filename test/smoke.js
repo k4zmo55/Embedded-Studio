@@ -137,6 +137,18 @@ test('register altyapısı + RTOS dosyaları üretilir', () => {
 });
 
 console.log('Kütüphane, telemetri, debug');
+test('tüm hazır komponentler doğrulamadan geçer', () => {
+  for (const c of Object.values(lib.components)) assert.deepStrictEqual(validateComponent(c), [], c.id);
+});
+test('doğrulama: tekrar eden pin, eksik SCL, tanımsız monitör kanalı', () => {
+  const c = componentTemplate();
+  c.pins = [{ name: 'VCC', role: 'power' }, { name: 'VCC', role: 'ground' }, { name: 'SDA', role: 'i2c.SDA' }];
+  c.monitor = [{ type: 'gauge', channels: ['yok'] }];
+  const e = validateComponent(c).join(' | ');
+  assert.ok(/tekrar ediyor: VCC/.test(e), e);
+  assert.ok(/i2c\.SCL/.test(e), e);
+  assert.ok(/tanımsız ölçüme bağlı: yok/.test(e), e);
+});
 test('şablon komponent geçerli; bozuk komponent reddedilir', () => {
   assert.deepStrictEqual(validateComponent(componentTemplate()), []);
   assert.ok(validateComponent({ id: 'X Y', interface: 'can', pins: [{ name: 'A', role: 'foo' }] }).length >= 3);
