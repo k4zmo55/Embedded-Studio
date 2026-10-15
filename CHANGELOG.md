@@ -1,5 +1,14 @@
 # Değişiklik günlüğü
 
+## Yayınlanmamış
+
+- **Geri al / yinele:** Tasarım ve Clock değişiklikleri Ctrl+Z / Ctrl+Y (veya şemanın sağ üstündeki butonlar) ile geri alınır.
+- Dar pencerede üst çubuk taşmaz, sekmeler hep görünür; kayıt durumu değişince sayfa zıplamaz.
+- Debug: dar pencerede Bellek paneli artık gizlenmiyor (register panelinin altına geçer).
+- Bildirimler: aynı mesaj tekrar etmez, en fazla 4 tane gösterilir, tıklayınca kapanır, hatalar daha uzun kalır.
+- Monitör: uzun task adları tabloyu taşırmaz.
+- Komponent oluşturucu: doğrulama bitmeden kaydedilemez; Kaydet'e çift tıklamak gereksiz "zaten var" uyarısı açmaz.
+
 ## 0.3.0 (önizleme)
 
 - **Komponent oluşturucu:** JSON yazmadan yeni komponent tanımlayın (Kütüphane → Ekle → Yeni komponent oluştur).

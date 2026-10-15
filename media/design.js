@@ -22,6 +22,8 @@
       h('div', { class: 'canvas-wrap', id: 'canvas-wrap' },
         s('svg', { id: 'schematic', tabindex: '0', 'aria-label': 'Devre şeması' }),
         h('div', { class: 'canvas-tools' },
+          h('button', { class: 'ghost small icon', id: 'undo', title: 'Geri al (Ctrl+Z)', 'aria-label': 'Geri al', onclick: () => ES.undo() }, icon('undo', 14)),
+          h('button', { class: 'ghost small icon', id: 'redo', title: 'Yinele (Ctrl+Y)', 'aria-label': 'Yinele', onclick: () => ES.redo() }, icon('redo', 14)),
           h('button', { class: 'ghost small', title: 'Şemayı sığdır', onclick: () => { view = null; renderSchematic(); } }, icon('fit', 13), 'Sığdır')),
         h('div', { class: 'legend' }, ...Object.entries(KIND_LABEL).map(([k, l]) => h('span', { class: `k-${k}`, text: l }))),
         h('div', { class: 'canvas-hint', id: 'canvas-hint', text: 'Sağ tık: ekle · Komponente sağ tık: bağlantılar, aynala, datasheet, sil · Del: seçiliyi sil' })),
@@ -85,7 +87,7 @@
     if (selected === id) selected = null;
     hideTip();
     update();
-    toast('info', `${inst.label} tasarımdan çıkarıldı.`);
+    toast('info', `${inst.label} tasarımdan çıkarıldı. Geri almak için Ctrl+Z.`);
   }
   function toggleMirror(id) {
     const inst = state.design.instances.find((i) => i.id === id);
@@ -677,6 +679,8 @@
   ES.tabs.design = {
     mount,
     render() {
+      $('undo').disabled = !ES.canUndo();
+      $('redo').disabled = !ES.canRedo();
       renderLibrary();
       renderNotes();
       renderConnections();

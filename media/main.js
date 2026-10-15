@@ -80,6 +80,15 @@
   });
   ES.on('task.done', (m) => ES.toast(m.ok ? 'info' : 'error', `${m.name} ${m.ok ? 'başarılı' : 'başarısız (Terminal\'e bakın)'}`));
 
+  // Ctrl+Z / Ctrl+Y (Ctrl+Shift+Z): tasarım ve clock değişikliklerini geri al / yinele
+  document.addEventListener('keydown', (e) => {
+    if (!(e.ctrlKey || e.metaKey) || e.altKey || !state.design || document.body.classList.contains('welcome-mode')) return;
+    if (ES.isTyping() || document.querySelector('.modal-overlay') || !['design', 'clock'].includes(ui.tab)) return;
+    const k = e.key.toLowerCase();
+    if (k === 'z' && !e.shiftKey) { e.preventDefault(); ES.undo(); }
+    else if (k === 'y' || (k === 'z' && e.shiftKey)) { e.preventDefault(); ES.redo(); }
+  });
+
   skeleton();
   setTab(ui.tab);
   post({ type: 'ready' });

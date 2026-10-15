@@ -20,6 +20,14 @@ const PORT = 40000 + Math.floor(Math.random() * 9000), CDP_PORT = 30000 + Math.f
 const ORIGIN = `http://127.0.0.1:${PORT}`;
 const PROJECT = path.join(WORK, 'proje');
 const SHOTS = path.join(WORK, 'shots');
+// Ortam seçenekleri: ES_THEME=light|dark, ES_SIZE=1100x700 (pencere), ES_SLOW=4 (işlemci yavaşlatma; zamanlama hatalarını yakalamak için)
+const THEME = process.env.ES_THEME === 'light' ? 'light' : 'dark';
+const [WIN_W, WIN_H] = (process.env.ES_SIZE || '1500x920').split('x').map(Number);
+const SLOW = Number(process.env.ES_SLOW) || 0;
+const THEMES = {
+  dark: '--vscode-editor-background:#1f1f1f;--vscode-editor-foreground:#cccccc;--vscode-descriptionForeground:#9d9d9d;--vscode-panel-border:#2b2b2b;--vscode-sideBar-background:#181818;--vscode-list-hoverBackground:#2a2d2e;--vscode-list-activeSelectionBackground:#04395e;--vscode-focusBorder:#0078d4;--vscode-button-background:#0078d4;--vscode-button-foreground:#fff;--vscode-button-hoverBackground:#026ec1;--vscode-input-background:#313131;--vscode-input-foreground:#ccc;--vscode-input-border:#3c3c3c;--vscode-badge-background:#616161;--vscode-badge-foreground:#f8f8f8;--vscode-menu-background:#1f1f1f;--vscode-menu-foreground:#ccc;--vscode-menu-selectionBackground:#0078d4;--vscode-font-family:"Segoe UI",sans-serif;--vscode-font-size:13px;--vscode-editor-font-family:Consolas,monospace',
+  light: '--vscode-editor-background:#ffffff;--vscode-editor-foreground:#3b3b3b;--vscode-descriptionForeground:#717171;--vscode-panel-border:#e5e5e5;--vscode-sideBar-background:#f8f8f8;--vscode-list-hoverBackground:#f2f2f2;--vscode-list-activeSelectionBackground:#e4e6f1;--vscode-focusBorder:#005fb8;--vscode-button-background:#005fb8;--vscode-button-foreground:#fff;--vscode-button-hoverBackground:#0258a8;--vscode-input-background:#ffffff;--vscode-input-foreground:#3b3b3b;--vscode-input-border:#cecece;--vscode-badge-background:#cccccc;--vscode-badge-foreground:#3b3b3b;--vscode-menu-background:#ffffff;--vscode-menu-foreground:#3b3b3b;--vscode-menu-selectionBackground:#005fb8;--vscode-font-family:"Segoe UI",sans-serif;--vscode-font-size:13px;--vscode-editor-font-family:Consolas,monospace;--vscode-errorForeground:#e51400;--vscode-editorWarning-foreground:#bf8803;--vscode-editorInfo-foreground:#1a85ff;--vscode-widget-shadow:rgba(0,0,0,.16)'
+};
 
 // ------------------------------------------------------------------ sahte vscode API
 const sse = [];
@@ -118,7 +126,7 @@ class Cdp {
     const id = ++this.id;
     this.ws.send(JSON.stringify({ id, method, params }));
     return new Promise((resolve, reject) => {
-      const t = setTimeout(() => { this.pending.delete(id); reject(new Error(`CDP yanıt vermedi: ${method} ${JSON.stringify(params).slice(0, 160)}`)); }, 20000);
+      const t = setTimeout(() => { this.pending.delete(id); reject(new Error(`CDP yanıt vermedi: ${method} ${JSON.stringify(params).slice(0, 160)}`)); }, 20000 * Math.max(1, SLOW));
       this.pending.set(id, { resolve: (v) => { clearTimeout(t); resolve(v); }, reject: (e) => { clearTimeout(t); reject(e); } });
     });
   }
@@ -155,9 +163,9 @@ class Cdp {
     await sleep(120);
   }
   async hover(sel) { const { x, y } = await this.rect(sel); await this.glide(x, y); }
-  async key(key, code, vk) {
-    await this.send('Input.dispatchKeyEvent', { type: 'keyDown', key, code, windowsVirtualKeyCode: vk });
-    await this.send('Input.dispatchKeyEvent', { type: 'keyUp', key, code, windowsVirtualKeyCode: vk });
+  async key(key, code, vk, modifiers = 0) { // modifiers: 2 = Ctrl, 8 = Shift
+    await this.send('Input.dispatchKeyEvent', { type: 'keyDown', key, code, windowsVirtualKeyCode: vk, modifiers });
+    await this.send('Input.dispatchKeyEvent', { type: 'keyUp', key, code, windowsVirtualKeyCode: vk, modifiers });
   }
   async type(text) {
     if (!REC) return this.send('Input.insertText', { text });
@@ -218,6 +226,7 @@ const CURSOR_JS = `(() => {
 })()`;
 async function until(fn, ms = 8000, what = 'koşul') {
   if (process.env.ES_RECORD) ms *= 3; // kayıt modunda her şey daha yavaş
+  if (SLOW) ms *= SLOW;
   const t0 = Date.now();
   for (;;) {
     const v = await fn();
@@ -256,11 +265,11 @@ async function until(fn, ms = 8000, what = 'koşul') {
         const es = new EventSource('/events'); es.onopen = () => { open = true; q.splice(0).forEach((f) => f()); }; es.onmessage = (e) => window.postMessage(JSON.parse(e.data), '*');
       })();</script>`;
     return raw.replace("default-src 'none';", `default-src 'none'; connect-src ${ORIGIN};`).replace('<div id="app"></div>', `<div id="app"></div>\n${shim}`)
-      .replace('</head>', `<style>:root{--vscode-editor-background:#1f1f1f;--vscode-editor-foreground:#cccccc;--vscode-descriptionForeground:#9d9d9d;--vscode-panel-border:#2b2b2b;--vscode-sideBar-background:#181818;--vscode-list-hoverBackground:#2a2d2e;--vscode-list-activeSelectionBackground:#04395e;--vscode-focusBorder:#0078d4;--vscode-button-background:#0078d4;--vscode-button-foreground:#fff;--vscode-button-hoverBackground:#026ec1;--vscode-input-background:#313131;--vscode-input-foreground:#ccc;--vscode-input-border:#3c3c3c;--vscode-badge-background:#616161;--vscode-badge-foreground:#f8f8f8;--vscode-menu-background:#1f1f1f;--vscode-menu-foreground:#ccc;--vscode-menu-selectionBackground:#0078d4;--vscode-font-family:"Segoe UI",sans-serif;--vscode-font-size:13px;--vscode-editor-font-family:Consolas,monospace}</style></head>`);
+      .replace('</head>', `<style>:root{${THEMES[THEME]}}</style></head>`).replace('<body', `<body class="vscode-${THEME}"`);
   });
   const profile = path.join(WORK, 'edge-profile');
   fs.rmSync(profile, { recursive: true, force: true });
-  const browser = spawn(BROWSER, ['--headless=new', `--remote-debugging-port=${CDP_PORT}`, `--user-data-dir=${profile}`, '--window-size=1500,920', '--hide-scrollbars',
+  const browser = spawn(BROWSER, ['--headless=new', `--remote-debugging-port=${CDP_PORT}`, `--user-data-dir=${profile}`, `--window-size=${WIN_W},${WIN_H}`, '--hide-scrollbars',
     // Arka plan kısıtlamaları kapalı: aksi halde headless bazen kare üretmeyi geciktirip ekran görüntüsünü kilitler
     '--disable-background-timer-throttling', '--disable-renderer-backgrounding', '--disable-backgrounding-occluded-windows', 'about:blank'], { stdio: 'ignore' });
   browserProc = browser;
@@ -272,8 +281,11 @@ async function until(fn, ms = 8000, what = 'koşul') {
   await cdp.send('Runtime.enable');
   await cdp.send('Log.enable');
   await cdp.send('Page.enable');
-  await cdp.send('Emulation.setDeviceMetricsOverride', { width: 1500, height: 920, deviceScaleFactor: 1, mobile: false });
+  await cdp.send('Emulation.setDeviceMetricsOverride', { width: WIN_W, height: WIN_H, deviceScaleFactor: 1, mobile: false });
+  if (SLOW) await cdp.send('Emulation.setCPUThrottlingRate', { rate: SLOW });
   await cdp.send('Page.navigate', { url: ORIGIN + '/' });
+  // Sayfa (ve webview betikleri) yüklenmeden adımlara başlama; yavaş makinede ilk eval body'yi bulamıyordu
+  await until(() => cdp.eval(`document.readyState === 'complete' && !!document.getElementById('app')`).catch(() => false), 20000, 'sayfa yüklendi');
   if (REC) {
     await sleep(1500);
     await cdp.eval(CURSOR_JS);
@@ -384,6 +396,20 @@ async function until(fn, ms = 8000, what = 'koşul') {
     await cdp.click(`([...document.querySelectorAll('#schematic .comp')].find((g) => g.textContent.includes('SERVO_SG90_1')).querySelector('.sym-body'))`);
     await cdp.key('Backspace', 'Backspace', 8);
     await until(() => !design().instances.some((i) => i.label === 'SERVO_SG90_1'), 3000, 'silme');
+  });
+  await step('Geri al / yinele: Ctrl+Z, Ctrl+Y ve butonlar', async () => {
+    const has = () => design().instances.some((i) => i.label === 'SERVO_SG90_1');
+    assert.ok(await cdp.eval(`(document.querySelector('.toast:last-child') || {}).textContent.includes('Ctrl+Z')`), 'silme bildiriminde geri alma ipucu');
+    await cdp.key('z', 'KeyZ', 90, 2);
+    await until(() => has(), 3000, 'Ctrl+Z ile geri geldi');
+    assert.ok(await cdp.eval(`[...document.querySelectorAll('#schematic .comp')].some((g) => g.textContent.includes('SERVO_SG90_1'))`), 'şemada görünür');
+    await cdp.key('y', 'KeyY', 89, 2);
+    await until(() => !has(), 3000, 'Ctrl+Y ile tekrar silindi');
+    await cdp.click('#undo');
+    await until(() => has(), 3000, 'buton ile geri al');
+    await cdp.click('#redo');
+    await until(() => !has(), 3000, 'buton ile yinele');
+    assert.ok(await cdp.eval(`document.querySelector('#redo').disabled`), 'yinelenecek adım kalmadı');
   });
   await step('Sağ tık → Komponent ekle (aramalı alt menü)', async () => {
     const r = await cdp.rect('#schematic');
@@ -628,6 +654,21 @@ async function until(fn, ms = 8000, what = 'koşul') {
     const msg = await cdp.eval(`document.querySelector('#dbg-msg').textContent`);
     assert.ok(/ST-Link|openocd/i.test(msg), msg);
     await cdp.shot('17-debug-openocd-hata');
+  });
+  await step('Dar pencere: sekmeler ve debug bellek paneli görünür', async () => {
+    const W = await cdp.eval('innerWidth');
+    await cdp.send('Emulation.setDeviceMetricsOverride', { width: 1000, height: 680, deviceScaleFactor: 1, mobile: false });
+    try {
+      await sleep(400);
+      const out = await cdp.eval(`[...document.querySelectorAll('.tabs button, #generate')].filter((b) => { const r = b.getBoundingClientRect(); return r.right > innerWidth + 1 || r.width < 20; }).map((b) => b.textContent)`);
+      assert.deepStrictEqual(out, [], 'üst çubukta taşan öğe');
+      assert.ok(await cdp.eval(`document.querySelector('#topbar').getBoundingClientRect().height < 50`), 'üst çubuk tek satır kalmalı (sayfa zıplamasın)');
+      const mem = await cdp.eval(`(() => { const r = document.querySelector('#dbg-mem').closest('.dbg-col').getBoundingClientRect(); return r.width > 100 && r.height > 120 && r.right <= innerWidth + 1 && r.bottom <= innerHeight + 1; })()`);
+      assert.ok(mem, 'bellek paneli dar pencerede de görünmeli');
+      await cdp.shot('20-dar-pencere');
+    } finally {
+      await cdp.send('Emulation.setDeviceMetricsOverride', { width: W, height: WIN_H, deviceScaleFactor: 1, mobile: false });
+    }
   });
   await step('Tarayıcı konsolunda hata yok', async () => {
     assert.deepStrictEqual(cdp.logs, []);

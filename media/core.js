@@ -35,7 +35,44 @@ window.ES = (function () {
   const state = { lib: null, design: null, result: null, notes: [], clock: null, project: null };
   const ui = Object.assign({ tab: 'design', rightPanel: true, assistantOpen: true }, vscode.getState() || {});
   const saveUi = () => vscode.setState(ui);
-  const update = () => post({ type: 'update', design: state.design });
+  // ---- geri al / yinele ----
+  // Tasarımdaki her değişiklik update() ile eklentiye gider ve eklenti 'state' ile geri yollar.
+  // Değişiklikten önceki hali saklarız; eklentinin kendi yaptığı değişiklikler (ör. clock çözümü) de kaydedilir.
+  const hist = { undo: [], redo: [], last: null, lastAt: 0, echo: 0, root: undefined };
+  const HIST_MAX = 100;
+  const remember = (snap) => {
+    hist.undo.push(snap);
+    if (hist.undo.length > HIST_MAX) hist.undo.shift();
+    hist.redo = [];
+  };
+  const send = () => { hist.echo++; post({ type: 'update', design: state.design }); };
+  const update = () => {
+    const now = JSON.stringify(state.design);
+    // Art arda gelen küçük değişiklikler (ör. sürükleme) tek adım sayılır
+    if (hist.last && hist.last !== now && (Date.now() - hist.lastAt > 400 || !hist.undo.length)) remember(hist.last);
+    hist.lastAt = Date.now();
+    hist.last = now;
+    send();
+  };
+  function step(from, to) {
+    if (!state.design || !from.length) return false;
+    to.push(JSON.stringify(state.design));
+    hist.last = from.pop();
+    hist.lastAt = 0;
+    state.design = JSON.parse(hist.last);
+    send();
+    return true;
+  }
+  const undo = () => step(hist.undo, hist.redo);
+  const redo = () => step(hist.redo, hist.undo);
+  on('state', (m) => {
+    const root = m.project && m.project.root;
+    if (root !== hist.root) Object.assign(hist, { undo: [], redo: [], last: null, root });
+    const now = JSON.stringify(m.design);
+    if (hist.echo > 0) hist.echo--;
+    else if (hist.last && hist.last !== now) remember(hist.last);
+    hist.last = now;
+  });
 
   // ---- ikonlar (sabit SVG) ----
   const icon = (name, size = 16) => {
@@ -52,6 +89,8 @@ window.ES = (function () {
       close: '<path d="M4 4l8 8M12 4l-8 8" stroke="currentColor" stroke-width="1.4"/>',
       upload: '<path d="M8 11V2M4.5 5.5L8 2l3.5 3.5M2 11v3h12v-3" fill="none" stroke="currentColor" stroke-width="1.2"/>',
       file: '<path d="M4 1h6l3 3v11H4z M10 1v3h3" fill="none" stroke="currentColor" stroke-width="1.1"/>',
+      undo: '<path d="M5.5 3L2.5 6l3 3" fill="none" stroke="currentColor" stroke-width="1.3"/><path d="M3 6h6.5a3.5 3.5 0 010 7H6" fill="none" stroke="currentColor" stroke-width="1.3"/>',
+      redo: '<path d="M10.5 3l3 3-3 3" fill="none" stroke="currentColor" stroke-width="1.3"/><path d="M13 6H6.5a3.5 3.5 0 000 7H10" fill="none" stroke="currentColor" stroke-width="1.3"/>',
       chip: '<rect x="4" y="4" width="8" height="8" rx="1" fill="none" stroke="currentColor" stroke-width="1.3"/><path d="M6 1v3M10 1v3M6 12v3M10 12v3M1 6h3M1 10h3M12 6h3M12 10h3" stroke="currentColor" stroke-width="1.3"/>',
       play: '<path d="M4 2.5v11l9-5.5z" fill="currentColor"/>',
       pause: '<path d="M4 2.5h3v11H4zM9 2.5h3v11H9z" fill="currentColor"/>',
@@ -173,10 +212,14 @@ window.ES = (function () {
   function toast(level, text) {
     let box = $('toasts');
     if (!box) document.body.append((box = h('div', { id: 'toasts', 'aria-live': 'polite' })));
-    const t = h('div', { class: `toast ${level}` }, h('span', { text }));
+    // Aynı mesaj üst üste gelmesin; en fazla 4 bildirim; hatalar daha uzun kalır, tıklayınca kapanır.
+    for (const old of box.children) if (old.textContent === text) old.remove();
+    while (box.children.length >= 4) box.firstChild.remove();
+    const t = h('div', { class: `toast ${level}`, role: level === 'error' ? 'alert' : 'status', title: 'Kapatmak için tıklayın' }, h('span', { text }));
+    const close = () => { t.classList.add('out'); setTimeout(() => t.remove(), 400); };
+    t.onclick = close;
     box.append(t);
-    setTimeout(() => t.classList.add('out'), 4200);
-    setTimeout(() => t.remove(), 4700);
+    setTimeout(close, level === 'error' ? 9000 : level === 'warn' ? 6500 : 4200);
   }
   on('toast', (m) => toast(m.level, m.text));
 
@@ -187,5 +230,5 @@ window.ES = (function () {
   const hex = (v, w = 8) => '0x' + (v >>> 0).toString(16).toUpperCase().padStart(w, '0');
   const KIND_LABEL = { i2c: 'I2C', spi: 'SPI', uart: 'UART', gpio: 'GPIO', adc: 'ADC', pwm: 'PWM' };
 
-  return { h, s, $, cIdent, on, emit, post, state, ui, saveUi, update, icon, contextMenu, closeMenu, modal, showTip, placeTip, hideTip, toast, isTyping, hex, KIND_LABEL, tabs: {} };
+  return { h, s, $, cIdent, on, emit, post, state, ui, saveUi, update, undo, redo, canUndo: () => hist.undo.length > 0, canRedo: () => hist.redo.length > 0, icon, contextMenu, closeMenu, modal, showTip, placeTip, hideTip, toast, isTyping, hex, KIND_LABEL, tabs: {} };
 })();

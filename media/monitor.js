@@ -253,7 +253,7 @@
           const bar = h('div');
           bar.style.width = `${Math.max(0, Math.min(100, t.cpu))}%`;
           return h('tr', {},
-            h('td', { text: t.name }),
+            h('td', { text: t.name, title: t.name }),
             h('td', {}, h('span', { class: `state ${t.state}`, text: t.state })),
             h('td', { class: 'num', text: t.prio }),
             h('td', { class: `num${t.stackFree < 40 ? ' bad' : ''}`, title: 'En düşük boş stack (word)', text: t.stackFree }),
