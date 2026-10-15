@@ -637,7 +637,7 @@ class Studio {
     const webview = this.panel.webview;
     const media = (f) => webview.asWebviewUri(vscode.Uri.joinPath(this.context.extensionUri, 'media', f));
     const nonce = [...Array(32)].map(() => Math.random().toString(36)[2]).join('');
-    const scripts = ['core.js', 'art.js', 'wizard.js', 'design.js', 'clock.js', 'widgets.js', 'monitor.js', 'debug.js', 'main.js'];
+    const scripts = ['core.js', 'art.js', 'wizard.js', 'design.js', 'creator.js', 'clock.js', 'widgets.js', 'monitor.js', 'debug.js', 'main.js'];
     return `<!doctype html>
 <html lang="tr">
 <head>

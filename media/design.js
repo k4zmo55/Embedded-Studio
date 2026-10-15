@@ -104,8 +104,21 @@
   function libAddMenu(e) {
     const r = e.currentTarget.getBoundingClientRect();
     contextMenu(r.left, r.bottom + 4, [
+      { label: 'Yeni komponent oluştur…', icon: 'edit', action: () => ES.creator.open(null, 'new') },
+      '-',
       { label: 'Komponent dosyası yükle (.json)…', icon: 'upload', action: () => post({ type: 'lib.import' }) },
       { label: 'Örnek şablonu aç', icon: 'file', action: () => post({ type: 'lib.template' }) }
+    ]);
+  }
+
+  /** Kütüphane öğesine sağ tık: ekle, düzenle, kopyala, kaldır. */
+  function libItemMenu(x, y, c) {
+    const user = c.source === 'user';
+    contextMenu(x, y, [
+      { label: 'Tasarıma ekle', icon: 'plus', action: () => addComponent(c.id) },
+      user ? { label: 'Düzenle…', icon: 'edit', action: () => ES.creator.open(c, 'edit') } : { label: 'Kopyasını düzenle…', icon: 'edit', hint: 'hazır komponent', action: () => ES.creator.open(c, 'copy') },
+      { label: 'Datasheet', icon: 'pdf', disabled: !c.datasheet, action: () => post({ type: 'datasheet', componentId: c.id }) },
+      ...(user ? ['-', { label: 'Kütüphaneden kaldır', icon: 'trash', danger: true, action: () => post({ type: 'lib.remove', id: c.id }) }] : [])
     ]);
   }
 
@@ -125,6 +138,7 @@
         ...items.map((c) => h('div', {
           class: 'lib-item', tabindex: '0', role: 'button', 'aria-label': `${c.name} ekle`,
           onclick: () => addComponent(c.id),
+          oncontextmenu: (e) => { e.preventDefault(); hideTip(); libItemMenu(e.clientX, e.clientY, c); },
           onkeydown: (e) => { if (e.key === 'Enter') addComponent(c.id); },
           onmouseenter: (e) => showTip(e.clientX, e.clientY, compCard(c)),
           onmousemove: (e) => placeTip(e.clientX, e.clientY),
@@ -671,7 +685,14 @@
     },
     onShow: () => renderSchematic(),
     setRightPanel,
-    renderLibrary
+    renderLibrary,
+    /** Kütüphanede varsa hemen, yoksa kütüphane yenilenince tasarıma ekler. */
+    addWhenAvailable(id) {
+      if (state.lib.components[id]) return addComponent(id);
+      const once = () => { if (state.lib.components[id]) addComponent(id); };
+      ES.on('init', once);
+    }
   };
+  ES.compCard = compCard;
   ES.on('init', () => { if ($('library')) renderLibrary(); });
 })();
