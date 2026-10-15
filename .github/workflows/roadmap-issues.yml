@@ -1,0 +1,28 @@
+name: Yol haritası → Issue
+
+on:
+  push:
+    branches: [main]
+    paths: [ROADMAP.md, tools/roadmap/**]
+  workflow_dispatch:
+
+permissions:
+  issues: write
+  contents: read
+
+concurrency:
+  group: roadmap-issues
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    name: Eksik issue'ları oluştur
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: node tools/roadmap/sync-issues.js
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

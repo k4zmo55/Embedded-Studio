@@ -181,6 +181,8 @@ Katkılarınızı bekliyoruz. Kod yazmanız gerekmiyor; en değerli katkılardan
 | 💻 Kod | Sürücüler, yeni MCU'lar, monitör widget'ları, seri port kaynağı |
 
 Geliştirme ortamı, proje yapısı, kod kuralları ve PR süreci için **[CONTRIBUTING.md](CONTRIBUTING.md)**'ye bakın.
+
+Planlanan işler ve öncelikler **[ROADMAP.md](ROADMAP.md)** dosyasında; her madde bir [GitHub issue](https://github.com/k4zmo55/Embedded-Studio/issues) olarak da açık. Üzerinde çalışmak istediğiniz issue'ya yorum bırakmanız yeterli.
 İlk katkı için [`good first issue`](https://github.com/k4zmo55/Embedded-Studio/labels/good%20first%20issue) etiketli issue'lar uygun.
 
 ```bash

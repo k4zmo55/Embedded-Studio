@@ -1,0 +1,531 @@
+# Yol Haritası
+
+Embedded Studio öğrenciler ve gömülü sistemlere yeni başlayanlar için bir tasarım aracı olarak başladı. Bundan sonraki hedef, aynı eklentinin **profesyonel ekiplerin** (savunma sanayii, havacılık, endüstriyel kontrol) günlük işini de görmesi:
+
+- **Ana öncelik test ve debug:** kart algılama, tek tuşla flash, CubeIDE düzeyinde debug, seri terminal ve bootloader.
+- **Profesyonel mod:** proje yapısı, CMake ve derleme ayarları tamamen kullanıcıda; araç yalnızca dosya ekler, kullanıcının koduna dokunmaz.
+- **Acemi modu:** bugünkü görsel tasarım arayüzü (şema, otomatik pin/saat ataması) hatalarından arındırılarak öğrenciler için yardımcı araç olarak kalır.
+
+Bu dosya yapılacaklar listesinin tek kaynağıdır. Her `###` başlığı GitHub'da bir issue olur ([Issues](https://github.com/k4zmo55/Embedded-Studio/issues)). `main` dalına bu dosyada değişiklik gönderildiğinde *Yol haritası → Issue* iş akışı eksik issue'ları, etiketleri ve kilometre taşlarını kendiliğinden oluşturur. Var olan issue'lara dokunmaz; tartışma ve ilerleme issue üzerinden yürür.
+
+Yeni madde eklemek için doğru kilometre taşının altına aynı biçimde bir başlık ekleyin. Kimlik (`ES-xxx`) benzersiz olmalı ve sonradan değiştirilmemelidir.
+
+---
+
+## M1 · Proje temeli: çalışma modları ve proje yapısı
+> Acemi/profesyonel ayrımı, HAL ve bare-metal için doğru klasör yapısı, kullanıcıya ait derleme sistemi ve yaygın STM32 cihaz paketleri.
+
+### ES-101 · Acemi ve Profesyonel çalışma modu
+`etiketler: tip:özellik, alan:arayüz, öncelik:yüksek, seviye:profesyonel`
+
+Proje oluşturulurken kullanıcıya iki yol sunulmalı:
+
+- **Acemi:** bugünkü görsel arayüz (komponent kütüphanesi, şema, otomatik pin/saat ataması, örnek kod üretimi).
+- **Profesyonel:** sade, bilgi yoğun bir arayüz. Ana ekranlar Build / Flash / Debug / Terminal / Bellek / Register. Şema çizimi isteğe bağlı bir araç olarak kalır.
+
+**Yapılacaklar**
+- [ ] Proje sihirbazına mod seçimi ekle; seçim `embedded-studio.json` içinde saklansın.
+- [ ] Mod sonradan *Proje Ayarları*ndan değiştirilebilsin.
+- [ ] Profesyonel mod için görsel dil: VS Code temasıyla uyumlu, yoğun tablolar, kısayollar, karikatürsü çizim yok.
+- [ ] Hangi panelin hangi modda görüneceğini belirleyen tek bir yapılandırma.
+
+### ES-102 · MCU ve altyapı seçimi yalnızca proje oluşturulurken
+`etiketler: tip:iyileştirme, alan:arayüz, öncelik:yüksek, seviye:hepsi`
+
+Şu an MCU ve altyapı (HAL / bare-metal, RTOS) seçimi her sekmede tekrar görünüyor. Bu seçim projenin kimliğidir; bir kere yapılmalı.
+
+- [ ] Seçimi sekmelerden kaldır; yalnızca proje sihirbazında sor.
+- [ ] Sonradan değiştirmek için ayrı bir *Proje Ayarları* sekmesi oluştur. Değişiklikte etkilenen dosyaları göster ve onay iste.
+- [ ] Üst çubukta yalnızca salt okunur bir özet (ör. `STM32F411CE · bare-metal · FreeRTOS`) kalsın.
+
+### ES-103 · HAL ve bare-metal için ayrı proje klasör yapısı
+`etiketler: tip:özellik, alan:kod-üretimi, öncelik:yüksek, seviye:profesyonel`
+
+HAL projesi ile bare-metal projenin dosya ihtiyacı farklı. Bare-metal için yalnızca cihaz başlığı (`stm32f4xx.h`, `stm32f411xe.h`), `core_cm4.h` gibi CMSIS dosyaları, startup, linker script ve `system_*.c` yeterli.
+
+- [ ] HAL şablonu: `Core/Inc`, `Core/Src`, `Drivers/STM32xx_HAL_Driver`, `Drivers/CMSIS` (CubeMX ile uyumlu).
+- [ ] Bare-metal şablonu: `inc/`, `src/`, `startup/`, `linker/`, `cmsis/`, `drivers/` (yalnızca seçilen sürücüler).
+- [ ] İki şablonun da CMake ile derlendiğini CI'da doğrula (`test/build.js`).
+- [ ] Şablonların açıklaması README'ye eklensin.
+
+### ES-104 · Bare-metal: kod üretimi yalnızca dosya ekler, main.c'ye dokunmaz
+`etiketler: tip:özellik, alan:kod-üretimi, öncelik:yüksek, seviye:profesyonel`
+
+Profesyonel kullanıcı kendi `main.c` / `app.c` dosyasını yazar. *Kod üret* yalnızca seçilen komponentlerin ve çevre birimlerinin sürücü dosyalarını (`drivers/bme280.c/.h` gibi) projeye eklemeli.
+
+- [ ] Bare-metal + profesyonel modda `main.c`, `app.c` ve kullanıcı dosyaları hiç yazılmasın.
+- [ ] Eklenecek/güncellenecek dosyaların listesi önce gösterilsin (önizleme ve fark).
+- [ ] Var olan bir dosya kullanıcı tarafından değiştirilmişse üzerine yazılmasın; `.new` olarak bırakılsın veya birleştirme sunulsun.
+- [ ] Sürücülerin nasıl çağrılacağını gösteren kısa bir örnek, kod olarak değil, sürücü başlığındaki yorumda yer alsın.
+
+### ES-105 · Kullanıcının yönettiği CMake yapılandırması
+`etiketler: tip:özellik, alan:derleme, öncelik:yüksek, seviye:profesyonel`
+
+Kullanıcı kendi `CMakeLists.txt` dosyasını elle yönetebilmeli; araç bu dosyayı ezmemeli. İsteyen için aynı ayarlar bir arayüzden de düzenlenebilmeli.
+
+- [ ] *CMake'i ben yönetiyorum* seçeneği: araç `CMakeLists.txt` dosyasına hiç yazmaz, yalnızca `cmake/embedded-studio.cmake` gibi ayrı bir dosya üretir ve bunun nasıl `include` edileceğini söyler.
+- [ ] Derleme ayarları arayüzü: derleyici bayrakları, optimizasyon (`-O0/-Og/-O2/-Os`), `-D` tanımları, include yolları, linker script, `--specs` (nano/nosys), FPU/ABI, uyarı seviyesi.
+- [ ] Debug / Release / MinSizeRel derleme tipleri ve `CMakePresets.json` üretimi.
+- [ ] Araç zinciri seçimi: arm-none-eabi-gcc sürümü veya yolu, gerekirse Clang/LLVM.
+- [ ] Derleme çıktısı: `.elf`, `.hex`, `.bin`, `.map` ve boyut özeti.
+
+### ES-106 · En çok kullanılan 15 STM32 için cihaz paketleri
+`etiketler: tip:özellik, alan:mcu, öncelik:yüksek, seviye:hepsi`
+
+Şu an yalnızca STM32F411CEU6 tanımlı. Aşağıdaki işlemcilerin hem HAL hem bare-metal için gereken dosyaları (CMSIS cihaz başlığı, startup, linker script, `system_*.c`, SVD) ve pin/clock tanımları eklenmeli.
+
+| İşlemci | Çekirdek | Neden |
+|---|---|---|
+| STM32F030C8 | M0 | Düşük maliyetli basit kontrolcüler |
+| STM32F103C8 | M3 | Blue Pill, eğitimde en yaygın kart |
+| STM32F303RE | M4F | Analog ön uç, motor kontrol |
+| STM32F407VG | M4F | Discovery kartı, İHA uçuş kontrolcüleri |
+| STM32F411CE | M4F | Black Pill (**mevcut**) |
+| STM32F429ZI | M4F | LCD-TFT, harici SDRAM |
+| STM32F446RE | M4F | Nucleo-64, genel amaçlı |
+| STM32F767ZI | M7 | Çift hassasiyetli FPU, Ethernet |
+| STM32H743ZI | M7 | Yüksek performans: sinyal işleme, radar ve görüntü |
+| STM32H723ZG | M7 | 550 MHz, maliyet odaklı H7 |
+| STM32G071RB | M0+ | Endüstriyel giriş seviyesi, USB-PD |
+| STM32G474RE | M4F | Yüksek çözünürlüklü zamanlayıcı, güç elektroniği |
+| STM32L432KC | M4F | Düşük güç, küçük kılıf |
+| STM32L476RG | M4F | Düşük güç, pille çalışan cihazlar |
+| STM32U575ZI | M33 | TrustZone, güvenli uygulamalar |
+
+- [ ] Her işlemci için `data/mcus/<id>.json` (pinler, alternatif fonksiyonlar, clock ağacı, bellek haritası).
+- [ ] Paket indirme/önbellekleme (`src/codegen/packs.js`) tüm aileleri desteklesin.
+- [ ] Her işlemci için CI'da en az bir HAL ve bir bare-metal derlemesi.
+- [ ] İşlemci başına bir issue açılarak ilerlenebilir (`good first issue` adayı).
+
+### ES-107 · Register seviyesinde örnek çevre birimi sürücüleri
+`etiketler: tip:özellik, alan:kod-üretimi, öncelik:orta, seviye:profesyonel`
+
+Bare-metal kullanıcı için yalnızca cihaz başlığına (`stm32xxxx.h`) bağımlı, okunabilir ve kopyalanıp değiştirilebilir örnek sürücüler.
+
+- [ ] RCC / clock kurulumu, GPIO, EXTI
+- [ ] UART (polling, kesme, DMA), SPI, I2C
+- [ ] TIM (PWM, input capture, encoder), ADC (tek ve DMA ile tarama), DAC
+- [ ] DMA, IWDG/WWDG, CRC birimi, FLASH yazma/silme
+- [ ] Her sürücü için kısa açıklama ve ilgili reference manual bölüm numarası
+- [ ] Aile farkları (F1 ve F4 GPIO yapısı gibi) için açık `#if` blokları veya aileye göre ayrı dosyalar
+
+---
+
+## M2 · Test ve debug (ana öncelik)
+> Kartı tanıma, tek tuşla flash, STM32CubeIDE düzeyinde debug, seri terminal ve derleme analizi.
+
+### ES-201 · Alt durum çubuğunda Build / Flash / Debug / Run butonları
+`etiketler: tip:özellik, alan:debug, öncelik:yüksek, seviye:hepsi`
+
+VS Code'un en altındaki mavi durum çubuğuna tek tıkla çalışan butonlar:
+
+- [ ] **Build** (derleme, hata/uyarı sayısı)
+- [ ] **Flash** (derle ve yükle)
+- [ ] **Debug** (derle, yükle, `main`'de dur)
+- [ ] **Run** (derle, yükle ve debugger olmadan çalıştır)
+- [ ] **Terminal** (seri terminali aç)
+- [ ] Bağlı prob ve kart bilgisi (ör. `ST-Link V2-1 · STM32F411CE`); tıklayınca ayrıntı açılsın
+- [ ] Butonlar için komut paleti girdileri ve klavye kısayolları (F5, Ctrl+F5 gibi)
+
+### ES-202 · Prob ve kart algılama
+`etiketler: tip:özellik, alan:debug, öncelik:yüksek, seviye:hepsi`
+
+STM32CubeProgrammer'daki gibi kart takıldığında kendiliğinden tanınmalı.
+
+- [ ] Bağlı probları listele: ST-Link (V2/V3), J-Link, CMSIS-DAP, USB DFU, UART bootloader.
+- [ ] Prob bilgisi: tür, seri numarası, firmware sürümü, hedef voltajı.
+- [ ] Hedef bilgisi: `DBGMCU_IDCODE` ile cihaz ve revizyon, flash boyutu, 96 bit benzersiz kimlik (UID), okuma koruması (RDP) seviyesi.
+- [ ] Projedeki MCU ile bağlı MCU farklıysa uyarı.
+- [ ] Araç algılama: STM32_Programmer_CLI, OpenOCD, pyOCD, st-flash. Yoksa nasıl kurulacağını göster.
+- [ ] Kart çıkarılıp takılınca durum çubuğu güncellensin.
+
+### ES-203 · Tek tuşla flash
+`etiketler: tip:özellik, alan:flash, öncelik:yüksek, seviye:hepsi`
+
+Elle komut yazmadan (`STM32_Programmer_CLI -c port=SWD -w ...` gibi) yükleme.
+
+- [ ] `.elf` / `.hex` / `.bin` yükleme (`.bin` için adres sorulsun)
+- [ ] Seçenekler: tam silme / sektör silme, doğrulama (verify), yükleme sonrası reset
+- [ ] İlerleme çubuğu, süre ve hız bilgisi; anlaşılır hata mesajları (prob yok, hedef bağlı değil, RDP aktif...)
+- [ ] Bağlantı modları: normal, *under reset*, düşük hız (SWD frekansı ayarı)
+- [ ] Kullanılan komut çıktı panelinde gösterilsin (öğretici ve hata ayıklamaya yardımcı)
+
+### ES-204 · VS Code debug entegrasyonu ve mevcut debug panelinin kontrolü
+`etiketler: tip:özellik, alan:debug, öncelik:yüksek, seviye:hepsi`
+
+VS Code'un kendi debug arayüzü (breakpoint, adım adım çalıştırma, call stack, değişkenler, watch, disassembly) STM32CubeIDE ve Eclipse ile aynı rahatlıkta çalışmalı.
+
+- [ ] `launch.json` üretimi veya doğrudan debug adapter (OpenOCD / ST-LINK GDB server / pyOCD + GDB)
+- [ ] Koşullu breakpoint, hit count, logpoint; donanım breakpoint sınırı uyarısı
+- [ ] Step over / into / out, run to cursor, reset and halt
+- [ ] Disassembly görünümü ve kaynakla karışık gösterim
+- [ ] Mevcut debug panelindeki eksik ve hataların listelenip düzeltilmesi (`src/debug/session.js`, `media/debug.js`)
+- [ ] Gerçek kartla (ST-Link + Nucleo / Black Pill) uçtan uca test
+
+### ES-205 · SVD tabanlı çevre birimi register görünümü
+`etiketler: tip:özellik, alan:debug, öncelik:yüksek, seviye:profesyonel`
+
+- [ ] Her işlemci için SVD dosyasından çevre birimi ağacı (RCC, GPIOA, USART2...)
+- [ ] Bit alanları adlarıyla ve açıklamalarıyla; değişen değerler vurgulansın
+- [ ] Register ve bit alanı düzenleme (yazma)
+- [ ] Çekirdek registerları: R0–R15, xPSR, MSP/PSP, CONTROL, FPU registerları
+- [ ] Sık bakılanları sabitleme (favori registerlar)
+
+### ES-206 · Bellek görüntüleyici ve canlı izleme (Live Watch)
+`etiketler: tip:özellik, alan:debug, öncelik:orta, seviye:profesyonel`
+
+- [ ] Hex/ASCII bellek görüntüleyici; adres veya sembolle gitme; 8/16/32 bit görünüm
+- [ ] Bellekte değer düzenleme, bölgeyi dosyaya kaydetme
+- [ ] Live watch: işlemci durdurulmadan global değişkenlerin periyodik okunması
+- [ ] Live watch değerlerinin zaman grafiği (monitördeki grafik bileşeni yeniden kullanılabilir)
+
+### ES-207 · HardFault analizörü
+`etiketler: tip:özellik, alan:debug, öncelik:yüksek, seviye:hepsi`
+
+STM32CubeIDE'deki *Fault Analyzer* eşdeğeri.
+
+- [ ] Fault anında CFSR, HFSR, MMFAR, BFAR, SHCSR okunup anlamlı cümlelere çevrilsin (ör. "Hizalanmamış erişim", "Geçersiz adrese yazma")
+- [ ] Yığından PC, LR ve xPSR çıkarılıp kaynak satıra gidilsin
+- [ ] MSP/PSP ayrımı (RTOS görevinde mi oldu?)
+- [ ] Olası nedenler ve kontrol listesi; isteğe bağlı olarak yapay zekâ yorumu (ES-703)
+
+### ES-208 · SWO/ITM, RTT ve semihosting konsolu
+`etiketler: tip:özellik, alan:debug, öncelik:orta, seviye:profesyonel`
+
+- [ ] SWV/ITM üzerinden `printf` (port seçimi, SWO frekansı)
+- [ ] SEGGER RTT kanalı okuma/yazma
+- [ ] Semihosting çıktısı
+- [ ] SWV veri izleme (data trace) ve istatistiksel profil (PC örnekleme), mümkün olan çekirdeklerde
+
+### ES-209 · FreeRTOS farkındalıklı debug
+`etiketler: tip:özellik, alan:debug, öncelik:orta, seviye:profesyonel`
+
+- [ ] Görev listesi: durum, öncelik, stack kullanımı ve tepe değeri, CPU yüzdesi
+- [ ] Kuyruklar, semaforlar, mutexler, zamanlayıcılar
+- [ ] Durdurulmuş bir görevin call stack'ine geçiş
+- [ ] Stack taşması ve heap tükenmesi uyarıları
+
+### ES-210 · Bellek kullanım raporu (Build Analyzer)
+`etiketler: tip:özellik, alan:derleme, öncelik:orta, seviye:hepsi`
+
+- [ ] `.map` / `.elf` analizi: bölge bazında Flash ve RAM kullanımı (yüzde ve bayt)
+- [ ] Bölüm (section) ve sembol listesi, boyuta göre sıralama, kaynağa gitme
+- [ ] Önceki derlemeye göre değişim (hangi fonksiyon büyüdü)
+- [ ] Stack kullanımı tahmini (`-fstack-usage` çıktısı)
+
+### ES-211 · Seri port terminali (Tera Term benzeri)
+`etiketler: tip:özellik, alan:terminal, öncelik:yüksek, seviye:hepsi`
+
+Harici programa (Tera Term, PuTTY, RealTerm) gerek kalmamalı.
+
+- [ ] Port listesi ve kendiliğinden yenileme; baud, veri biti, parite, stop biti, akış kontrolü
+- [ ] ASCII, HEX ve karışık görünüm; zaman damgası; satır sonu seçimi (CR, LF, CRLF)
+- [ ] Gönderme kutusu, geçmiş, tekrarlı gönderme, kayıtlı komut/makro butonları
+- [ ] Log dosyasına kaydetme (metin veya ham), oturumu temizleme, arama
+- [ ] Birden fazla port aynı anda (ayrı sekmeler)
+- [ ] Teknik not: Node `serialport` yerel modül gerektirir; platform başına hazır derlenmiş paket mi kullanılacak, yoksa bir yardımcı süreç mi, kararı verilmeli
+
+---
+
+## M3 · Bootloader ve güvenli güncelleme
+> STM32CubeProgrammer'ın programlama özellikleri ve CRC/imza doğrulamalı güvenli bootloader.
+
+### ES-301 · Flash programlayıcı arayüzü
+`etiketler: tip:özellik, alan:flash, öncelik:yüksek, seviye:profesyonel`
+
+- [ ] Bağlan / bağlantıyı kes; bağlantı türü (SWD, JTAG, UART, USB DFU)
+- [ ] Flash ve RAM okuma, dosyaya kaydetme, dosyayla karşılaştırma
+- [ ] Sektör/sayfa listesi; seçili sektörleri silme, tam silme
+- [ ] Option bytes görüntüleme ve düzenleme: RDP seviyesi, WRP/PCROP, BOR, boot ayarları (yanlışlıkla RDP 2'ye geçişe karşı çift onay)
+- [ ] İşlem günlüğü
+
+### ES-302 · ST sistem bootloader'ı üzerinden yükleme (UART / USB DFU)
+`etiketler: tip:özellik, alan:flash, öncelik:orta, seviye:hepsi`
+
+ST-Link olmadan, yongadaki sistem bootloader'ı ile yükleme.
+
+- [ ] UART protokolü (AN3155): bağlanma, get ID, okuma, yazma, silme, go
+- [ ] USB DFU (AN3156)
+- [ ] BOOT0 / reset ile bootloader'a girme talimatları, karta göre
+- [ ] Desteklenen işlemcilerde CAN / I2C / SPI bootloader (AN2606 tablosu)
+
+### ES-303 · Güvenli bootloader şablonu: imaj başlığı ve CRC32
+`etiketler: tip:özellik, alan:bootloader, öncelik:yüksek, seviye:profesyonel`
+
+Projeye eklenebilir, kendi bootloader'ını yazmak isteyene temel olacak bir şablon.
+
+- [ ] Flash bölümleme: bootloader + uygulama bölgesi; linker script'lerin buna göre üretilmesi
+- [ ] İmaj başlığı: sihirli sayı, sürüm, boyut, CRC32, derleme kimliği
+- [ ] Açılışta CRC32 doğrulaması (yazılım ve donanım CRC birimi)
+- [ ] Uygulamaya atlama (vektör tablosu, MSP, VTOR)
+- [ ] UART veya USB üzerinden güncelleme komutları; her paket için CRC ve onay (ACK/NACK)
+- [ ] Watchdog ve güncelleme yarıda kesilirse güvenli geri dönüş
+
+### ES-304 · İmza doğrulama, A/B slot ve geri dönüş koruması
+`etiketler: tip:özellik, alan:bootloader, öncelik:orta, seviye:profesyonel`
+
+- [ ] İmza doğrulama (ECDSA P-256 veya Ed25519); açık anahtar bootloader'a gömülü
+- [ ] A/B slot: yeni imaj doğrulanmadan eskisi silinmesin
+- [ ] Sürüm sayacı ile rollback koruması
+- [ ] RDP/WRP ile bootloader bölgesinin korunması önerisi
+- [ ] İsteğe bağlı: MCUboot ile uyumluluk değerlendirmesi
+
+### ES-305 · İmaj paketleme ve imzalama aracı
+`etiketler: tip:özellik, alan:bootloader, öncelik:orta, seviye:profesyonel`
+
+- [ ] Derleme sonrası `.bin` dosyasına başlık ve CRC32 ekleme
+- [ ] Anahtar üretme ve imzalama (özel anahtar yalnızca kullanıcının makinesinde)
+- [ ] Eklenti içinden bootloader'a güncelleme gönderme (ES-303 protokolü)
+
+---
+
+## M4 · Monitör ve arayüz tasarımcısı
+> Qt Designer benzeri düzenlenebilir monitör ve tasarımın Python Qt uygulaması olarak dışa aktarılması.
+
+### ES-401 · Sürükle-bırak monitör tasarımcısı
+`etiketler: tip:özellik, alan:monitör, öncelik:orta, seviye:hepsi`
+
+Monitör ekranı Qt Designer'daki gibi serbestçe tasarlanabilmeli.
+
+- [ ] Bileşenler: buton, etiket, metin kutusu, sayı kutusu, kaydırıcı, onay kutusu, açılır liste, LED, gösterge (gauge), çizgi grafik, tablo, 3B tutum göstergesi
+- [ ] Sürükle-bırak yerleşim, hizalama kılavuzları, ızgara ve serbest yerleşim
+- [ ] Özellik paneli: ad, metin, aralık, birim, renk, bağlı kanal veya komut
+- [ ] Bileşen ile kart arasındaki bağ: telemetri kanalı → gösterge; buton/metin kutusu → karta komut
+- [ ] Tasarımın projeye `monitor.json` olarak kaydedilmesi
+
+### ES-402 · Monitör tasarımını PySide6 / PyQt olarak dışa aktarma
+`etiketler: tip:özellik, alan:monitör, öncelik:orta, seviye:profesyonel`
+
+- [ ] Qt Designer ile açılabilen `.ui` dosyası
+- [ ] Çalıştırılabilir Python uygulaması: pyserial ile bağlantı, protokol ayrıştırma, grafikler (pyqtgraph)
+- [ ] `requirements.txt` ve çalıştırma talimatı
+- [ ] PySide6 ve PyQt5/6 seçeneği
+
+### ES-403 · Kart–PC haberleşme protokolü
+`etiketler: tip:özellik, alan:monitör, öncelik:orta, seviye:profesyonel`
+
+Bugünkü `$V,kanal,değer` metin protokolü başlangıç için yeterli; profesyonel kullanım için daha sağlam bir seçenek gerekli.
+
+- [ ] İkili (binary) çerçeve: başlangıç baytı, uzunluk, tür, yük, CRC16/CRC32 (COBS veya SLIP ile)
+- [ ] Komut / yanıt ve telemetri mesajları; mesaj tanımlarından C ve Python kodu üretimi
+- [ ] Metin protokolüyle geriye uyumluluk
+- [ ] Protokol belgesi
+
+---
+
+## M5 · MCU bilgisi, dokümantasyon ve clock
+> İşlemci bilgi kartı, datasheet/RM erişimi, kodda register ipuçları ve clock arayüzünün düzeltilmesi.
+
+### ES-501 · İşlemci bilgi kartı
+`etiketler: tip:özellik, alan:arayüz, öncelik:orta, seviye:hepsi`
+
+Komponentlerde olduğu gibi işlemcinin üzerine gelince açılan kart.
+
+- [ ] Çekirdek, azami frekans, Flash/RAM, kılıf, çalışma gerilimi, sıcaklık aralığı
+- [ ] Çevre birimi sayıları (UART, SPI, I2C, CAN, ADC kanalı, zamanlayıcı...)
+- [ ] Pin üzerine gelince pinin tüm alternatif fonksiyonları ve 5 V toleransı
+
+### ES-502 · Datasheet, reference manual ve kodda register ipuçları
+`etiketler: tip:özellik, alan:dokümantasyon, öncelik:orta, seviye:profesyonel`
+
+- [ ] Her işlemci için datasheet, reference manual, programming manual, errata ve kart kullanım kılavuzu bağlantıları
+- [ ] C kodunda `RCC->AHB1ENR` gibi ifadelerin üzerine gelince register açıklaması ve bit alanları (SVD'den)
+- [ ] `GPIO_MODER_MODER5_0` gibi makrolar için değer ve anlam
+- [ ] İlgili reference manual bölümüne bağlantı
+
+### ES-503 · Clock arayüzünün doğrulanması ve hata düzeltme
+`etiketler: tip:hata, alan:clock, öncelik:yüksek, seviye:hepsi`
+
+Clock arayüzü bazı durumlarda doğru çalışmıyor gibi görünüyor; baştan sona kontrol edilmeli.
+
+- [ ] PLL giriş/VCO/çıkış sınırları her aile için doğru mu?
+- [ ] USB/SDIO için 48 MHz şartı, APB bölücüleri ve zamanlayıcı clock çarpanı (×2 kuralı)
+- [ ] Flash bekleme durumu (latency) ve voltaj ölçeği önerisi
+- [ ] HSE/HSI/LSE seçimleri ve harici kristal değeri
+- [ ] Sonuçların CubeMX ile karşılaştırılması (her işlemci için birkaç senaryo, otomatik test)
+- [ ] Arayüzde hatalı değerlerin net gösterimi ve düzeltme önerisi
+
+---
+
+## M6 · Komponent kütüphanesi
+> Açık kaynak katkısıyla büyüyecek sensör ve modül desteği. Sektörde yaygın parçalar öncelikli.
+
+### ES-601 · Geliştirici notu: yeni komponent / sensör kütüphanesi nasıl eklenir
+`etiketler: tip:dokümantasyon, alan:kütüphane, öncelik:yüksek, seviye:hepsi, good first issue`
+
+Katkıcıların yeni sensör ekleyebilmesi için ayrıntılı bir `docs/DEVELOPER.md`.
+
+- [ ] Komponent tanım dosyasının (`data/components/*.json`) tüm alanları: pinler, arayüz, telemetri kanalları, çizim
+- [ ] Sürücü şablonu: HAL ve bare-metal sürümü, isimlendirme, hata döndürme kuralları
+- [ ] Mantık gerektiren komponentler için JS eklenti biçimine ihtiyaç var mı? (register yapılandırması hesaplama gibi) Karar ve örnek.
+- [ ] Baştan sona örnek: yeni bir I2C sensörün eklenmesi, test edilmesi, PR açılması
+- [ ] Komponent oluşturucu ile hazırlanan komponentin repoya katkı olarak gönderilmesi
+
+### ES-602 · Ataletsel sensörler (IMU)
+`etiketler: tip:komponent, alan:kütüphane, öncelik:yüksek, seviye:hepsi`
+
+- [ ] ICM-42688-P (6 eksen, düşük gürültü)
+- [ ] BMI088 (titreşime dayanıklı, İHA)
+- [ ] LSM6DSO (6 eksen)
+- [ ] ADIS16470 (endüstriyel IMU, SPI)
+- [ ] MPU-9250 / ICM-20948 (9 eksen)
+- [x] MPU-6050 (mevcut)
+
+### ES-603 · Basınç, sıcaklık ve nem sensörleri
+`etiketler: tip:komponent, alan:kütüphane, öncelik:orta, seviye:hepsi`
+
+- [ ] BMP390 ve MS5611 (barometrik irtifa)
+- [ ] LPS22HB
+- [ ] TMP117 (±0,1 °C hassas sıcaklık)
+- [ ] SHT45
+- [ ] MAX31865 (PT100/PT1000) ve MAX31856 (termokupl)
+- [x] BME280 (mevcut)
+
+### ES-604 · Navigasyon: GNSS ve manyetometre
+`etiketler: tip:komponent, alan:kütüphane, öncelik:orta, seviye:hepsi`
+
+- [ ] u-blox NEO-M9N ve ZED-F9P (UBX protokolü, RTK)
+- [ ] RM3100 ve LIS3MDL (manyetometre)
+- [ ] QMC5883L / HMC5883L
+- [x] NEO-6M (mevcut, NMEA)
+
+### ES-605 · Güç ölçümü, ADC ve DAC
+`etiketler: tip:komponent, alan:kütüphane, öncelik:orta, seviye:hepsi`
+
+- [ ] INA226, INA228, INA3221 (akım/gerilim/güç)
+- [ ] ADS1115 (16 bit), ADS131M04 (24 bit eşzamanlı), AD7606 (8 kanal eşzamanlı)
+- [ ] MCP4725 ve DAC8552
+
+### ES-606 · Haberleşme modülleri
+`etiketler: tip:komponent, alan:kütüphane, öncelik:yüksek, seviye:hepsi`
+
+- [ ] Dahili CAN/FDCAN + SN65HVD230 / TJA1051 alıcı-verici; MCP2515 (SPI-CAN)
+- [ ] RS-485: MAX485 / THVD1450, Modbus RTU örneği
+- [ ] Ethernet: W5500 (SPI), LAN8742 (RMII, dahili MAC'li işlemcilerde)
+- [ ] RF: SX1276/SX1262 (LoRa), nRF24L01+
+- [ ] RS-422 ve MIL-STD-1553 için arayüz değerlendirmesi (savunma uygulamaları)
+
+### ES-607 · Kalıcı bellekler
+`etiketler: tip:komponent, alan:kütüphane, öncelik:orta, seviye:hepsi`
+
+- [ ] W25Q128 / W25Q256 (SPI ve QSPI)
+- [ ] FM25V10 / MB85RS (FRAM)
+- [ ] AT24Cxx (EEPROM)
+- [ ] microSD (SPI ve SDIO) + FatFs
+- [x] W25Q32 (mevcut)
+
+### ES-608 · Motor sürücüler ve aktüatörler
+`etiketler: tip:komponent, alan:kütüphane, öncelik:düşük, seviye:hepsi`
+
+- [ ] DRV8825 / TMC2209 (step motor)
+- [ ] DRV8871 / BTS7960 (DC motor)
+- [ ] ESC (PWM / DShot)
+- [ ] Artımlı enkoder (zamanlayıcı encoder modu)
+- [x] SG90 servo (mevcut)
+
+### ES-609 · Ekranlar, RTC ve güvenlik elemanı
+`etiketler: tip:komponent, alan:kütüphane, öncelik:düşük, seviye:hepsi`
+
+- [ ] ST7735 / ILI9341 (SPI TFT)
+- [ ] DS3231 / RV-3028 (RTC)
+- [ ] ATECC608 (kriptografik güvenlik elemanı; ES-304 ile bağlantılı)
+- [ ] VL53L1X (ToF mesafe)
+- [x] SSD1306 (mevcut)
+
+---
+
+## M7 · Yapay zekâ asistanı
+> Kodlama ve hata ayıklamada bağlamı bilen asistan; bulut veya tamamen çevrimdışı.
+
+### ES-701 · DeepSeek sağlayıcısı ve sağlayıcı katmanı
+`etiketler: tip:özellik, alan:yapay-zeka, öncelik:orta, seviye:hepsi`
+
+Not: DeepSeek API'si ücretsiz değil; kullandıkça ödenen, düşük ücretli bir hizmet. Her kullanıcı kendi API anahtarını girmeli (eklentiye anahtar gömülmez). API OpenAI ile uyumlu olduğundan aynı katman başka sağlayıcıları da destekleyebilir.
+
+- [ ] Sağlayıcı katmanı: DeepSeek (`deepseek-chat`, `deepseek-reasoner`), OpenAI uyumlu herhangi bir uç nokta
+- [ ] API anahtarı VS Code SecretStorage'da saklansın; ayarlarda veya dosyada düz metin olarak durmasın
+- [ ] Hangi verinin gönderileceğinin açıkça gösterilmesi ve onay; varsayılan olarak kapalı
+- [ ] Mevcut asistanın (`src/ai/advisor.js`) bu katmana taşınması
+
+### ES-702 · Çevrimdışı yerel model desteği (Ollama)
+`etiketler: tip:özellik, alan:yapay-zeka, öncelik:yüksek, seviye:profesyonel`
+
+Savunma sanayii ve kapalı ağlarda kod dışarıya gönderilemez. Asistan internet olmadan da çalışabilmeli.
+
+- [ ] Ollama / llama.cpp / LM Studio gibi yerel OpenAI uyumlu sunucularla çalışma
+- [ ] Önerilen yerel modeller ve donanım gereksinimi
+- [ ] *Kurumsal mod*: dış sağlayıcıları tamamen kapatan ayar
+
+### ES-703 · Bağlam farkındalığı olan yardım
+`etiketler: tip:özellik, alan:yapay-zeka, öncelik:orta, seviye:hepsi`
+
+- [ ] Derleme hatalarını açıklama ve düzeltme önerisi
+- [ ] HardFault kaydını (ES-207) ve register dökümünü yorumlama
+- [ ] Projenin MCU, pin ve clock bilgisini bağlam olarak kullanma
+- [ ] Reference manual'den ilgili bölümü bulma (ES-502)
+
+---
+
+## M8 · Acemi arayüzü: hata ve eksikler
+> Bugünkü görsel tasarım arayüzünün öğrenciler için sorunsuz hale getirilmesi.
+
+### ES-801 · Acemi arayüzünün hata taraması
+`etiketler: tip:hata, alan:arayüz, öncelik:orta, seviye:acemi`
+
+Bulunan her hata bu issue'ya yorum olarak eklenip gerekirse ayrı issue açılmalı.
+
+- [ ] Sihirbaz, tasarım, bağlantılar, komponent oluşturucu, clock, monitör ve debug ekranlarının elle gözden geçirilmesi
+- [ ] Farklı tema (açık/koyu/yüksek kontrast) ve pencere boyutlarında görünüm
+- [ ] Geri al / yinele, kaydetme ve yeniden açma tutarlılığı
+- [ ] Hata mesajlarının anlaşılır ve Türkçe/İngilizce tutarlı olması
+
+### ES-802 · Komponent oluşturucu: düzenleme ve kopya kaydetme akışı
+`etiketler: tip:hata, alan:arayüz, öncelik:orta, seviye:acemi`
+
+Arayüz testinin kayıt modunda (`ES_RECORD`) *sağ tık → düzenle → kopyasını düzenle* adımı kopya dosyası oluşmadan zaman aşımına uğruyor. Normal test geçiyor; sorunun testte mi yoksa zamanlamaya bağlı gerçek bir hatada mı olduğu araştırılmalı.
+
+- [ ] Sorunu yeniden üret (`test/ui-e2e.js`, kayıt modu)
+- [ ] Kopya dosyasının yazıldığı yolu ve olay sırasını kontrol et
+- [ ] Gerekirse düzelt ve testi kararlı hale getir
+
+### ES-803 · İngilizce arayüz desteği
+`etiketler: tip:özellik, alan:arayüz, öncelik:düşük, seviye:hepsi`
+
+Uluslararası katkı ve kullanım için arayüz metinlerinin çevrilebilir olması.
+
+- [ ] Metinlerin tek bir sözlük dosyasında toplanması
+- [ ] VS Code dil ayarına göre Türkçe / İngilizce
+
+---
+
+## M9 · Profesyonel kalite ve güvence
+> Savunma ve endüstri projelerinin beklediği kod kalitesi, test ve izlenebilirlik.
+
+### ES-901 · Statik analiz ve MISRA C kontrolü
+`etiketler: tip:özellik, alan:kalite, öncelik:orta, seviye:profesyonel`
+
+- [ ] cppcheck (MISRA eklentisi) ve clang-tidy entegrasyonu; sonuçlar VS Code *Problems* panelinde
+- [ ] Üretilen sürücülerin MISRA C:2012 kurallarına uygunluk raporu
+- [ ] Kural sapmalarının belgelenmesi (deviation kayıtları)
+
+### ES-902 · Birim test ve donanımlı (HIL) test altyapısı
+`etiketler: tip:özellik, alan:kalite, öncelik:orta, seviye:profesyonel`
+
+- [ ] Unity / CMock ile PC üzerinde sürücü testleri; şablon ve çalıştırma butonu
+- [ ] Kart üzerinde test: test firmware'ini yükle, sonuçları seri/RTT üzerinden topla
+- [ ] Kod kapsamı (gcov) raporu
+- [ ] CI'da test çalıştırma örneği
+
+### ES-903 · Çevrimdışı (air-gapped) kurulum
+`etiketler: tip:özellik, alan:derleme, öncelik:orta, seviye:profesyonel`
+
+- [ ] HAL, CMSIS ve FreeRTOS paketlerinin internetsiz kurulabilen bir arşivle dağıtılması
+- [ ] Paketlerin yerel klasörden veya kurum içi sunucudan alınması
+- [ ] İndirilen paketlerin özet (SHA-256) doğrulaması
+
+### ES-904 · Sürüm bilgisi ve tekrarlanabilir derleme
+`etiketler: tip:özellik, alan:derleme, öncelik:düşük, seviye:profesyonel`
+
+- [ ] Firmware'e sürüm, git commit ve derleme tarihi gömülmesi
+- [ ] Aynı kaynaktan aynı ikili dosya (tekrarlanabilir derleme ayarları)
+- [ ] Yazılım malzeme listesi (SBOM): kullanılan HAL/CMSIS/FreeRTOS sürümleri
