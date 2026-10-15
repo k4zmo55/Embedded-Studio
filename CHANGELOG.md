@@ -7,6 +7,7 @@
 - Debug: dar pencerede Bellek paneli artık gizlenmiyor (register panelinin altına geçer).
 - Bildirimler: aynı mesaj tekrar etmez, en fazla 4 tane gösterilir, tıklayınca kapanır, hatalar daha uzun kalır.
 - Monitör: uzun task adları tabloyu taşırmaz.
+- Şema, yerleşim değişince (bağlantılar yeniden çözülünce, aynalama…) kendini yeniden sığdırır; kullanıcı yakınlaştırıp kaydırdıysa görünüme dokunmaz.
 - Komponent oluşturucu: doğrulama bitmeden kaydedilemez; Kaydet'e çift tıklamak gereksiz "zaten var" uyarısı açmaz.
 
 ## 0.3.0 (önizleme)

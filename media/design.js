@@ -4,6 +4,7 @@
 
   let view = null;
   let lastLayoutKey = '';
+  let userView = false; // kullanıcı yakınlaştırdı/kaydırdıysa yerleşim değişince görünümü bozma
   let highlight = null;
   let selected = null;
   let libFilter = '';
@@ -485,11 +486,15 @@
     if (!state.result || !$('schematic')) return;
     const svg = $('schematic');
     const L = layout();
+    // Komponent eklenip çıkınca her zaman, yerleşim başka sebeple büyüyüp küçülünce (bağlantılar yeniden
+    // çözüldü, aynalama…) kullanıcı görünümü elle değiştirmediyse yeniden sığdır: hiçbir komponent ekran dışında kalmasın.
+    const b0 = L.bounds;
     const key = `${state.design.mcuId}|${state.design.instances.length}`;
-    if (!view || key !== lastLayoutKey) {
-      const b = L.bounds;
-      view = { x: b.minX, y: b.minY, w: b.maxX - b.minX, h: b.maxY - b.minY };
+    const boundsKey = [b0.minX, b0.minY, b0.maxX, b0.maxY].map(Math.round).join(',');
+    if (!view || key !== lastLayoutKey || (!userView && boundsKey !== view.boundsKey)) {
+      view = { x: b0.minX, y: b0.minY, w: b0.maxX - b0.minX, h: b0.maxY - b0.minY, boundsKey };
       lastLayoutKey = key;
+      userView = false;
     }
     svg.setAttribute('viewBox', `${view.x} ${view.y} ${view.w} ${view.h}`);
     svg.setAttribute('preserveAspectRatio', 'xMidYMid meet');
@@ -636,7 +641,8 @@
       e.preventDefault();
       const f = e.deltaY > 0 ? 1.12 : 1 / 1.12;
       const p = toSvg(e.clientX, e.clientY);
-      view = { x: p.x - (p.x - view.x) * f, y: p.y - (p.y - view.y) * f, w: view.w * f, h: view.h * f };
+      view = { ...view, x: p.x - (p.x - view.x) * f, y: p.y - (p.y - view.y) * f, w: view.w * f, h: view.h * f };
+      userView = true;
       setView();
     }, { passive: false });
     let drag = null;
@@ -654,6 +660,7 @@
       if (!drag.moved) return;
       const p = toSvg(e.clientX, e.clientY);
       view = { ...view, x: view.x - (p.x - drag.start.x), y: view.y - (p.y - drag.start.y) };
+      userView = true;
       setView();
     });
     window.addEventListener('mouseup', () => {
