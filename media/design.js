@@ -1,6 +1,6 @@
 /* Tasarım sekmesi: kütüphane, KiCad tarzı şema, bağlantılar, asistan. */
 (function () {
-  const { h, s, $, cIdent, post, state, ui, saveUi, update, icon, contextMenu, closeMenu, modal, showTip, hideTip, placeTip, toast, isTyping, KIND_LABEL } = ES;
+  const { t, h, s, $, cIdent, post, state, ui, saveUi, update, icon, contextMenu, closeMenu, modal, showTip, hideTip, placeTip, toast, isTyping, KIND_LABEL } = ES;
 
   let view = null;
   let lastLayoutKey = '';
@@ -15,41 +15,41 @@
     parent.append(h('main', { id: 'design', class: 'tab-pane' },
       h('aside', { class: 'lib-pane' },
         h('div', { class: 'pane-head' },
-          h('span', { class: 'pane-title', text: 'Kütüphane' }),
-          h('button', { class: 'small', id: 'lib-add', title: 'Kütüphaneye komponent dosyası ekle', onclick: (e) => libAddMenu(e) }, icon('plus', 12), 'Ekle')),
+          h('span', { class: 'pane-title', text: t('Kütüphane') }),
+          h('button', { class: 'small', id: 'lib-add', title: t('Kütüphaneye komponent dosyası ekle'), onclick: (e) => libAddMenu(e) }, icon('plus', 12), t('Ekle'))),
         h('div', { class: 'search' }, icon('search', 13),
-          h('input', { type: 'text', id: 'lib-search', placeholder: 'Ara: sensör, I2C, gps…', oninput: (e) => { libFilter = e.target.value.toLocaleLowerCase('tr'); renderLibrary(); } })),
+          h('input', { type: 'text', id: 'lib-search', placeholder: t('Ara: sensör, I2C, gps…'), oninput: (e) => { libFilter = e.target.value.toLocaleLowerCase('tr'); renderLibrary(); } })),
         h('div', { id: 'library' })),
       h('div', { class: 'canvas-wrap', id: 'canvas-wrap' },
-        s('svg', { id: 'schematic', tabindex: '0', 'aria-label': 'Devre şeması' }),
+        s('svg', { id: 'schematic', tabindex: '0', 'aria-label': t('Devre şeması') }),
         h('div', { class: 'canvas-tools' },
-          h('button', { class: 'ghost small icon', id: 'undo', title: 'Geri al (Ctrl+Z)', 'aria-label': 'Geri al', onclick: () => ES.undo() }, icon('undo', 14)),
-          h('button', { class: 'ghost small icon', id: 'redo', title: 'Yinele (Ctrl+Y)', 'aria-label': 'Yinele', onclick: () => ES.redo() }, icon('redo', 14)),
-          h('button', { class: 'ghost small', title: 'Şemayı sığdır', onclick: () => { view = null; renderSchematic(); } }, icon('fit', 13), 'Sığdır')),
+          h('button', { class: 'ghost small icon', id: 'undo', title: t('Geri al (Ctrl+Z)'), 'aria-label': t('Geri al'), onclick: () => ES.undo() }, icon('undo', 14)),
+          h('button', { class: 'ghost small icon', id: 'redo', title: t('Yinele (Ctrl+Y)'), 'aria-label': t('Yinele'), onclick: () => ES.redo() }, icon('redo', 14)),
+          h('button', { class: 'ghost small', title: t('Şemayı sığdır'), onclick: () => { view = null; renderSchematic(); } }, icon('fit', 13), t('Sığdır'))),
         h('div', { class: 'legend' }, ...Object.entries(KIND_LABEL).map(([k, l]) => h('span', { class: `k-${k}`, text: l }))),
-        h('div', { class: 'canvas-hint', id: 'canvas-hint', text: 'Sağ tık: ekle · Komponente sağ tık: bağlantılar, aynala, datasheet, sil · Del: seçiliyi sil' })),
+        h('div', { class: 'canvas-hint', id: 'canvas-hint', text: t('Sağ tık: ekle · Komponente sağ tık: bağlantılar, aynala, datasheet, sil · Del: seçiliyi sil') })),
       h('aside', { class: 'right-pane', id: 'right-pane' },
         h('div', { class: 'pane-head' },
-          h('span', { class: 'pane-title', text: 'Bağlantılar' }),
-          h('button', { class: 'icon', title: 'Paneli kapat', onclick: () => setRightPanel(false) }, icon('close', 13))),
+          h('span', { class: 'pane-title', text: t('Bağlantılar') }),
+          h('button', { class: 'icon', title: t('Paneli kapat'), onclick: () => setRightPanel(false) }, icon('close', 13))),
         h('details', { id: 'notes-box', class: 'notes-box', ontoggle: (e) => { ui.notesOpen = e.target.open; saveUi(); } },
-          h('summary', {}, h('span', { text: 'Asistan notları' }), h('span', { id: 'notes-badges' })),
+          h('summary', {}, h('span', { text: t('Asistan notları') }), h('span', { id: 'notes-badges' })),
           h('div', { class: 'notes', id: 'notes' })),
         h('div', { id: 'conns' })),
       h('section', { class: 'dock', id: 'dock' },
         h('div', { class: 'dock-head', onclick: () => { ui.assistantOpen = !ui.assistantOpen; saveUi(); applyLayout(); } },
-          h('span', { class: 'pane-title', text: 'Asistan' }),
-          h('span', { class: 'hint', text: 'Projenin ne yapacağını yaz; uygun komponentleri önersin.' }),
+          h('span', { class: 'pane-title', text: t('Asistan') }),
+          h('span', { class: 'hint', text: t('Projenin ne yapacağını yaz; uygun komponentleri önersin.') }),
           h('span', { class: 'spacer' }),
           h('span', { class: 'chev', id: 'dock-chev' }, icon('chevron', 14))),
         h('div', { class: 'dock-body' },
           h('div', { class: 'dock-input' },
             h('textarea', {
               id: 'ask', rows: 3,
-              placeholder: 'Ör: Sıcaklık ve ivme ölçüp OLED ekranda gösteren, GPS konumunu kaydeden pilli bir cihaz.',
+              placeholder: t('Ör: Sıcaklık ve ivme ölçüp OLED ekranda gösteren, GPS konumunu kaydeden pilli bir cihaz.'),
               onkeydown: (e) => { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) ask(); }
             }),
-            h('div', { class: 'row' }, h('span', { class: 'hint', text: 'Ctrl+Enter' }), h('span', { class: 'spacer' }), h('button', { onclick: ask }, 'Öner'))),
+            h('div', { class: 'row' }, h('span', { class: 'hint', text: 'Ctrl+Enter' }), h('span', { class: 'spacer' }), h('button', { onclick: ask }, t('Öner')))),
           h('div', { class: 'dock-log', id: 'dock-log' })))));
     initCanvas();
     document.getElementById('notes-box').open = !!ui.notesOpen;
@@ -88,7 +88,7 @@
     if (selected === id) selected = null;
     hideTip();
     update();
-    toast('info', `${inst.label} tasarımdan çıkarıldı. Geri almak için Ctrl+Z.`);
+    toast('info', t('{0} tasarımdan çıkarıldı. Geri almak için Ctrl+Z.', inst.label));
   }
   function toggleMirror(id) {
     const inst = state.design.instances.find((i) => i.id === id);
@@ -107,10 +107,10 @@
   function libAddMenu(e) {
     const r = e.currentTarget.getBoundingClientRect();
     contextMenu(r.left, r.bottom + 4, [
-      { label: 'Yeni komponent oluştur…', icon: 'edit', action: () => ES.creator.open(null, 'new') },
+      { label: t('Yeni komponent oluştur…'), icon: 'edit', action: () => ES.creator.open(null, 'new') },
       '-',
-      { label: 'Komponent dosyası yükle (.json)…', icon: 'upload', action: () => post({ type: 'lib.import' }) },
-      { label: 'Örnek şablonu aç', icon: 'file', action: () => post({ type: 'lib.template' }) }
+      { label: t('Komponent dosyası yükle (.json)…'), icon: 'upload', action: () => post({ type: 'lib.import' }) },
+      { label: t('Örnek şablonu aç'), icon: 'file', action: () => post({ type: 'lib.template' }) }
     ]);
   }
 
@@ -118,10 +118,10 @@
   function libItemMenu(x, y, c) {
     const user = c.source === 'user';
     contextMenu(x, y, [
-      { label: 'Tasarıma ekle', icon: 'plus', action: () => addComponent(c.id) },
-      user ? { label: 'Düzenle…', icon: 'edit', action: () => ES.creator.open(c, 'edit') } : { label: 'Kopyasını düzenle…', icon: 'edit', hint: 'hazır komponent', action: () => ES.creator.open(c, 'copy') },
+      { label: t('Tasarıma ekle'), icon: 'plus', action: () => addComponent(c.id) },
+      user ? { label: t('Düzenle…'), icon: 'edit', action: () => ES.creator.open(c, 'edit') } : { label: t('Kopyasını düzenle…'), icon: 'edit', hint: t('hazır komponent'), action: () => ES.creator.open(c, 'copy') },
       { label: 'Datasheet', icon: 'pdf', disabled: !c.datasheet, action: () => post({ type: 'datasheet', componentId: c.id }) },
-      ...(user ? ['-', { label: 'Kütüphaneden kaldır', icon: 'trash', danger: true, action: () => post({ type: 'lib.remove', id: c.id }) }] : [])
+      ...(user ? ['-', { label: t('Kütüphaneden kaldır'), icon: 'trash', danger: true, action: () => post({ type: 'lib.remove', id: c.id }) }] : [])
     ]);
   }
 
@@ -129,17 +129,17 @@
     if (!state.lib) return;
     const groups = {};
     const match = (c) => !libFilter || [c.name, c.id, c.category, c.interface, ...(c.keywords || [])].join(' ').toLocaleLowerCase('tr').includes(libFilter);
-    for (const c of Object.values(state.lib.components).filter(match)) (groups[c.category || 'Diğer'] = groups[c.category || 'Diğer'] || []).push(c);
+    for (const c of Object.values(state.lib.components).filter(match)) (groups[c.category || t('Diğer')] = groups[c.category || t('Diğer')] || []).push(c);
     const list = $('library');
     if (!Object.keys(groups).length) {
-      list.replaceChildren(h('div', { class: 'hint pad', text: 'Eşleşen komponent yok.' }));
+      list.replaceChildren(h('div', { class: 'hint pad', text: t('Eşleşen komponent yok.') }));
       return;
     }
     list.replaceChildren(...Object.entries(groups).map(([cat, items]) =>
       h('details', { class: 'lib-group', open: true },
         h('summary', { text: cat }),
         ...items.map((c) => h('div', {
-          class: 'lib-item', tabindex: '0', role: 'button', 'aria-label': `${c.name} ekle`,
+          class: 'lib-item', tabindex: '0', role: 'button', 'aria-label': t('{0} ekle', c.name),
           onclick: () => addComponent(c.id),
           oncontextmenu: (e) => { e.preventDefault(); hideTip(); libItemMenu(e.clientX, e.clientY, c); },
           onkeydown: (e) => { if (e.key === 'Enter') addComponent(c.id); },
@@ -148,26 +148,26 @@
           onmouseleave: hideTip
         },
         h('span', { class: 'name', text: c.name }),
-        c.source === 'user' ? h('span', { class: 'chip user', text: 'kullanıcı' }) : null,
+        c.source === 'user' ? h('span', { class: 'chip user', text: t('kullanıcı') }) : null,
         h('span', { class: `iface k-${c.interface}`, text: KIND_LABEL[c.interface] || c.interface }),
-        c.source === 'user' ? h('button', { class: 'icon tiny', title: 'Kütüphaneden kaldır', onclick: (e) => { e.stopPropagation(); post({ type: 'lib.remove', id: c.id }); } }, icon('trash', 12)) : h('span', { class: 'add', text: '+' }))))));
+        c.source === 'user' ? h('button', { class: 'icon tiny', title: t('Kütüphaneden kaldır'), onclick: (e) => { e.stopPropagation(); post({ type: 'lib.remove', id: c.id }); } }, icon('trash', 12)) : h('span', { class: 'add', text: '+' }))))));
   }
 
   /** Üzerine gelince açılan komponent kartı. */
   function compCard(c, inst) {
-    const rows = [['Arayüz', KIND_LABEL[c.interface] || c.interface]];
-    if (c.i2c) rows.push(['I2C adresi', inst && state.result.addresses[inst.id] ? state.result.addresses[inst.id] : [c.i2c.address, ...(c.i2c.altAddresses || [])].join(' / ')]);
+    const rows = [[t('Arayüz'), KIND_LABEL[c.interface] || c.interface]];
+    if (c.i2c) rows.push([t('I2C adresi'), inst && state.result.addresses[inst.id] ? state.result.addresses[inst.id] : [c.i2c.address, ...(c.i2c.altAddresses || [])].join(' / ')]);
     if (c.uart) rows.push(['Baud', String(c.uart.baud)]);
-    if (c.spi) rows.push(['SPI hız', `${c.spi.maxSpeedHz / 1e6} MHz`]);
-    if (c.voltage) rows.push(['Besleme', `${c.voltage.min}–${c.voltage.max} V`]);
-    if (c.sampleMs) rows.push(['Örnekleme', `${c.sampleMs} ms`]);
+    if (c.spi) rows.push([t('SPI hız'), `${c.spi.maxSpeedHz / 1e6} MHz`]);
+    if (c.voltage) rows.push([t('Besleme'), `${c.voltage.min}–${c.voltage.max} V`]);
+    if (c.sampleMs) rows.push([t('Örnekleme'), `${c.sampleMs} ms`]);
     if (inst) {
       const conns = state.result.connections.filter((x) => x.instId === inst.id);
-      if (conns.length) rows.push(['Bağlantı', conns.map((x) => `${x.compPin}→${x.mcuPin}`).join('  ')]);
+      if (conns.length) rows.push([t('Bağlantı'), conns.map((x) => `${x.compPin}→${x.mcuPin}`).join('  ')]);
     } else {
-      rows.push(['Pinler', c.pins.map((p) => p.name).join(', ')]);
+      rows.push([t('Pinler'), c.pins.map((p) => p.name).join(', ')]);
     }
-    if (c.telemetry && c.telemetry.length) rows.push(['Ölçümler', c.telemetry.map((t) => `${t.id}${t.unit ? ` (${t.unit})` : ''}`).join(', ')]);
+    if (c.telemetry && c.telemetry.length) rows.push([t('Ölçümler'), c.telemetry.map((m) => `${m.id}${m.unit ? ` (${m.unit})` : ''}`).join(', ')]);
     return h('div', { class: 'comp-card' },
       h('div', { class: 'card-art' }, ES.art(c)),
       h('div', { class: 'card-body' },
@@ -175,7 +175,7 @@
         inst ? h('div', { class: 'hint', text: c.name }) : null,
         h('p', { text: c.description || '' }),
         h('dl', {}, ...rows.flatMap(([k, v]) => [h('dt', { text: k }), h('dd', { text: v })])),
-        c.datasheet ? h('div', { class: 'hint ds' }, icon('pdf', 14), h('span', { text: inst ? 'Sağ tık → Datasheet' : 'Datasheet mevcut' })) : null));
+        c.datasheet ? h('div', { class: 'hint ds' }, icon('pdf', 14), h('span', { text: inst ? t('Sağ tık → Datasheet') : t('Datasheet mevcut') })) : null));
   }
 
   // ================================================================ sağ panel: notlar + bağlantılar
@@ -185,9 +185,9 @@
     $('notes').replaceChildren(...all.map((n) => h('div', { class: `note ${n.level}` }, h('span', { class: 'ic', text: ic[n.level] }), h('span', { text: n.text }))));
     const err = all.filter((n) => n.level === 'error').length, warn = all.filter((n) => n.level === 'warn').length;
     $('notes-badges').replaceChildren(...[
-      err ? h('span', { class: 'badge err', title: 'Hata', text: String(err) }) : null,
-      warn ? h('span', { class: 'badge warn', title: 'Uyarı', text: String(warn) }) : null,
-      h('span', { class: 'badge', title: 'Toplam not', text: String(all.length) })].filter(Boolean));
+      err ? h('span', { class: 'badge err', title: t('Hata'), text: String(err) }) : null,
+      warn ? h('span', { class: 'badge warn', title: t('Uyarı'), text: String(warn) }) : null,
+      h('span', { class: 'badge', title: t('Toplam not'), text: String(all.length) })].filter(Boolean));
   }
 
   /**
@@ -202,13 +202,13 @@
       const key = `${inst.id}.${p.name}`;
       if (p.role === 'power' || p.role === 'ground') {
         const net = state.result.power.find((x) => x.instId === inst.id && x.compPin === p.name)?.net ?? '';
-        return h('tr', {}, h('td', { text: p.name }), h('td', { class: 'hint', text: p.role === 'ground' ? 'Toprak' : 'Besleme' }), h('td', { class: net === 'GND' ? 'k-gpio' : 'k-pwm', text: net }));
+        return h('tr', {}, h('td', { text: p.name }), h('td', { class: 'hint', text: p.role === 'ground' ? t('Toprak') : t('Besleme') }), h('td', { class: net === 'GND' ? 'k-gpio' : 'k-pwm', text: net }));
       }
       const conn = conns.find((x) => x.compPin === p.name);
       const opts = state.result.options[key] || [];
       const locked = lockOf(key);
       const sel = h('select', {
-        'aria-label': `${inst.label} ${p.name} MCU pini`,
+        'aria-label': t('{0} {1} MCU pini', inst.label, p.name),
         onchange: (e) => {
           if (staged) {
             if (e.target.value === 'auto') delete staged.locks[key];
@@ -216,7 +216,7 @@
           } else setLock(key, e.target.value);
         }
       },
-      h('option', { value: 'auto', text: `Otomatik${conn ? ` (${conn.mcuPin})` : ''}` }),
+      h('option', { value: 'auto', text: conn ? t('Otomatik ({0})', conn.mcuPin) : t('Otomatik') }),
       ...opts.map((pin) => {
         const user = state.result.pinUsage[pin];
         const mine = conn && conn.mcuPin === pin;
@@ -225,20 +225,20 @@
       return h('tr', {},
         h('td', { text: p.name }),
         h('td', {}, sel),
-        h('td', { class: conn ? `k-${conn.kind}` : 'hint' }, locked ? h('span', { class: 'lock', title: 'Elle seçildi', text: '● ' }) : null, conn ? conn.signal : '—'));
+        h('td', { class: conn ? `k-${conn.kind}` : 'hint' }, locked ? h('span', { class: 'lock', title: t('Elle seçildi'), text: '● ' }) : null, conn ? conn.signal : '—'));
     });
     let addrSel = null;
     if (c.i2c) {
       const addrs = [c.i2c.address, ...(c.i2c.altAddresses || [])];
       const current = staged ? staged.address : (inst.options && inst.options.address) || 'auto';
       addrSel = h('select', {
-        title: 'I2C adresi', 'aria-label': 'I2C adresi',
+        title: t('I2C adresi'), 'aria-label': t('I2C adresi'),
         onchange: (e) => {
           if (staged) staged.address = e.target.value;
           else { inst.options = e.target.value === 'auto' ? {} : { address: e.target.value }; update(); }
         }
-      }, h('option', { value: 'auto', text: `adres: auto (${state.result.addresses[inst.id] || '-'})` }),
-      ...addrs.map((a) => h('option', { value: a, text: `adres: ${a}`, selected: current === a })));
+      }, h('option', { value: 'auto', text: t('adres: auto ({0})', state.result.addresses[inst.id] || '-') }),
+      ...addrs.map((a) => h('option', { value: a, text: t('adres: {0}', a), selected: current === a })));
     }
     return { table: h('table', { class: 'pins' }, ...rows), addrSel };
   }
@@ -257,7 +257,7 @@
         h('span', { class: `iface k-${c.interface}`, text: KIND_LABEL[c.interface] || c.interface }),
         h('span', { class: 'title', title: c.name, text: inst.label }),
         addrSel,
-        h('button', { class: 'icon', title: 'Tasarımdan çıkar', 'aria-label': `${inst.label} sil`, onclick: () => removeComponent(inst.id) }, icon('trash', 13))),
+        h('button', { class: 'icon', title: t('Tasarımdan çıkar'), 'aria-label': t('{0} sil', inst.label), onclick: () => removeComponent(inst.id) }, icon('trash', 13))),
       table);
     });
     $('conns').replaceChildren(...cards.filter(Boolean));
@@ -271,7 +271,7 @@
     const { table, addrSel } = connTable(inst, staged);
     const c = comp(inst);
     modal({
-      title: `${inst.label} · Bağlantılar`,
+      title: t('{0} · Bağlantılar', inst.label),
       width: 520,
       body: h('div', { class: 'conn-modal' },
         h('div', { class: 'conn-modal-top' },
@@ -279,20 +279,20 @@
           h('div', {},
             h('div', { class: 'hint', text: c.name }),
             addrSel,
-            h('label', { class: 'check' }, h('input', { type: 'checkbox', checked: staged.mirror, onchange: (e) => (staged.mirror = e.target.checked) }), h('span', { text: 'Yönü değiştir (aynala)' })))),
+            h('label', { class: 'check' }, h('input', { type: 'checkbox', checked: staged.mirror, onchange: (e) => (staged.mirror = e.target.checked) }), h('span', { text: t('Yönü değiştir (aynala)') })))),
         h('div', { class: 'conn-card flat' }, table),
-        h('p', { class: 'hint', text: '"Otomatik" pinler asistan tarafından atanır. Elle seçtiğiniz pin kilitlenir ve geri kalan atama ona göre yeniden çözülür.' })),
+        h('p', { class: 'hint', text: t('"Otomatik" pinler asistan tarafından atanır. Elle seçtiğiniz pin kilitlenir ve geri kalan atama ona göre yeniden çözülür.') })),
       buttons: [
-        { label: 'Kapat' },
+        { label: t('Kapat') },
         {
-          label: 'Kaydet', primary: true,
+          label: t('Kaydet'), primary: true,
           action: () => {
             for (const k of Object.keys(state.design.locks || {})) if (k.startsWith(inst.id + '.')) delete state.design.locks[k];
             Object.assign(state.design.locks, staged.locks);
             inst.options = staged.address === 'auto' ? {} : { address: staged.address };
             inst.mirror = staged.mirror;
             update();
-            toast('info', `${inst.label} bağlantıları kaydedildi.`);
+            toast('info', t('{0} bağlantıları kaydedildi.', inst.label));
           }
         }
       ]
@@ -305,11 +305,11 @@
     selected = inst.id;
     applyHighlight();
     contextMenu(x, y, [
-      { label: 'Bağlantılar…', icon: 'link', action: () => openConnections(inst) },
-      { label: 'Yönü değiştir (aynala)', icon: 'mirror', action: () => toggleMirror(inst.id) },
-      { label: 'Datasheet', icon: 'pdf', hint: c.datasheet ? 'PDF' : 'yok', disabled: !c.datasheet, action: () => post({ type: 'datasheet', componentId: c.id }) },
+      { label: t('Bağlantılar…'), icon: 'link', action: () => openConnections(inst) },
+      { label: t('Yönü değiştir (aynala)'), icon: 'mirror', action: () => toggleMirror(inst.id) },
+      { label: 'Datasheet', icon: 'pdf', hint: c.datasheet ? 'PDF' : t('yok'), disabled: !c.datasheet, action: () => post({ type: 'datasheet', componentId: c.id }) },
       '-',
-      { label: 'Sil', icon: 'trash', hint: 'Del', danger: true, action: () => removeComponent(inst.id) }
+      { label: t('Sil'), icon: 'trash', hint: 'Del', danger: true, action: () => removeComponent(inst.id) }
     ]);
   }
 
@@ -321,9 +321,9 @@
       list.replaceChildren(...items.map((c) => h('div', {
         class: 'ctx-item', onclick: () => { closeMenu(); addComponent(c.id); }
       }, h('span', { class: `iface k-${c.interface}`, text: KIND_LABEL[c.interface] || c.interface }), h('span', { class: 'ctx-label', text: c.name }), h('span', { class: 'ctx-hint', text: c.category || '' }))));
-      if (!items.length) list.append(h('div', { class: 'hint pad', text: 'Bulunamadı' }));
+      if (!items.length) list.append(h('div', { class: 'hint pad', text: t('Bulunamadı') }));
     };
-    box.append(h('input', { type: 'text', placeholder: 'Ara…', oninput: (e) => fill(e.target.value.toLocaleLowerCase('tr')), onkeydown: (e) => e.stopPropagation() }), list);
+    box.append(h('input', { type: 'text', placeholder: t('Ara…'), oninput: (e) => fill(e.target.value.toLocaleLowerCase('tr')), onkeydown: (e) => e.stopPropagation() }), list);
     fill('');
     return box;
   }
@@ -332,21 +332,21 @@
     selected = null;
     applyHighlight();
     contextMenu(x, y, [
-      { label: 'Komponent ekle', icon: 'plus', submenu: addSubmenu },
-      { label: 'Sığdır', icon: 'fit', action: () => { view = null; renderSchematic(); } },
+      { label: t('Komponent ekle'), icon: 'plus', submenu: addSubmenu },
+      { label: t('Sığdır'), icon: 'fit', action: () => { view = null; renderSchematic(); } },
       '-',
-      { label: ui.rightPanel ? 'Bağlantılar panelini gizle' : 'Bağlantılar panelini göster', icon: 'panel', action: () => setRightPanel(!ui.rightPanel) }
+      { label: ui.rightPanel ? t('Bağlantılar panelini gizle') : t('Bağlantılar panelini göster'), icon: 'panel', action: () => setRightPanel(!ui.rightPanel) }
     ]);
   }
 
   function mcuMenu(x, y) {
     const mcu = state.lib.mcus[state.design.mcuId];
     contextMenu(x, y, [
-      { label: `${mcu.name} datasheet`, icon: 'pdf', action: () => post({ type: 'datasheet', componentId: '@mcu' }) },
+      { label: t('{0} datasheet', mcu.name), icon: 'pdf', action: () => post({ type: 'datasheet', componentId: '@mcu' }) },
       { label: 'Reference manual', icon: 'pdf', disabled: !mcu.referenceManual, action: () => post({ type: 'openExternal', url: mcu.referenceManual }) },
       '-',
-      { label: 'Clock ayarları', icon: 'clock', action: () => ES.setTab('clock') },
-      { label: 'Komponent ekle', icon: 'plus', submenu: addSubmenu }
+      { label: t('Clock ayarları'), icon: 'clock', action: () => ES.setTab('clock') },
+      { label: t('Komponent ekle'), icon: 'plus', submenu: addSubmenu }
     ]);
   }
 
@@ -365,14 +365,14 @@
   function renderDock() {
     const log = $('dock-log');
     if (!conversation.length) {
-      log.replaceChildren(h('div', { class: 'hint pad', text: 'Öneriler burada görünecek. İsterseniz tek tek, isterseniz hepsini ekleyebilirsiniz.' }));
+      log.replaceChildren(h('div', { class: 'hint pad', text: t('Öneriler burada görünecek. İsterseniz tek tek, isterseniz hepsini ekleyebilirsiniz.') }));
       return;
     }
     log.replaceChildren(...conversation.slice(0, 8).map((m) => h('div', { class: 'msg' },
       h('div', { class: 'msg-q', text: m.question }),
       h('div', { class: 'msg-a', text: m.reply }),
       m.components.length ? h('div', { class: 'chips' },
-        ...m.components.map((id) => h('button', { class: 'chip-btn', title: 'Ekle', onclick: () => addComponent(id) }, '+ ' + state.lib.components[id].name)),
+        ...m.components.map((id) => h('button', { class: 'chip-btn', title: t('Ekle'), onclick: () => addComponent(id) }, '+ ' + state.lib.components[id].name)),
         h('button', {
           class: 'small',
           onclick: () => {
@@ -382,7 +382,7 @@
             }
             update();
           }
-        }, 'Hepsini ekle')) : null)));
+        }, t('Hepsini ekle'))) : null)));
   }
 
   // ================================================================ şema

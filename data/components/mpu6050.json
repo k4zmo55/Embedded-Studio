@@ -13,7 +13,11 @@
     "hareket",
     "accelerometer",
     "motion",
-    "titreşim"
+    "titreşim",
+    "acceleration",
+    "gyroscope",
+    "tilt",
+    "vibration"
   ],
   "interface": "i2c",
   "voltage": {

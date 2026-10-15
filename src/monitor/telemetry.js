@@ -9,6 +9,7 @@
  * Kaynaklar (simülatör, seri port, RTT...) sadece satır üretir; ayrıştırma tek yerde.
  */
 const { rtosPlan, cIdent } = require('../codegen/generator');
+const { t } = require('../i18n');
 
 function parseLine(raw) {
   const line = raw.trim();
@@ -75,7 +76,7 @@ class Simulator {
     this.onLine(`$I,simulasyon,${mcu.name},${this.design.rtos ? 'FreeRTOS' : 'bare-metal'}`);
     for (const inst of this.design.instances) {
       const comp = this.lib.components[inst.componentId];
-      if (comp && comp.id !== 'usb_uart') this.onLine(`$S,${cIdent(inst.label)},OK (simülasyon)`);
+      if (comp && comp.id !== 'usb_uart') this.onLine(`$S,${cIdent(inst.label)},${t('OK (simülasyon)')}`);
     }
     this.timer = setInterval(() => this.step(), 50);
   }

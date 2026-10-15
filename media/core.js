@@ -22,7 +22,8 @@ window.ES = (function () {
   const h = (tag, props = {}, ...children) => build(null, tag, props, children);
   const s = (tag, props = {}, ...children) => build(SVG, tag, props, children);
   const $ = (id) => document.getElementById(id);
-  const cIdent = (t) => t.toUpperCase().replace(/[^A-Z0-9]/g, '_');
+  const cIdent = (x) => x.toUpperCase().replace(/[^A-Z0-9]/g, '_');
+  const { t } = window.ESI18N;
 
   // ---- mesajlaşma ----
   const listeners = {};
@@ -166,7 +167,7 @@ window.ES = (function () {
     const onKey = (e) => { if (e.key === 'Escape') close(); };
     const overlay = h('div', { class: 'modal-overlay', onmousedown: (e) => { if (e.target === overlay) close(); } },
       h('div', { class: `modal${opts.className ? ' ' + opts.className : ''}`, role: 'dialog', 'aria-label': opts.title, style: opts.width ? `width:${opts.width}px` : null },
-        h('div', { class: 'modal-head' }, h('span', { class: 'modal-title', text: opts.title }), h('button', { class: 'icon', title: 'Kapat', onclick: () => close() }, icon('close', 14))),
+        h('div', { class: 'modal-head' }, h('span', { class: 'modal-title', text: opts.title }), h('button', { class: 'icon', title: t('Kapat'), onclick: () => close() }, icon('close', 14))),
         h('div', { class: 'modal-body' }, opts.body),
         h('div', { class: 'modal-foot' }, opts.footLeft || null, opts.footLeft ? h('span', { class: 'spacer' }) : null, ...(opts.buttons || []).map((b) => h('button', {
           class: b.primary ? '' : 'ghost', id: b.id,
@@ -215,10 +216,10 @@ window.ES = (function () {
     // Aynı mesaj üst üste gelmesin; en fazla 4 bildirim; hatalar daha uzun kalır, tıklayınca kapanır.
     for (const old of box.children) if (old.textContent === text) old.remove();
     while (box.children.length >= 4) box.firstChild.remove();
-    const t = h('div', { class: `toast ${level}`, role: level === 'error' ? 'alert' : 'status', title: 'Kapatmak için tıklayın' }, h('span', { text }));
-    const close = () => { t.classList.add('out'); setTimeout(() => t.remove(), 400); };
-    t.onclick = close;
-    box.append(t);
+    const el = h('div', { class: `toast ${level}`, role: level === 'error' ? 'alert' : 'status', title: t('Kapatmak için tıklayın') }, h('span', { text }));
+    const close = () => { el.classList.add('out'); setTimeout(() => el.remove(), 400); };
+    el.onclick = close;
+    box.append(el);
     setTimeout(close, level === 'error' ? 9000 : level === 'warn' ? 6500 : 4200);
   }
   on('toast', (m) => toast(m.level, m.text));
@@ -230,5 +231,5 @@ window.ES = (function () {
   const hex = (v, w = 8) => '0x' + (v >>> 0).toString(16).toUpperCase().padStart(w, '0');
   const KIND_LABEL = { i2c: 'I2C', spi: 'SPI', uart: 'UART', gpio: 'GPIO', adc: 'ADC', pwm: 'PWM' };
 
-  return { h, s, $, cIdent, on, emit, post, state, ui, saveUi, update, undo, redo, canUndo: () => hist.undo.length > 0, canRedo: () => hist.redo.length > 0, icon, contextMenu, closeMenu, modal, showTip, placeTip, hideTip, toast, isTyping, hex, KIND_LABEL, tabs: {} };
+  return { t, h, s, $, cIdent, on, emit, post, state, ui, saveUi, update, undo, redo, canUndo: () => hist.undo.length > 0, canRedo: () => hist.redo.length > 0, icon, contextMenu, closeMenu, modal, showTip, placeTip, hideTip, toast, isTyping, hex, KIND_LABEL, tabs: {} };
 })();

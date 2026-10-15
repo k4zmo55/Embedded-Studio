@@ -1,0 +1,7 @@
+{
+  "command.openDesigner": "Tasarımcıyı Aç",
+  "command.newProject": "Yeni Proje",
+  "command.generateCode": "Kod Üret",
+  "config.language": "Embedded Studio arayüz dili. \"auto\" VS Code görüntüleme dilini izler (Türkçe ise Türkçe, değilse İngilizce).",
+  "config.language.auto": "VS Code görüntüleme dilini izle"
+}

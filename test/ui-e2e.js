@@ -36,6 +36,8 @@ const recorded = { external: [], tasks: [], info: [], warn: [], errors: [], open
 let toWebview = (m) => { const line = `data: ${JSON.stringify(m)}\n\n`; if (!sse.length) backlog.push(line); sse.forEach((r) => r.write(line)); };
 let onWebviewMessage = null;
 const dialogQueue = [];
+const settings = {};
+const configListeners = [];
 const uriOf = (p) => ({ fsPath: p, path: p, toString: () => p });
 const vscodeFake = {
   Uri: { file: uriOf, parse: (u) => ({ fsPath: u, toString: () => u }), joinPath: (u, ...parts) => uriOf(path.join(u.fsPath, ...parts)) },
@@ -43,7 +45,11 @@ const vscodeFake = {
   Task: class { constructor(def, scope, name, source, exec) { Object.assign(this, { def, scope, name, source, exec }); } },
   ShellExecution: class { constructor(cmd, opts) { Object.assign(this, { cmd, opts }); } },
   commands: { registerCommand: () => ({ dispose() {} }), executeCommand: async (...a) => recorded.openFolder.push(a) },
-  workspace: { workspaceFolders: [{ uri: uriOf(PROJECT) }], openTextDocument: async () => ({}) },
+  workspace: {
+    workspaceFolders: [{ uri: uriOf(PROJECT) }], openTextDocument: async () => ({}),
+    getConfiguration: () => ({ get: (k, d) => (k in settings ? settings[k] : d) }),
+    onDidChangeConfiguration: (fn) => { configListeners.push(fn); return { dispose() {} }; }
+  },
   window: {
     createStatusBarItem: () => ({ show() {}, dispose() {} }),
     createOutputChannel: () => ({ append() {}, appendLine() {} }),
@@ -65,7 +71,7 @@ const vscodeFake = {
     withProgress: async (o, fn) => fn({ report() {} })
   },
   tasks: { executeTask: async (t) => recorded.tasks.push(t), onDidEndTaskProcess: () => ({ dispose() {} }) },
-  env: { openExternal: async (u) => recorded.external.push(String(u.toString ? u.toString() : u)) }
+  env: { language: 'tr', openExternal: async (u) => recorded.external.push(String(u.toString ? u.toString() : u)) }
 };
 const origResolve = Module._resolveFilename;
 Module._resolveFilename = function (req, ...rest) { return req === 'vscode' ? 'vscode' : origResolve.call(this, req, ...rest); };
@@ -90,6 +96,7 @@ function startServer(getHtml) {
         res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', Connection: 'keep-alive' });
         res.write(':ok\n\n');
         sse.push(res);
+        req.on('close', () => { const i = sse.indexOf(res); if (i >= 0) sse.splice(i, 1); });
         backlog.splice(0).forEach((l) => res.write(l));
         return;
       }
@@ -669,6 +676,36 @@ async function until(fn, ms = 8000, what = 'koşul') {
     } finally {
       await cdp.send('Emulation.setDeviceMetricsOverride', { width: W, height: WIN_H, deviceScaleFactor: 1, mobile: false });
     }
+  });
+  await step('İngilizce arayüz: ayar değişince yeniden yüklenir, ekranda Türkçe metin kalmaz', async () => {
+    settings.language = 'en';
+    configListeners.forEach((fn) => fn({ affectsConfiguration: (s) => s === 'embeddedStudio.language' }));
+    await cdp.send('Page.navigate', { url: ORIGIN + '/' }); // gerçek webview html değişince kendiliğinden yenilenir
+    await until(() => cdp.eval(`(document.querySelector('#tab-design') || {}).textContent === 'Design' && document.documentElement.lang === 'en'`).catch(() => false), 15000, 'İngilizce arayüz');
+    // Kullanıcının kendi komponentlerinin metinleri (ad, açıklama…) çevrilmez
+    const userDir = path.join(PROJECT, '.embedded-studio', 'components');
+    const userText = fs.readdirSync(userDir).filter((f) => f.endsWith('.json')).map((f) => fs.readFileSync(path.join(userDir, f), 'utf8')).join(' ');
+    const turkish = async (where) => {
+      const words = await cdp.eval(`(document.body.innerText + ' ' + [...document.querySelectorAll('[title],[placeholder],[aria-label]')].map((e) => [e.title, e.placeholder, e.getAttribute('aria-label')].join(' ')).join(' ')).match(/[^\\s"'()\\[\\]·:,.;!?]*[çğıöşüÇĞİÖŞÜ][^\\s"'()\\[\\]·:,.;!?]*/g) || []`);
+      return [...new Set(words)].filter((w) => !userText.includes(w)).map((w) => `${where}: ${w}`);
+    };
+    const found = [];
+    for (const tab of ['design', 'clock', 'monitor', 'debug']) {
+      await cdp.click(`#tab-${tab}`);
+      await sleep(500);
+      found.push(...(await turkish(tab)));
+    }
+    await cdp.shot('21-ingilizce-debug');
+    await cdp.click('#tab-design');
+    await cdp.click('#lib-add');
+    await cdp.click(`([...document.querySelectorAll('.ctx-item')].find((e) => e.textContent.includes('Create new component')))`);
+    await until(() => cdp.eval(`!!document.querySelector('.creator') && document.querySelector('#cf-errors').textContent.length > 0`), 3000, 'oluşturucu');
+    await sleep(500);
+    found.push(...(await turkish('creator')));
+    await cdp.shot('22-ingilizce-olusturucu');
+    await cdp.click(`([...document.querySelectorAll('.modal-foot button')].find((b) => b.textContent === 'Close'))`);
+    await cdp.shot('23-ingilizce-tasarim');
+    assert.deepStrictEqual(found, [], 'İngilizce arayüzde Türkçe metin');
   });
   await step('Tarayıcı konsolunda hata yok', async () => {
     assert.deepStrictEqual(cdp.logs, []);

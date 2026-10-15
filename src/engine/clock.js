@@ -7,6 +7,7 @@
  *  HSE ─┘            └─ /Q ─ 48 MHz  │                        └─ /APB2 ─ PCLK2 (TIM ×2)
  *              HSI / HSE ────────────┘
  */
+const { t } = require('../i18n');
 
 /** @typedef {{ pllSource: 'HSE'|'HSI', sysclkSource: 'PLL'|'HSE'|'HSI', hseMHz: number,
  *              M: number, N: number, P: number, Q: number, ahb: number, apb1: number, apb2: number }} ClockConfig */
@@ -35,20 +36,20 @@ function computeClock(mcu, cfg) {
   const tim2 = c.apb2 === 1 ? pclk2 : pclk2 * 2;
 
   const err = (field, text) => issues.push({ level: 'error', field, text });
-  if (c.hseMHz < def.hseRange[0] || c.hseMHz > def.hseRange[1]) err('hse', `HSE ${def.hseRange[0]}-${def.hseRange[1]} MHz aralığında olmalı.`);
+  if (c.hseMHz < def.hseRange[0] || c.hseMHz > def.hseRange[1]) err('hse', t('HSE {0}-{1} MHz aralığında olmalı.', def.hseRange[0], def.hseRange[1]));
   if (pllUsed || c.pllSource) {
-    if (pllUsed && (pllIn < L.vcoIn[0] || pllIn > L.vcoIn[1])) err('M', `PLL girişi ${round(pllIn)} MHz; ${L.vcoIn[0]}-${L.vcoIn[1]} MHz olmalı (M'yi ayarlayın, 2 MHz önerilir).`);
-    if (pllUsed && (vco < L.vcoOut[0] || vco > L.vcoOut[1])) err('N', `VCO çıkışı ${round(vco)} MHz; ${L.vcoOut[0]}-${L.vcoOut[1]} MHz olmalı.`);
-    if (c.M < def.pllM[0] || c.M > def.pllM[1]) err('M', `M ${def.pllM[0]}-${def.pllM[1]} aralığında olmalı.`);
-    if (c.N < def.pllN[0] || c.N > def.pllN[1]) err('N', `N ${def.pllN[0]}-${def.pllN[1]} aralığında olmalı.`);
-    if (c.Q < def.pllQ[0] || c.Q > def.pllQ[1]) err('Q', `Q ${def.pllQ[0]}-${def.pllQ[1]} aralığında olmalı.`);
+    if (pllUsed && (pllIn < L.vcoIn[0] || pllIn > L.vcoIn[1])) err('M', t('PLL girişi {0} MHz; {1}-{2} MHz olmalı (M\'yi ayarlayın, 2 MHz önerilir).', round(pllIn), L.vcoIn[0], L.vcoIn[1]));
+    if (pllUsed && (vco < L.vcoOut[0] || vco > L.vcoOut[1])) err('N', t('VCO çıkışı {0} MHz; {1}-{2} MHz olmalı.', round(vco), L.vcoOut[0], L.vcoOut[1]));
+    if (c.M < def.pllM[0] || c.M > def.pllM[1]) err('M', t('M {0}-{1} aralığında olmalı.', def.pllM[0], def.pllM[1]));
+    if (c.N < def.pllN[0] || c.N > def.pllN[1]) err('N', t('N {0}-{1} aralığında olmalı.', def.pllN[0], def.pllN[1]));
+    if (c.Q < def.pllQ[0] || c.Q > def.pllQ[1]) err('Q', t('Q {0}-{1} aralığında olmalı.', def.pllQ[0], def.pllQ[1]));
   }
-  if (sysclk > L.sysclk + 1e-9) err('sysclk', `SYSCLK ${round(sysclk)} MHz; en fazla ${L.sysclk} MHz.`);
-  if (hclk > L.hclk + 1e-9) err('hclk', `HCLK ${round(hclk)} MHz; en fazla ${L.hclk} MHz.`);
-  if (pclk1 > L.apb1 + 1e-9) err('apb1', `APB1 ${round(pclk1)} MHz; en fazla ${L.apb1} MHz.`);
-  if (pclk2 > L.apb2 + 1e-9) err('apb2', `APB2 ${round(pclk2)} MHz; en fazla ${L.apb2} MHz.`);
-  if (pclk1 < 4) issues.push({ level: 'warn', field: 'apb1', text: 'I2C 400 kHz (fast mode) için PCLK1 en az 4 MHz olmalı.' });
-  if (pllUsed && Math.abs(pll48 - 48) > 0.01) issues.push({ level: 'warn', field: 'Q', text: `48 MHz çıkışı ${round(pll48)} MHz. USB/SDIO kullanılmıyorsa sorun değil.` });
+  if (sysclk > L.sysclk + 1e-9) err('sysclk', t('SYSCLK {0} MHz; en fazla {1} MHz.', round(sysclk), L.sysclk));
+  if (hclk > L.hclk + 1e-9) err('hclk', t('HCLK {0} MHz; en fazla {1} MHz.', round(hclk), L.hclk));
+  if (pclk1 > L.apb1 + 1e-9) err('apb1', t('APB1 {0} MHz; en fazla {1} MHz.', round(pclk1), L.apb1));
+  if (pclk2 > L.apb2 + 1e-9) err('apb2', t('APB2 {0} MHz; en fazla {1} MHz.', round(pclk2), L.apb2));
+  if (pclk1 < 4) issues.push({ level: 'warn', field: 'apb1', text: t('I2C 400 kHz (fast mode) için PCLK1 en az 4 MHz olmalı.') });
+  if (pllUsed && Math.abs(pll48 - 48) > 0.01) issues.push({ level: 'warn', field: 'Q', text: t('48 MHz çıkışı {0} MHz. USB/SDIO kullanılmıyorsa sorun değil.', round(pll48)) });
 
   const latency = (def.flashLatency.find(([max]) => hclk <= max) || def.flashLatency[def.flashLatency.length - 1])[1];
 

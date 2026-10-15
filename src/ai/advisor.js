@@ -8,6 +8,7 @@
  * de yine pinAssigner tarafından doğrulanacak.
  */
 const { rtosPlan } = require('../codegen/generator');
+const { t } = require('../i18n');
 
 /**
  * @typedef {{ components: string[], reply: string }} Suggestion
@@ -27,15 +28,15 @@ function analyze(design, lib, result) {
       const noPullup = members.filter((m) => !lib.components[m.componentId].i2c.onboardPullups);
       notes.push({
         level: noPullup.length ? 'warn' : 'info',
-        text: `${name} (${p.pins.SCL}/${p.pins.SDA}, ${p.speedHz / 1000} kHz): ${members.map((m) => `${m.label}@${result.addresses[m.id]}`).join(', ')}.` +
-          (noPullup.length ? ' Hatta 4.7 kΩ pull-up direnci ekleyin.' : ' Modüllerde pull-up var; birden çok modülde paralel pull-up değeri düşebilir, gerekirse birini sökün.')
+        text: `${name} (${p.pins.SCL}/${p.pins.SDA}, ${p.speedHz / 1000} kHz): ${members.map((m) => `${m.label}@${result.addresses[m.id]}`).join(', ')}. ` +
+          (noPullup.length ? t('Hatta 4.7 kΩ pull-up direnci ekleyin.') : t('Modüllerde pull-up var; birden çok modülde paralel pull-up değeri düşebilir, gerekirse birini sökün.'))
       });
     }
     if (p.type === 'spi') {
-      notes.push({ level: 'info', text: `${name} (SCK ${p.pins.SCK}): ${p.members.map(label).join(', ')}. Her cihazın kendi CS hattı GPIO olarak atandı.` });
+      notes.push({ level: 'info', text: t('{0} (SCK {1}): {2}. Her cihazın kendi CS hattı GPIO olarak atandı.', name, p.pins.SCK, p.members.map(label).join(', ')) });
     }
     if (p.type === 'uart') {
-      notes.push({ level: 'info', text: `${name} (TX ${p.pins.TX ?? '-'}, RX ${p.pins.RX ?? '-'}) @ ${p.baud} baud → ${p.members.map(label).join(', ')}. TX↔RX çapraz bağlandı.` });
+      notes.push({ level: 'info', text: t('{0} (TX {1}, RX {2}) @ {3} baud → {4}. TX↔RX çapraz bağlandı.', name, p.pins.TX ?? '-', p.pins.RX ?? '-', p.baud, p.members.map(label).join(', ')) });
     }
     if (p.type === 'pwm') {
       notes.push({ level: 'info', text: `${name} PWM @ ${p.frequencyHz} Hz: ${p.channels.map((c) => `${c.channel}→${c.pin}`).join(', ')}.` });
@@ -44,46 +45,47 @@ function analyze(design, lib, result) {
 
   for (const pw of result.power) {
     if (pw.net === '5V') {
-      notes.push({ level: 'warn', text: `${label(pw.instId)} 5V besleme istiyor. Beslemeyi 5V'tan alın; sinyal hattı 3.3V, çoğu modül için yeterli ama datasheet'i kontrol edin.` });
+      notes.push({ level: 'warn', text: t('{0} 5V besleme istiyor. Beslemeyi 5V\'tan alın; sinyal hattı 3.3V, çoğu modül için yeterli ama datasheet\'i kontrol edin.', label(pw.instId)) });
     }
   }
 
   if (!Object.values(result.peripherals).some((p) => p.telemetry)) {
-    notes.push({ level: 'warn', text: 'Telemetri hattı yok. Canlı izleme için "USB-UART" komponentini ekleyin.' });
+    notes.push({ level: 'warn', text: t('Telemetri hattı yok. Canlı izleme için "USB-UART" komponentini ekleyin.') });
   }
 
   const sensors = design.instances.filter((i) => (lib.components[i.componentId]?.sampleMs ?? 0) > 0);
   const rates = new Set(sensors.map((i) => lib.components[i.componentId].sampleMs));
   if (!design.rtos && rates.size >= 3) {
-    notes.push({ level: 'info', text: `${rates.size} farklı örnekleme periyodu var. FreeRTOS ile her sensörü ayrı task'ta çalıştırmak zamanlamayı sadeleştirir.` });
+    notes.push({ level: 'info', text: t('{0} farklı örnekleme periyodu var. FreeRTOS ile her sensörü ayrı task\'ta çalıştırmak zamanlamayı sadeleştirir.', rates.size) });
   }
   if (design.rtos) {
     const plan = rtosPlan(design, lib);
-    const prios = plan.tasks.map((t) => `${t.name}(${t.periodMs}ms→P${t.priority})`).join(', ');
-    notes.push({ level: 'info', text: `FreeRTOS: ${plan.tasks.length} uygulama task'ı + Monitor. Rate-monotonic öncelik: ${prios || '-'}. Heap ${plan.heapBytes} byte (${mcu.ramKB} KB RAM mevcut). Paylaşılan I2C/SPI bus'ları mutex ile korunuyor.` });
+    const prios = plan.tasks.map((x) => `${x.name}(${x.periodMs}ms→P${x.priority})`).join(', ');
+    notes.push({ level: 'info', text: t('FreeRTOS: {0} uygulama task\'ı + Monitor. Rate-monotonic öncelik: {1}. Heap {2} byte ({3} KB RAM mevcut). Paylaşılan I2C/SPI bus\'ları mutex ile korunuyor.', plan.tasks.length, prios || '-', plan.heapBytes, mcu.ramKB) });
   }
 
   const free = mcu.pins.filter((p) => !p.reserved && !result.pinUsage[p.name]).length;
-  notes.push({ level: 'info', text: `${mcu.name}: ${Object.keys(result.pinUsage).length} pin kullanımda/rezerve, ${free} boş pin. SWD (PA13/PA14) programlama için ayrıldı.` });
+  notes.push({ level: 'info', text: t('{0}: {1} pin kullanımda/rezerve, {2} boş pin. SWD (PA13/PA14) programlama için ayrıldı.', mcu.name, Object.keys(result.pinUsage).length, free) });
 
   return notes;
 }
 
 /** Basit anahtar kelime eşleştirme ile doğal dil isteğinden komponent önerir. */
 function suggestFromText(text, lib) {
-  const t = text.toLocaleLowerCase('tr');
+  // Türkçe (İ/ı) ve İngilizce küçük harf dönüşümünün ikisine de bak: "IMU" → "imu" ve "ımu"
+  const qs = [text.toLocaleLowerCase('tr'), text.toLowerCase()];
   const hits = Object.values(lib.components)
-    .map((c) => ({ c, n: c.keywords.filter((k) => t.includes(k)).length }))
+    .map((c) => ({ c, n: c.keywords.filter((k) => qs.some((q) => q.includes(k))).length }))
     .filter((x) => x.n > 0)
     .sort((a, b) => b.n - a.n)
     .map((x) => x.c);
   if (!hits.length) {
-    return { components: [], reply: 'Bu istekle eşleşen bir komponent bulamadım. "sıcaklık", "ivme", "ekran", "gps", "servo" gibi ifadeler deneyin.' };
+    return { components: [], reply: t('Bu istekle eşleşen bir komponent bulamadım. "sıcaklık", "ivme", "ekran", "gps", "servo" gibi ifadeler deneyin.') };
   }
   const ids = hits.map((c) => c.id);
   if (!ids.includes('usb_uart')) ids.push('usb_uart');
-  const names = ids.map((id) => lib.components[id].name).join(', ');
-  return { components: ids, reply: `Önerim: ${names}. Test sonuçlarını izleyebilmeniz için USB-UART telemetri hattını da ekledim.` };
+  const names = ids.map((id) => (lib.components[id].source === 'user' ? lib.components[id].name : t(lib.components[id].name))).join(', ');
+  return { components: ids, reply: t('Önerim: {0}. Test sonuçlarını izleyebilmeniz için USB-UART telemetri hattını da ekledim.', names) };
 }
 
 /** @type {LlmProvider} */

@@ -1,0 +1,7 @@
+{
+  "command.openDesigner": "Open Designer",
+  "command.newProject": "New Project",
+  "command.generateCode": "Generate Code",
+  "config.language": "Interface language of Embedded Studio. \"auto\" follows the VS Code display language (Turkish if it is Turkish, otherwise English).",
+  "config.language.auto": "Follow the VS Code display language"
+}

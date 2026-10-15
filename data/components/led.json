@@ -9,7 +9,9 @@
     "isik",
     "gösterge",
     "durum",
-    "blink"
+    "blink",
+    "light",
+    "indicator"
   ],
   "interface": "gpio",
   "voltage": {

@@ -8,7 +8,9 @@
     "konum",
     "location",
     "gnss",
-    "navigasyon"
+    "navigasyon",
+    "position",
+    "navigation"
   ],
   "interface": "uart",
   "voltage": {

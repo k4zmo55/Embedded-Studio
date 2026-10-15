@@ -1,21 +1,21 @@
 /* Clock sekmesi: CubeMX "Clock Configuration" benzeri saat ağacı düzenleyici. */
 (function () {
-  const { h, s, $, post, state, update, icon } = ES;
+  const { t, h, s, $, post, state, update, icon } = ES;
 
   const W = 1120, H = 470;
 
   function mount(parent) {
     parent.append(h('main', { id: 'clock', class: 'tab-pane' },
       h('div', { class: 'clock-bar' },
-        h('label', {}, 'Hedef SYSCLK',
+        h('label', {}, t('Hedef SYSCLK'),
           h('input', { type: 'number', id: 'clk-target', min: 1, max: 100, value: 100, class: 'num' }), 'MHz'),
-        h('button', { onclick: () => post({ type: 'clock.solve', target: Number($('clk-target').value) || 100 }) }, 'Otomatik çöz'),
+        h('button', { onclick: () => post({ type: 'clock.solve', target: Number($('clk-target').value) || 100 }) }, t('Otomatik çöz')),
         h('span', { class: 'spacer' }),
         h('span', { id: 'clk-summary', class: 'hint' })),
       h('div', { class: 'clock-scroll' }, h('div', { class: 'clock-canvas', id: 'clock-canvas' })),
       h('div', { class: 'clock-bottom' },
         h('div', { id: 'clk-issues', class: 'notes' }),
-        h('div', {}, h('h3', { text: 'Çevre birimi saatleri' }), h('div', { id: 'clk-periphs' })))));
+        h('div', {}, h('h3', { text: t('Çevre birimi saatleri') }), h('div', { id: 'clk-periphs' })))));
   }
 
   /** Saat ayarını değiştir ve gönder. */
@@ -38,7 +38,7 @@
 
     const nodes = [];
     const box = (x, y, w, title, body, cls = '') => nodes.push(h('div', { class: `ck-node ${cls}`, style: `left:${x}px;top:${y}px;width:${w}px` }, title ? h('div', { class: 'ck-title', text: title }) : null, body));
-    const freq = (v, field, max) => h('div', { class: `ck-freq${bad.has(field) ? ' bad' : warnF.has(field) ? ' warn' : ''}`, title: max ? `En fazla ${max} MHz` : '' }, fmt(v), h('small', { text: ' MHz' }));
+    const freq = (v, field, max) => h('div', { class: `ck-freq${bad.has(field) ? ' bad' : warnF.has(field) ? ' warn' : ''}`, title: max ? t('En fazla {0} MHz', max) : '' }, fmt(v), h('small', { text: ' MHz' }));
     const select = (field, values, value, label) => h('select', { 'aria-label': label || field, class: bad.has(field) ? 'bad' : '', onchange: (e) => set(field, Number(e.target.value)) },
       ...values.map((v) => h('option', { value: v, selected: v === value, text: String(v) })));
     const numInput = (field, min, max, value, step = 1) => h('input', {
@@ -52,20 +52,20 @@
 
     // Kaynaklar
     box(20, 70, 120, 'HSI RC', freq(f.hsi), 'src');
-    box(20, 240, 120, 'HSE kristal', h('div', { class: 'ck-row' }, numInput('hseMHz', def.hseRange[0], def.hseRange[1], c.hseMHz, 0.5), h('small', { text: 'MHz' })), `src${bad.has('hse') ? ' bad' : ''}`);
+    box(20, 240, 120, t('HSE kristal'), h('div', { class: 'ck-row' }, numInput('hseMHz', def.hseRange[0], def.hseRange[1], c.hseMHz, 0.5), h('small', { text: 'MHz' })), `src${bad.has('hse') ? ' bad' : ''}`);
     // PLL
-    box(190, 150, 110, 'PLL kaynağı', radio('pllSource', [['HSI', 'HSI'], ['HSE', 'HSE']], c.pllSource), 'mux');
+    box(190, 150, 110, t('PLL kaynağı'), radio('pllSource', [['HSI', 'HSI'], ['HSE', 'HSE']], c.pllSource), 'mux');
     box(340, 160, 84, '/ M', select('M', range(def.pllM[0], def.pllM[1]), c.M));
     box(450, 160, 100, '× N', numInput('N', def.pllN[0], def.pllN[1], c.N));
     box(580, 110, 84, '/ P', select('P', def.pllP, c.P));
     box(580, 230, 84, '/ Q', select('Q', range(def.pllQ[0], def.pllQ[1]), c.Q));
-    box(700, 230, 110, '48 MHz çıkış', freq(f.pll48, 'Q'), 'out small');
-    nodes.push(h('div', { class: 'ck-label', style: 'left:428px;top:224px', text: `VCO giriş ${fmt(f.pllIn)} MHz` }));
+    box(700, 230, 110, t('48 MHz çıkış'), freq(f.pll48, 'Q'), 'out small');
+    nodes.push(h('div', { class: 'ck-label', style: 'left:428px;top:224px', text: t('VCO giriş {0} MHz', fmt(f.pllIn)) }));
     nodes.push(h('div', { class: 'ck-label', style: 'left:556px;top:224px', text: '' }));
     nodes.push(h('div', { class: `ck-label${bad.has('N') ? ' bad' : ''}`, style: 'left:450px;top:136px', text: `VCO ${fmt(f.vco)} MHz` }));
     nodes.push(h('div', { class: 'ck-pll-frame', style: 'left:320px;top:96px;width:362px;height:206px' }, h('span', { text: 'Ana PLL' })));
     // Sistem saati
-    box(700, 60, 120, 'Sistem saati', radio('sysclkSource', [['HSI', 'HSI'], ['HSE', 'HSE'], ['PLL', 'PLLCLK']], c.sysclkSource), 'mux');
+    box(700, 60, 120, t('Sistem saati'), radio('sysclkSource', [['HSI', 'HSI'], ['HSE', 'HSE'], ['PLL', 'PLLCLK']], c.sysclkSource), 'mux');
     box(850, 70, 110, 'SYSCLK', freq(f.sysclk, 'sysclk', L.sysclk), 'out');
     box(850, 170, 110, 'AHB /', select('ahb', def.ahb, c.ahb));
     box(990, 170, 110, 'HCLK', freq(f.hclk, 'hclk', L.hclk), 'out');
@@ -99,10 +99,10 @@
     canvas.style.height = `${H}px`;
     canvas.replaceChildren(wires, ...nodes);
 
-    $('clk-summary').textContent = `SYSCLK ${fmt(f.sysclk)} MHz · HCLK ${fmt(f.hclk)} · APB1 ${fmt(f.pclk1)} · APB2 ${fmt(f.pclk2)} MHz · Flash ${ck.latency} bekleme durumu`;
+    $('clk-summary').textContent = t('SYSCLK {0} MHz · HCLK {1} · APB1 {2} · APB2 {3} MHz · Flash {4} bekleme durumu', fmt(f.sysclk), fmt(f.hclk), fmt(f.pclk1), fmt(f.pclk2), ck.latency);
     $('clk-issues').replaceChildren(...(ck.issues.length
       ? ck.issues.map((i) => h('div', { class: `note ${i.level === 'error' ? 'error' : 'warn'}` }, h('span', { class: 'ic', text: i.level === 'error' ? '✕' : '!' }), h('span', { text: i.text })))
-      : [h('div', { class: 'note info' }, h('span', { class: 'ic', text: '✓' }), h('span', { text: 'Saat ağacı geçerli. Değişiklikler "Kod Üret" ile SystemClock / clock_init koduna yansır.' }))]));
+      : [h('div', { class: 'note info' }, h('span', { class: 'ic', text: '✓' }), h('span', { text: t('Saat ağacı geçerli. Değişiklikler "Kod Üret" ile SystemClock / clock_init koduna yansır.') }))]));
     renderPeripherals();
   }
 
@@ -118,15 +118,15 @@
         const brr = Math.round((pclk * 1e6) / p.baud);
         const real = (pclk * 1e6) / brr;
         const err = ((real - p.baud) / p.baud) * 100;
-        detail = `${p.baud} baud, BRR ${brr}, hata %${err.toFixed(2)}`;
-      } else if (p.type === 'i2c') detail = `${p.speedHz / 1000} kHz${pclk < 4 && p.speedHz > 100000 ? ' (PCLK1 çok düşük!)' : ''}`;
+        detail = t('{0} baud, BRR {1}, hata %{2}', p.baud, brr, err.toFixed(2));
+      } else if (p.type === 'i2c') detail = `${p.speedHz / 1000} kHz${pclk < 4 && p.speedHz > 100000 ? ' ' + t('(PCLK1 çok düşük!)') : ''}`;
       else if (p.type === 'spi') {
         let div = 2;
         while (div < 256 && (pclk * 1e6) / div > Math.min(p.speedHz, 10e6)) div *= 2;
         detail = `/${div} → ${fmt(pclk / div)} MHz`;
       } else if (p.type === 'pwm') {
         const psc = Math.max(0, Math.round(tim) - 1);
-        detail = `PSC ${psc} → ${fmt(tim / (psc + 1))} MHz sayaç, ${p.frequencyHz} Hz`;
+        detail = t('PSC {0} → {1} MHz sayaç, {2} Hz', psc, fmt(tim / (psc + 1)), p.frequencyHz);
       } else if (p.type === 'adc') {
         const div = [2, 4, 6, 8].find((d) => f.pclk2 / d <= 36) || 8;
         detail = `ADCCLK ${fmt(f.pclk2 / div)} MHz (/${div})`;
@@ -135,8 +135,8 @@
         h('td', { class: 'num', text: `${fmt(p.type === 'pwm' ? tim : pclk)} MHz` }), h('td', { text: detail }));
     });
     $('clk-periphs').replaceChildren(rows.length
-      ? h('table', { class: 'grid-table' }, h('tr', {}, ...['Çevre birimi', 'Bus', 'Saat', 'Ayar'].map((t) => h('th', { text: t }))), ...rows)
-      : h('div', { class: 'hint', text: 'Henüz çevre birimi kullanan komponent yok.' }));
+      ? h('table', { class: 'grid-table' }, h('tr', {}, ...[t('Çevre birimi'), 'Bus', t('Saat'), t('Ayar')].map((x) => h('th', { text: x }))), ...rows)
+      : h('div', { class: 'hint', text: t('Henüz çevre birimi kullanan komponent yok.') }));
   }
 
   ES.tabs.clock = { mount, render, onShow: render };

@@ -14,12 +14,20 @@ const packs = require('./codegen/packs');
 const { parseLine, Simulator } = require('./monitor/telemetry');
 const { OpenOcdTarget, SimTarget, simModel, elfSymbols } = require('./debug/session');
 const { builtinStm32f4, parseSvd } = require('./debug/registers');
+const i18n = require('./i18n');
+const { t } = i18n;
 
 const DESIGN_FILE = 'embedded-studio.json';
 
 /** @param {vscode.ExtensionContext} context */
 function activate(context) {
+  applyLanguage();
   context.subscriptions.push(
+    vscode.workspace.onDidChangeConfiguration?.((e) => {
+      if (!e.affectsConfiguration('embeddedStudio.language')) return;
+      applyLanguage();
+      Studio.current?.reloadHtml();
+    }) || { dispose() {} },
     vscode.commands.registerCommand('embeddedStudio.openDesigner', () => Studio.show(context)),
     vscode.commands.registerCommand('embeddedStudio.newProject', async () => (await Studio.show(context)).post({ type: 'welcome', ...welcomeInfo(context) })),
     vscode.commands.registerCommand('embeddedStudio.generateCode', async () => (await Studio.show(context)).generateCode())
@@ -27,7 +35,7 @@ function activate(context) {
 
   const status = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 100);
   status.text = '$(circuit-board) Embedded Studio';
-  status.tooltip = 'Embedded Studio tasarımcısını aç';
+  status.tooltip = t('Embedded Studio tasarımcısını aç');
   status.command = 'embeddedStudio.openDesigner';
   status.show();
   context.subscriptions.push(status);
@@ -38,6 +46,12 @@ function activate(context) {
 }
 
 const workspaceRoot = () => vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+
+/** Arayüz dilini ayardan (embeddedStudio.language: auto | tr | en) ve VS Code dilinden belirler. */
+function applyLanguage() {
+  const setting = vscode.workspace.getConfiguration?.('embeddedStudio').get('language', 'auto') ?? 'auto';
+  i18n.setLanguage(i18n.resolveLanguage(setting, vscode.env.language));
+}
 
 function welcomeInfo(context) {
   const lib = loadLibrary(context.extensionPath);
@@ -126,6 +140,11 @@ class Studio {
     this.panel.webview.postMessage(msg);
   }
 
+  /** Dil değişince arayüzü yeniden yükler; webview 'ready' gönderince durum yeniden yollanır. */
+  reloadHtml() {
+    this.panel.webview.html = this.html();
+  }
+
   toast(level, text) {
     this.post({ type: 'toast', level, text });
   }
@@ -141,6 +160,9 @@ class Studio {
         const abs = path.resolve(path.dirname(c.file), c.image);
         copy.image = fs.existsSync(abs) ? this.panel.webview.asWebviewUri(vscode.Uri.file(abs)).toString() : undefined;
       }
+      // Hazır komponentlerin görünen metinleri arayüz diline çevrilir (kullanıcının kendi komponentleri olduğu gibi kalır).
+      const shown = c.source === 'user' ? ['category'] : ['name', 'description', 'category'];
+      for (const k of shown) if (copy[k]) copy[k] = t(copy[k]);
       comps[id] = copy;
     }
     return { mcus: this.lib.mcus, components: comps };
@@ -151,7 +173,7 @@ class Studio {
     const result = assign(this.design, this.lib);
     const notes = analyze(this.design, this.lib, result);
     const clock = computeClock(mcu, this.design.clock);
-    for (const i of clock.issues) notes.unshift({ level: i.level === 'error' ? 'error' : 'warn', text: `Saat: ${i.text}` });
+    for (const i of clock.issues) notes.unshift({ level: i.level === 'error' ? 'error' : 'warn', text: t('Saat: {0}', i.text) });
     return { result, notes, clock };
   }
 
@@ -204,7 +226,7 @@ class Studio {
         break;
       case 'clock.solve': {
         const cfg = solveClock(this.lib.mcus[this.design.mcuId], this.design.clock, m.target);
-        if (!cfg) return this.toast('error', `${m.target} MHz için geçerli bir PLL ayarı bulunamadı.`);
+        if (!cfg) return this.toast('error', t('{0} MHz için geçerli bir PLL ayarı bulunamadı.', m.target));
         this.design.clock = cfg;
         this.pushState();
         this.scheduleSave();
@@ -220,7 +242,7 @@ class Studio {
       case 'lib.template': {
         const doc = await vscode.workspace.openTextDocument({ language: 'json', content: JSON.stringify(componentTemplate(), null, 2) });
         await vscode.window.showTextDocument(doc, vscode.ViewColumn.Beside);
-        vscode.window.showInformationMessage('Şablonu düzenleyip .json olarak kaydedin, sonra Kütüphane > Ekle ile yükleyin.');
+        vscode.window.showInformationMessage(t('Şablonu düzenleyip .json olarak kaydedin, sonra Kütüphane > Ekle ile yükleyin.'));
         break;
       }
       // ---- komponent oluşturucu ----
@@ -232,16 +254,16 @@ class Studio {
         break;
       case 'comp.export': {
         const c = cleanComponent(m.component);
-        const uri = await vscode.window.showSaveDialog({ defaultUri: vscode.Uri.file(path.join(this.root || require('os').homedir(), `${c.id || 'komponent'}.json`)), filters: { 'Komponent tanımı': ['json'] } });
+        const uri = await vscode.window.showSaveDialog({ defaultUri: vscode.Uri.file(path.join(this.root || require('os').homedir(), `${c.id || t('komponent')}.json`)), filters: { [t('Komponent tanımı')]: ['json'] } });
         if (uri) {
           fs.writeFileSync(uri.fsPath, JSON.stringify(c, null, 2) + '\n');
-          this.toast('info', `Dışa aktarıldı: ${path.basename(uri.fsPath)}`);
+          this.toast('info', t('Dışa aktarıldı: {0}', path.basename(uri.fsPath)));
         }
         break;
       }
       case 'comp.pickImage': {
-        if (!this.root) return this.toast('error', 'Görsel eklemek için önce bir proje açın.');
-        const pick = await vscode.window.showOpenDialog({ canSelectMany: false, filters: { Görsel: ['png', 'jpg', 'jpeg', 'svg', 'webp'] }, openLabel: 'Görsel olarak kullan' });
+        if (!this.root) return this.toast('error', t('Görsel eklemek için önce bir proje açın.'));
+        const pick = await vscode.window.showOpenDialog({ canSelectMany: false, filters: { [t('Görsel')]: ['png', 'jpg', 'jpeg', 'svg', 'webp'] }, openLabel: t('Görsel olarak kullan') });
         if (!pick) return;
         const dir = path.join(this.root, USER_DIR);
         fs.mkdirSync(dir, { recursive: true });
@@ -258,7 +280,7 @@ class Studio {
         break;
       // ---- proje ----
       case 'project.pickFolder': {
-        const pick = await vscode.window.showOpenDialog({ canSelectFolders: true, canSelectFiles: false, openLabel: 'Burada oluştur' });
+        const pick = await vscode.window.showOpenDialog({ canSelectFolders: true, canSelectFiles: false, openLabel: t('Burada oluştur') });
         if (pick) this.post({ type: 'project.folder', path: pick[0].fsPath });
         break;
       }
@@ -306,10 +328,10 @@ class Studio {
 
   // ------------------------------------------------------------------ proje
   async createProject(m) {
-    if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(m.name || '')) return this.toast('error', 'Proje adı harf ile başlamalı; sadece harf, rakam ve _ içerebilir.');
+    if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(m.name || '')) return this.toast('error', t('Proje adı harf ile başlamalı; sadece harf, rakam ve _ içerebilir.'));
     const dir = m.location === 'here' ? this.root : path.join(m.location, m.name);
-    if (!dir) return this.toast('error', 'Bir konum seçin.');
-    if (fs.existsSync(path.join(dir, DESIGN_FILE))) return this.toast('error', 'Bu klasörde zaten bir Embedded Studio projesi var.');
+    if (!dir) return this.toast('error', t('Bir konum seçin.'));
+    if (fs.existsSync(path.join(dir, DESIGN_FILE))) return this.toast('error', t('Bu klasörde zaten bir Embedded Studio projesi var.'));
     fs.mkdirSync(dir, { recursive: true });
     const design = migrate({
       mcuId: m.mcuId, framework: m.framework, rtos: !!m.rtos, project: { name: m.name },
@@ -324,12 +346,12 @@ class Studio {
     if (m.downloadPacks) {
       const mcu = this.lib.mcus[design.mcuId];
       const ok = await this.installPacks(dir, mcu, design.framework, design.rtos);
-      if (!ok) this.toast('warn', 'Paketler indirilemedi; Kod Üret sırasında tekrar denenecek.');
+      if (!ok) this.toast('warn', t('Paketler indirilemedi; Kod Üret sırasında tekrar denenecek.'));
     }
     if (dir === this.root) {
       this.design = design;
       this.pushState();
-      this.toast('info', `"${m.name}" projesi oluşturuldu.`);
+      this.toast('info', t('"{0}" projesi oluşturuldu.', m.name));
     } else {
       await vscode.commands.executeCommand('vscode.openFolder', vscode.Uri.file(dir), { forceNewWindow: false });
     }
@@ -343,12 +365,12 @@ class Studio {
     try {
       await vscode.window.withProgress({ location: vscode.ProgressLocation.Notification, title: 'Embedded Studio', cancellable: false }, async (p) => {
         await packs.ensurePacks(cache, need, (msg) => p.report({ message: msg }));
-        p.report({ message: 'Projeye kopyalanıyor...' });
+        p.report({ message: t('Projeye kopyalanıyor...') });
         packs.installIntoProject(cache, root, mcu, need);
       });
       return true;
     } catch (e) {
-      vscode.window.showErrorMessage(`Paket indirilemedi: ${e.message}. Git kurulu ve internet bağlantısı var mı?`);
+      vscode.window.showErrorMessage(t('Paket indirilemedi: {0}. Git kurulu ve internet bağlantısı var mı?', e.message));
       return false;
     }
   }
@@ -356,20 +378,20 @@ class Studio {
   // ------------------------------------------------------------------ kod üretimi
   async generateCode() {
     if (!this.design) return;
-    if (!this.root) return this.toast('error', 'Kod üretmek için bir proje klasörü açın.');
+    if (!this.root) return this.toast('error', t('Kod üretmek için bir proje klasörü açın.'));
     const { result, clock } = this.compute();
     const errors = [...result.messages.filter((x) => x.level === 'error'), ...clock.issues.filter((x) => x.level === 'error')];
     if (errors.length) {
-      const go = await vscode.window.showWarningMessage(`Tasarımda ${errors.length} hata var: ${errors[0].text}`, { modal: true }, 'Yine de üret');
-      if (go !== 'Yine de üret') return;
+      const go = await vscode.window.showWarningMessage(t('Tasarımda {0} hata var: {1}', errors.length, errors[0].text), { modal: true }, t('Yine de üret'));
+      if (go !== t('Yine de üret')) return;
     }
     const mcu = this.lib.mcus[this.design.mcuId];
     const missing = packs.missingInProject(this.root, mcu, this.design.framework, this.design.rtos);
     if (missing.length) {
-      const names = { hal: 'STM32 HAL', device: 'CMSIS cihaz', core: 'CMSIS çekirdek', freertos: 'FreeRTOS' };
+      const names = { hal: 'STM32 HAL', device: t('CMSIS cihaz'), core: t('CMSIS çekirdek'), freertos: 'FreeRTOS' };
       const go = await vscode.window.showInformationMessage(
-        `Derleme için şu paketler gerekiyor: ${missing.map((k) => names[k]).join(', ')}. İndirilsin mi? (git, bir kez ~30 MB)`, 'İndir', 'Şimdilik atla');
-      if (go === 'İndir') await this.installPacks(this.root, mcu, this.design.framework, this.design.rtos);
+        t('Derleme için şu paketler gerekiyor: {0}. İndirilsin mi? (git, bir kez ~30 MB)', missing.map((k) => names[k]).join(', ')), t('İndir'), t('Şimdilik atla'));
+      if (go === t('İndir')) await this.installPacks(this.root, mcu, this.design.framework, this.design.rtos);
     }
     const cache = path.join(this.context.globalStorageUri.fsPath, 'packs');
     const gen = generate(this.design, this.lib, result, clock, { halConfTemplate: packs.halConfTemplate(cache, this.root) });
@@ -382,17 +404,17 @@ class Studio {
     const report = writeProject(this.root, gen, { fingerprint: designFingerprint(this.design, GENERATOR_VERSION), snapshot });
     this.post({ type: 'generated', report });
     if (report.upToDate) {
-      vscode.window.showInformationMessage('Kod güncel: tasarımda değişiklik yok, hiçbir dosyaya dokunulmadı.');
+      vscode.window.showInformationMessage(t('Kod güncel: tasarımda değişiklik yok, hiçbir dosyaya dokunulmadı.'));
       return;
     }
     const parts = [
-      report.added.length && `${report.added.length} yeni`,
-      report.updated.length && `${report.updated.length} güncellendi`,
-      report.removed.length && `${report.removed.length} kaldırıldı`,
-      report.preserved.length && `${report.preserved.length} taşındı`
-    ].filter(Boolean).join(', ') || 'dosya içerikleri aynı';
-    const warn = report.orphans.length ? ' Kaldırılan sensörlere ait kodunuz korunup dosya sonuna taşındı.' : '';
-    const choice = await vscode.window.showInformationMessage(`Kod üretildi: ${parts}.${warn}`, 'Değişiklikler', 'app.c');
+      report.added.length && t('{0} yeni', report.added.length),
+      report.updated.length && t('{0} güncellendi', report.updated.length),
+      report.removed.length && t('{0} kaldırıldı', report.removed.length),
+      report.preserved.length && t('{0} taşındı', report.preserved.length)
+    ].filter(Boolean).join(', ') || t('dosya içerikleri aynı');
+    const warn = report.orphans.length ? ' ' + t('Kaldırılan sensörlere ait kodunuz korunup dosya sonuna taşındı.') : '';
+    const choice = await vscode.window.showInformationMessage(t('Kod üretildi: {0}.', parts) + warn, t('Değişiklikler'), 'app.c');
     if (choice) {
       const target = choice === 'app.c' ? 'Core/Src/app.c' : `${STATE_DIR}/LAST_CHANGES.md`;
       await vscode.window.showTextDocument(vscode.Uri.file(path.join(this.root, target)));
@@ -401,8 +423,8 @@ class Studio {
 
   // ------------------------------------------------------------------ kütüphane
   async importComponents() {
-    if (!this.root) return this.toast('error', 'Komponent yüklemek için önce bir proje açın.');
-    const pick = await vscode.window.showOpenDialog({ canSelectMany: true, filters: { 'Komponent tanımı': ['json'] }, openLabel: 'Kütüphaneye ekle' });
+    if (!this.root) return this.toast('error', t('Komponent yüklemek için önce bir proje açın.'));
+    const pick = await vscode.window.showOpenDialog({ canSelectMany: true, filters: { [t('Komponent tanımı')]: ['json'] }, openLabel: t('Kütüphaneye ekle') });
     if (!pick) return;
     const dir = path.join(this.root, USER_DIR);
     fs.mkdirSync(dir, { recursive: true });
@@ -412,7 +434,7 @@ class Studio {
       try {
         c = JSON.parse(fs.readFileSync(uri.fsPath, 'utf8'));
       } catch (e) {
-        failed.push(`${path.basename(uri.fsPath)}: JSON okunamadı (${e.message})`);
+        failed.push(t('{0}: JSON okunamadı ({1})', path.basename(uri.fsPath), e.message));
         continue;
       }
       const errs = validateComponent(c);
@@ -435,22 +457,22 @@ class Studio {
       added.push(c.name);
     }
     this.reloadLibrary();
-    if (added.length) this.toast('info', `Kütüphaneye eklendi: ${added.join(', ')}`);
-    if (failed.length) vscode.window.showErrorMessage(`Yüklenemedi:\n${failed.join('\n')}`, { modal: true });
+    if (added.length) this.toast('info', t('Kütüphaneye eklendi: {0}', added.join(', ')));
+    if (failed.length) vscode.window.showErrorMessage(t('Yüklenemedi:') + '\n' + failed.join('\n'), { modal: true });
   }
 
   /** Oluşturucudan gelen komponenti doğrular ve projenin kütüphanesine yazar. */
   async saveComponent(m) {
-    if (!this.root) return this.post({ type: 'comp.result', ok: false, errors: ['Komponent kaydetmek için önce bir proje açın.'] });
+    if (!this.root) return this.post({ type: 'comp.result', ok: false, errors: [t('Komponent kaydetmek için önce bir proje açın.')] });
     const c = cleanComponent(m.component);
     const errors = validateComponent(c);
     if (errors.length) return this.post({ type: 'comp.result', ok: false, errors });
     const existing = this.lib.components[c.id];
     const renaming = m.originalId && m.originalId !== c.id;
     if (existing && c.id !== m.originalId) {
-      const what = existing.source === 'user' ? `Projede "${c.id}" kimlikli bir komponent zaten var (${existing.name}).` : `"${c.id}" hazır bir komponentin kimliği (${existing.name}); kaydederseniz bu projede onun yerine sizinki kullanılır.`;
-      const go = await vscode.window.showWarningMessage(`${what} Devam edilsin mi?`, { modal: true }, 'Üzerine yaz');
-      if (go !== 'Üzerine yaz') return this.post({ type: 'comp.result', ok: false, cancelled: true, errors: [] });
+      const what = existing.source === 'user' ? t('Projede "{0}" kimlikli bir komponent zaten var ({1}).', c.id, existing.name) : t('"{0}" hazır bir komponentin kimliği ({1}); kaydederseniz bu projede onun yerine sizinki kullanılır.', c.id, existing.name);
+      const go = await vscode.window.showWarningMessage(`${what} ${t('Devam edilsin mi?')}`, { modal: true }, t('Üzerine yaz'));
+      if (go !== t('Üzerine yaz')) return this.post({ type: 'comp.result', ok: false, cancelled: true, errors: [] });
     }
     const dir = path.join(this.root, USER_DIR);
     fs.mkdirSync(dir, { recursive: true });
@@ -461,15 +483,15 @@ class Studio {
     }
     this.reloadLibrary();
     this.post({ type: 'comp.result', ok: true, id: c.id, addToDesign: !!m.addToDesign });
-    this.toast('info', `"${c.name}" kütüphaneye ${m.originalId ? 'kaydedildi' : 'eklendi'}.`);
+    this.toast('info', m.originalId ? t('"{0}" kütüphaneye kaydedildi.', c.name) : t('"{0}" kütüphaneye eklendi.', c.name));
   }
 
   async removeComponent(id) {
     const c = this.lib.components[id];
     if (!c || c.source !== 'user') return;
     const used = this.design?.instances.some((i) => i.componentId === id);
-    const go = await vscode.window.showWarningMessage(`"${c.name}" kütüphaneden kaldırılsın mı?${used ? ' Tasarımda kullanılıyor; önce tasarımdan çıkarın.' : ''}`, { modal: true }, 'Kaldır');
-    if (go !== 'Kaldır' || used) return;
+    const go = await vscode.window.showWarningMessage(t('"{0}" kütüphaneden kaldırılsın mı?', c.name) + (used ? ' ' + t('Tasarımda kullanılıyor; önce tasarımdan çıkarın.') : ''), { modal: true }, t('Kaldır'));
+    if (go !== t('Kaldır') || used) return;
     fs.rmSync(c.file, { force: true });
     this.reloadLibrary();
   }
@@ -482,15 +504,15 @@ class Studio {
 
   async openDatasheet(componentId) {
     const item = componentId === '@mcu' ? this.lib.mcus[this.design.mcuId] : this.lib.components[componentId];
-    if (!item || !item.datasheet) return this.toast('warn', 'Bu komponent için datasheet bağlantısı tanımlı değil.');
+    if (!item || !item.datasheet) return this.toast('warn', t('Bu komponent için datasheet bağlantısı tanımlı değil.'));
     const dir = this.root ? path.join(this.root, 'docs', 'datasheets') : path.join(this.context.globalStorageUri.fsPath, 'datasheets');
     const file = path.join(dir, `${item.id}.pdf`);
     if (!fs.existsSync(file)) {
       try {
-        await vscode.window.withProgress({ location: vscode.ProgressLocation.Notification, title: `${item.name} datasheet indiriliyor...` }, () => download(item.datasheet, file));
+        await vscode.window.withProgress({ location: vscode.ProgressLocation.Notification, title: t('{0} datasheet indiriliyor...', item.name) }, () => download(item.datasheet, file));
       } catch (e) {
         // Bazı üreticiler (ör. ST) otomatik indirmeyi engeller: tarayıcıda aç.
-        this.toast('info', `Doğrudan indirilemedi (${e.message}); tarayıcıda açılıyor.`);
+        this.toast('info', t('Doğrudan indirilemedi ({0}); tarayıcıda açılıyor.', e.message));
         return vscode.env.openExternal(vscode.Uri.parse(item.datasheet));
       }
     }
@@ -506,7 +528,7 @@ class Studio {
       if (item) this.pending.push(item);
     });
     this.monitor.start();
-    this.post({ type: 'monitor', running: true, source: 'Simülasyon' });
+    this.post({ type: 'monitor', running: true, source: t('Simülasyon') });
   }
 
   // ------------------------------------------------------------------ debug
@@ -514,12 +536,12 @@ class Studio {
     const mcu = this.lib.mcus[this.design.mcuId];
     const file = this.root && path.join(this.root, STATE_DIR, `${mcu.name}.svd`);
     if (download && file && !fs.existsSync(file) && mcu.svdUrl) {
-      await vscode.window.withProgress({ location: vscode.ProgressLocation.Notification, title: 'SVD indiriliyor...' }, () => download_(mcu.svdUrl, file));
+      await vscode.window.withProgress({ location: vscode.ProgressLocation.Notification, title: t('SVD indiriliyor...') }, () => download_(mcu.svdUrl, file));
     }
     if (file && fs.existsSync(file)) {
       const svd = parseSvd(fs.readFileSync(file, 'utf8'));
       this.peripheralDefs = svd.peripherals;
-      this.svdName = `${svd.device} (SVD, ${svd.peripherals.length} çevre birimi)`;
+      this.svdName = t('{0} (SVD, {1} çevre birimi)', svd.device, svd.peripherals.length);
     }
     this.postRegs();
     function download_(u, f) { return download(u, f, false); }
@@ -528,7 +550,7 @@ class Studio {
   postRegs() {
     const used = Object.keys(this.compute().result.peripherals);
     const ports = new Set(this.compute().result.connections.map((c) => 'GPIO' + c.mcuPin[1]));
-    this.post({ type: 'debug.regs', peripherals: this.peripheralDefs, used: [...used, ...ports, 'RCC'], source: this.svdName || 'Yerleşik STM32F411 tanımları' });
+    this.post({ type: 'debug.regs', peripherals: this.peripheralDefs, used: [...used, ...ports, 'RCC'], source: this.svdName || t('Yerleşik STM32F411 tanımları') });
   }
 
   async connectDebug(mode) {
@@ -601,8 +623,8 @@ class Studio {
   }
 
   async runTask(kind) {
-    if (!this.root) return this.toast('error', 'Önce bir proje açın.');
-    if (!fs.existsSync(path.join(this.root, 'CMakeLists.txt'))) return this.toast('warn', 'Önce "Kod Üret" ile projeyi oluşturun.');
+    if (!this.root) return this.toast('error', t('Önce bir proje açın.'));
+    if (!fs.existsSync(path.join(this.root, 'CMakeLists.txt'))) return this.toast('warn', t('Önce "Kod Üret" ile projeyi oluşturun.'));
     const mcu = this.lib.mcus[this.design.mcuId];
     const name = this.design.project.name;
     const cmd = kind === 'build'
@@ -610,26 +632,26 @@ class Studio {
       : `openocd -f interface/stlink.cfg -f ${mcu.device.openocdTarget} -c "program build/${name}.elf verify reset exit"`;
     const folder = vscode.workspace.workspaceFolders?.[0];
     const task = new vscode.Task({ type: 'embedded-studio', kind }, folder || vscode.TaskScope.Workspace,
-      kind === 'build' ? 'Derle' : 'Yükle', 'Embedded Studio', new vscode.ShellExecution(cmd, { cwd: this.root }), ['$gcc']);
+      kind === 'build' ? t('Derle') : t('Yükle'), 'Embedded Studio', new vscode.ShellExecution(cmd, { cwd: this.root }), ['$gcc']);
     await vscode.tasks.executeTask(task);
     this.post({ type: 'task.start', name: task.name });
   }
 
   async flash() {
     const elf = this.root && path.join(this.root, 'build', `${this.design.project.name}.elf`);
-    if (!elf || !fs.existsSync(elf)) return this.toast('warn', 'ELF bulunamadı. Önce Derle.');
-    const go = await vscode.window.showWarningMessage(`${path.basename(elf)} karta yüklensin mi? Karttaki mevcut program silinir.`, { modal: true }, 'Yükle');
-    if (go !== 'Yükle') return;
+    if (!elf || !fs.existsSync(elf)) return this.toast('warn', t('ELF bulunamadı. Önce Derle.'));
+    const go = await vscode.window.showWarningMessage(t('{0} karta yüklensin mi? Karttaki mevcut program silinir.', path.basename(elf)), { modal: true }, t('Yükle'));
+    if (go !== t('Yükle')) return;
     if (this.target && this.target.mode === 'openocd') {
       try {
         await this.target.program(elf);
-        this.toast('info', 'Yükleme tamamlandı, kart yeniden başlatıldı.');
+        this.toast('info', t('Yükleme tamamlandı, kart yeniden başlatıldı.'));
       } catch (e) {
-        this.toast('error', `Yükleme başarısız: ${e.message}`);
+        this.toast('error', t('Yükleme başarısız: {0}', e.message));
       }
       return;
     }
-    if (this.target && this.target.mode === 'sim') return this.toast('info', 'Simülasyon modunda yükleme yapılmaz. Gerçek kart için "OpenOCD" ile bağlanın.');
+    if (this.target && this.target.mode === 'sim') return this.toast('info', t('Simülasyon modunda yükleme yapılmaz. Gerçek kart için "OpenOCD" ile bağlanın.'));
     await this.runTask('flash');
   }
 
@@ -637,9 +659,9 @@ class Studio {
     const webview = this.panel.webview;
     const media = (f) => webview.asWebviewUri(vscode.Uri.joinPath(this.context.extensionUri, 'media', f));
     const nonce = [...Array(32)].map(() => Math.random().toString(36)[2]).join('');
-    const scripts = ['core.js', 'art.js', 'wizard.js', 'design.js', 'creator.js', 'clock.js', 'widgets.js', 'monitor.js', 'debug.js', 'main.js'];
+    const scripts = ['i18n.js', 'core.js', 'art.js', 'wizard.js', 'design.js', 'creator.js', 'clock.js', 'widgets.js', 'monitor.js', 'debug.js', 'main.js'];
     return `<!doctype html>
-<html lang="tr">
+<html lang="${i18n.getLanguage()}">
 <head>
 <meta charset="utf-8">
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src ${webview.cspSource} 'unsafe-inline'; img-src ${webview.cspSource} https: data:; script-src 'nonce-${nonce}';">
@@ -649,6 +671,7 @@ class Studio {
 </head>
 <body>
 <div id="app"></div>
+<script id="es-i18n" type="application/json">${JSON.stringify({ lang: i18n.getLanguage(), dict: i18n.getDictionary() }).replace(/</g, '\\u003c')}</script>
 ${scripts.map((s) => `<script nonce="${nonce}" src="${media(s)}"></script>`).join('\n')}
 </body>
 </html>`;

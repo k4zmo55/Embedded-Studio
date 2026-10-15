@@ -1,6 +1,6 @@
 /* Monitör sekmesi: özelleştirilebilir widget panosu + RTOS task tablosu. */
 (function () {
-  const { h, $, post, state, ui, update, icon, modal, cIdent, toast } = ES;
+  const { t, h, $, post, state, ui, update, icon, modal, cIdent, toast } = ES;
   const mon = { running: false, channels: new Map(), tasks: new Map(), log: [], dirty: false };
   let editing = false;
   let built = new Map(); // widget id -> { cfg, inst }
@@ -10,18 +10,18 @@
     parent.append(h('main', { id: 'monitor', class: 'tab-pane' },
       h('div', { class: 'mon-main' },
         h('div', { class: 'mon-bar' },
-          h('button', { id: 'mon-toggle', onclick: toggle }, icon('play', 12), h('span', { text: 'Başlat' })),
-          h('span', { class: 'live', id: 'live', text: 'Durdu' }),
+          h('button', { id: 'mon-toggle', onclick: toggle }, icon('play', 12), h('span', { text: t('Başlat') })),
+          h('span', { class: 'live', id: 'live', text: t('Durdu') }),
           h('span', { class: 'spacer' }),
-          h('span', { class: 'hint', text: 'Kaynak: simülasyon (firmware ile aynı $V/$T protokolü)' }),
-          h('button', { class: 'ghost small', id: 'mon-edit', onclick: () => { editing = !editing; lastKey = ''; render(); } }, icon('edit', 12), h('span', { text: 'Düzenle' })),
+          h('span', { class: 'hint', text: t('Kaynak: simülasyon (firmware ile aynı $V/$T protokolü)') }),
+          h('button', { class: 'ghost small', id: 'mon-edit', onclick: () => { editing = !editing; lastKey = ''; render(); } }, icon('edit', 12), h('span', { text: t('Düzenle') })),
           h('button', { class: 'ghost small', onclick: addWidgetDialog }, icon('plus', 12), 'Widget'),
-          h('button', { class: 'ghost small', onclick: clear }, 'Temizle')),
+          h('button', { class: 'ghost small', onclick: clear }, t('Temizle'))),
         h('div', { class: 'dash', id: 'dash' })),
       h('aside', { class: 'mon-side' },
-        h('div', { class: 'pane-head' }, h('span', { class: 'pane-title', text: 'RTOS task\'ları' })),
+        h('div', { class: 'pane-head' }, h('span', { class: 'pane-title', text: t('RTOS task\'ları') })),
         h('div', { id: 'tasks' }),
-        h('div', { class: 'pane-head' }, h('span', { class: 'pane-title', text: 'Komponent durumu' })),
+        h('div', { class: 'pane-head' }, h('span', { class: 'pane-title', text: t('Komponent durumu') })),
         h('div', { class: 'log', id: 'log' }))));
   }
 
@@ -129,8 +129,8 @@
   function render() {
     if (!$('dash') || !state.design) return;
     $('live').classList.toggle('on', mon.running);
-    $('live').textContent = mon.running ? 'Canlı · simülasyon' : 'Durdu';
-    $('mon-toggle').replaceChildren(icon(mon.running ? 'pause' : 'play', 12), h('span', { text: mon.running ? 'Durdur' : 'Başlat' }));
+    $('live').textContent = mon.running ? t('Canlı · simülasyon') : t('Durdu');
+    $('mon-toggle').replaceChildren(icon(mon.running ? 'pause' : 'play', 12), h('span', { text: mon.running ? t('Durdur') : t('Başlat') }));
     $('mon-edit').classList.toggle('active', editing);
 
     const list = widgets();
@@ -141,7 +141,7 @@
       built = new Map();
       dash.classList.toggle('editing', editing);
       if (!list.length) {
-        dash.replaceChildren(h('div', { class: 'mon-empty' }, 'İzlenecek kanal yok. Tasarıma sensör ekleyin ya da "+ Widget" ile ekleyin.'));
+        dash.replaceChildren(h('div', { class: 'mon-empty' }, t('İzlenecek kanal yok. Tasarıma sensör ekleyin ya da "+ Widget" ile ekleyin.')));
       } else {
         dash.replaceChildren(...list.map((w, idx) => card(w, idx, list)));
       }
@@ -153,7 +153,7 @@
   }
 
   function titleOf(w) {
-    if (w.inst === 'SYS') return 'Sistem';
+    if (w.inst === 'SYS') return t('Sistem');
     const inst = state.design.instances.find((i) => i.id === w.inst);
     return inst ? inst.label : w.inst;
   }
@@ -164,19 +164,19 @@
     built.set(w.id, { cfg: w, inst });
     const ids = w.channels.map((c) => c.split('.')[1]);
     const head = h('div', { class: 'w-head' },
-      editing ? h('span', { class: 'drag', title: 'Sürükleyerek taşı' }, icon('drag', 14)) : null,
+      editing ? h('span', { class: 'drag', title: t('Sürükleyerek taşı') }, icon('drag', 14)) : null,
       h('span', { class: 'w-title', text: titleOf(w) }),
       h('span', { class: 'w-sub', text: editing ? '' : `${T.label}${w.channels.length > 1 ? '' : ' · ' + ids[0]}` }),
       editing ? h('select', {
-        'aria-label': 'Widget türü',
+        'aria-label': t('Widget türü'),
         onchange: (e) => saveWidgets(list.map((x) => (x.id === w.id ? { ...x, type: e.target.value } : x)))
       }, ...Object.entries(ES.widgets.types).filter(([, t]) => t.ok(w.channels.length, ids)).map(([k, t]) => h('option', { value: k, selected: k === w.type, text: t.label }))) : null,
       editing ? h('select', {
-        'aria-label': 'Boyut',
+        'aria-label': t('Boyut'),
         onchange: (e) => saveWidgets(list.map((x) => (x.id === w.id ? { ...x, size: e.target.value } : x)))
-      }, ...[['s', 'Küçük'], ['m', 'Geniş'], ['l', 'Büyük']].map(([k, l]) => h('option', { value: k, selected: (w.size || 's') === k, text: l }))) : null,
+      }, ...[['s', t('Küçük')], ['m', t('Geniş')], ['l', t('Büyük')]].map(([k, l]) => h('option', { value: k, selected: (w.size || 's') === k, text: l }))) : null,
       editing ? h('button', {
-        class: 'icon', title: 'Widget\'ı kaldır',
+        class: 'icon', title: t('Widget\'ı kaldır'),
         onclick: () => {
           const rest = list.filter((x) => x.id !== w.id);
           const hidden = [...((state.design.monitor || {}).hidden || [])];
@@ -206,8 +206,8 @@
 
   function addWidgetDialog() {
     const sources = state.design.instances.map((inst) => ({ inst, c: state.lib.components[inst.componentId] })).filter((x) => x.c && x.c.telemetry && x.c.telemetry.length);
-    if (state.design.rtos) sources.push({ inst: { id: 'SYS', label: 'SYS' }, c: { name: 'Sistem', telemetry: [{ id: 'heap_free', unit: 'B' }] } });
-    if (!sources.length) return toast('warn', 'Ölçüm üreten komponent yok.');
+    if (state.design.rtos) sources.push({ inst: { id: 'SYS', label: 'SYS' }, c: { name: t('Sistem'), telemetry: [{ id: 'heap_free', unit: 'B' }] } });
+    if (!sources.length) return toast('warn', t('Ölçüm üreten komponent yok.'));
     const st = { src: 0, chans: new Set(), type: 'chart' };
     const body = h('div', { class: 'add-widget' });
     const draw = () => {
@@ -216,23 +216,23 @@
       const types = Object.entries(ES.widgets.types).filter(([, t]) => ids.length && t.ok(ids.length, ids));
       if (!types.some(([k]) => k === st.type)) st.type = types.length ? types[0][0] : 'chart';
       body.replaceChildren(
-        h('label', { class: 'field' }, h('span', { class: 'label', text: 'Kaynak' }),
+        h('label', { class: 'field' }, h('span', { class: 'label', text: t('Kaynak') }),
           h('select', { onchange: (e) => { st.src = Number(e.target.value); st.chans = new Set(); draw(); } },
             ...sources.map((x, i) => h('option', { value: i, selected: i === st.src, text: `${x.inst.label} · ${x.c.name}` })))),
-        h('div', { class: 'field' }, h('span', { class: 'label', text: 'Kanallar' }),
+        h('div', { class: 'field' }, h('span', { class: 'label', text: t('Kanallar') }),
           h('div', { class: 'chans' }, ...src.c.telemetry.map((t) => h('label', { class: 'check' },
             h('input', { type: 'checkbox', checked: st.chans.has(t.id), onchange: (e) => { e.target.checked ? st.chans.add(t.id) : st.chans.delete(t.id); draw(); } }),
             h('span', { text: `${t.id}${t.unit ? ` (${t.unit})` : ''}` }))))),
-        h('label', { class: 'field' }, h('span', { class: 'label', text: 'Görünüm' }),
+        h('label', { class: 'field' }, h('span', { class: 'label', text: t('Görünüm') }),
           h('select', { disabled: !types.length, onchange: (e) => (st.type = e.target.value) }, ...types.map(([k, t]) => h('option', { value: k, selected: k === st.type, text: t.label })))));
     };
     draw();
     modal({
-      title: 'Widget ekle', body, width: 420,
-      buttons: [{ label: 'Vazgeç' }, {
-        label: 'Ekle', primary: true,
+      title: t('Widget ekle'), body, width: 420,
+      buttons: [{ label: t('Vazgeç') }, {
+        label: t('Ekle'), primary: true,
         action: () => {
-          if (!st.chans.size) { toast('warn', 'En az bir kanal seçin.'); return false; }
+          if (!st.chans.size) { toast('warn', t('En az bir kanal seçin.')); return false; }
           const src = sources[st.src];
           const L = src.inst.id === 'SYS' ? 'SYS' : cIdent(src.inst.label);
           const list = widgets();
@@ -248,18 +248,18 @@
     const tasks = [...mon.tasks.values()].sort((a, b) => b.prio - a.prio || a.name.localeCompare(b.name));
     $('tasks').replaceChildren(tasks.length
       ? h('table', { class: 'tasks' },
-        h('tr', {}, ...['Task', 'Durum', 'Ö.', 'Stack', 'CPU'].map((t) => h('th', { text: t }))),
-        ...tasks.map((t) => {
+        h('tr', {}, ...['Task', t('Durum'), t('Ö.'), 'Stack', 'CPU'].map((x) => h('th', { text: x }))),
+        ...tasks.map((tk) => {
           const bar = h('div');
-          bar.style.width = `${Math.max(0, Math.min(100, t.cpu))}%`;
+          bar.style.width = `${Math.max(0, Math.min(100, tk.cpu))}%`;
           return h('tr', {},
-            h('td', { text: t.name, title: t.name }),
-            h('td', {}, h('span', { class: `state ${t.state}`, text: t.state })),
-            h('td', { class: 'num', text: t.prio }),
-            h('td', { class: `num${t.stackFree < 40 ? ' bad' : ''}`, title: 'En düşük boş stack (word)', text: t.stackFree }),
-            h('td', { class: 'num' }, `${t.cpu.toFixed(1)}%`, h('div', { class: 'bar' }, bar)));
+            h('td', { text: tk.name, title: tk.name }),
+            h('td', {}, h('span', { class: `state ${tk.state}`, text: tk.state })),
+            h('td', { class: 'num', text: tk.prio }),
+            h('td', { class: `num${tk.stackFree < 40 ? ' bad' : ''}`, title: t('En düşük boş stack (word)'), text: tk.stackFree }),
+            h('td', { class: 'num' }, `${tk.cpu.toFixed(1)}%`, h('div', { class: 'bar' }, bar)));
         }))
-      : h('div', { class: 'hint pad', text: state.design && state.design.rtos ? 'Monitör başlatıldığında FreeRTOS task\'ları burada görünür.' : 'FreeRTOS kapalı. Üst çubuktan açabilirsiniz.' }));
+      : h('div', { class: 'hint pad', text: state.design && state.design.rtos ? t('Monitör başlatıldığında FreeRTOS task\'ları burada görünür.') : t('FreeRTOS kapalı. Üst çubuktan açabilirsiniz.') }));
     $('log').replaceChildren(...mon.log.slice().reverse().map((l) => {
       if (l.type === 'status') return h('div', {}, h('span', { text: `${l.source}: ` }), h('span', { class: /^OK/.test(l.text) ? 'ok' : 'bad', text: l.text }));
       if (l.type === 'info') return h('div', { class: 'hint', text: `▶ ${l.project} · ${l.mcu} · ${l.rtos}` });

@@ -1,7 +1,7 @@
 /* Debug sekmesi: bağlantı (simülasyon / OpenOCD + ST-Link), çalıştırma kontrolü,
  * core register'lar, çevre birimi register'ları (bit alanlarıyla), değişken izleme, bellek. */
 (function () {
-  const { h, $, post, state, ui, icon, hex, toast } = ES;
+  const { t, h, $, post, state, ui, icon, hex, toast } = ES;
   const dbg = {
     connected: false, connecting: false, mode: 'sim', state: '', error: '',
     defs: [], used: [], source: '',
@@ -22,48 +22,48 @@
   function mount(parent) {
     parent.append(h('main', { id: 'debug', class: 'tab-pane' },
       h('div', { class: 'dbg-bar' },
-        h('select', { id: 'dbg-mode', 'aria-label': 'Bağlantı türü', onchange: (e) => (dbg.mode = e.target.value) },
-          h('option', { value: 'sim', text: 'Simülasyon (kart yok)' }),
+        h('select', { id: 'dbg-mode', 'aria-label': t('Bağlantı türü'), onchange: (e) => (dbg.mode = e.target.value) },
+          h('option', { value: 'sim', text: t('Simülasyon (kart yok)') }),
           h('option', { value: 'openocd', text: 'OpenOCD · ST-Link' })),
-        h('button', { id: 'dbg-conn', onclick: () => (dbg.connected ? post({ type: 'debug.disconnect' }) : connect()) }, 'Bağlan'),
+        h('button', { id: 'dbg-conn', onclick: () => (dbg.connected ? post({ type: 'debug.disconnect' }) : connect()) }, t('Bağlan')),
         h('span', { id: 'dbg-state', class: 'badge' }),
         h('span', { class: 'sep' }),
-        h('button', { class: 'ghost small', id: 'dbg-halt', title: 'Durdur (halt)', onclick: () => cmd('halt') }, icon('pause', 12), 'Durdur'),
-        h('button', { class: 'ghost small', id: 'dbg-resume', title: 'Devam et', onclick: () => cmd('resume') }, icon('play', 12), 'Devam'),
-        h('button', { class: 'ghost small', id: 'dbg-step', title: 'Tek komut adım', onclick: () => cmd('step') }, icon('step', 12), 'Adım'),
+        h('button', { class: 'ghost small', id: 'dbg-halt', title: t('Durdur (halt)'), onclick: () => cmd('halt') }, icon('pause', 12), t('Durdur@@debug')),
+        h('button', { class: 'ghost small', id: 'dbg-resume', title: t('Devam et'), onclick: () => cmd('resume') }, icon('play', 12), t('Devam')),
+        h('button', { class: 'ghost small', id: 'dbg-step', title: t('Tek komut adım'), onclick: () => cmd('step') }, icon('step', 12), t('Adım')),
         h('button', { class: 'ghost small', id: 'dbg-reset', title: 'Reset', onclick: () => cmd('reset') }, icon('reset', 12), 'Reset'),
         h('span', { class: 'sep' }),
-        h('label', { class: 'check' }, h('input', { type: 'checkbox', checked: dbg.auto, onchange: (e) => { dbg.auto = e.target.checked; schedule(); } }), h('span', { text: 'Canlı' })),
-        h('select', { 'aria-label': 'Yenileme aralığı', onchange: (e) => { dbg.interval = Number(e.target.value); schedule(); } },
+        h('label', { class: 'check' }, h('input', { type: 'checkbox', checked: dbg.auto, onchange: (e) => { dbg.auto = e.target.checked; schedule(); } }), h('span', { text: t('Canlı') })),
+        h('select', { 'aria-label': t('Yenileme aralığı'), onchange: (e) => { dbg.interval = Number(e.target.value); schedule(); } },
           ...[[250, '250 ms'], [500, '500 ms'], [1000, '1 sn']].map(([v, l]) => h('option', { value: v, selected: v === dbg.interval, text: l }))),
         h('span', { class: 'spacer' }),
-        h('button', { class: 'ghost small', onclick: () => post({ type: 'build' }) }, 'Derle'),
-        h('button', { class: 'small', onclick: () => post({ type: 'flash' }) }, 'Yükle')),
+        h('button', { class: 'ghost small', onclick: () => post({ type: 'build' }) }, t('Derle')),
+        h('button', { class: 'small', onclick: () => post({ type: 'flash' }) }, t('Yükle'))),
       h('div', { class: 'dbg-msg', id: 'dbg-msg' }),
       h('div', { class: 'dbg-grid' },
         h('section', { class: 'dbg-col' },
-          h('div', { class: 'pane-head' }, h('span', { class: 'pane-title', text: 'Core register\'lar' })),
+          h('div', { class: 'pane-head' }, h('span', { class: 'pane-title', text: t('Core register\'lar') })),
           h('div', { id: 'dbg-core' }),
-          h('div', { class: 'pane-head' }, h('span', { class: 'pane-title', text: 'Değişkenler (izleme)' }), h('button', { class: 'ghost small', onclick: () => post({ type: 'debug.symbols' }) }, 'ELF\'ten yükle')),
-          h('div', { class: 'search' }, icon('search', 13), h('input', { type: 'text', id: 'dbg-sym', placeholder: 'Değişken ara ve ekle…', oninput: (e) => { dbg.symFilter = e.target.value; renderSymbols(); } })),
+          h('div', { class: 'pane-head' }, h('span', { class: 'pane-title', text: t('Değişkenler (izleme)') }), h('button', { class: 'ghost small', onclick: () => post({ type: 'debug.symbols' }) }, t('ELF\'ten yükle'))),
+          h('div', { class: 'search' }, icon('search', 13), h('input', { type: 'text', id: 'dbg-sym', placeholder: t('Değişken ara ve ekle…'), oninput: (e) => { dbg.symFilter = e.target.value; renderSymbols(); } })),
           h('div', { id: 'dbg-symlist', class: 'symlist' }),
           h('div', { id: 'dbg-watch' })),
         h('section', { class: 'dbg-col wide' },
           h('div', { class: 'pane-head' },
-            h('span', { class: 'pane-title', text: 'Çevre birimi register\'ları' }),
+            h('span', { class: 'pane-title', text: t('Çevre birimi register\'ları') }),
             h('span', { class: 'hint', id: 'dbg-src' }),
             h('span', { class: 'spacer' }),
-            h('button', { class: 'ghost small', title: 'Tam CMSIS-SVD tanımını indir', onclick: () => post({ type: 'debug.svd' }) }, 'SVD indir')),
+            h('button', { class: 'ghost small', title: t('Tam CMSIS-SVD tanımını indir'), onclick: () => post({ type: 'debug.svd' }) }, t('SVD indir'))),
           h('div', { class: 'periph-split' },
             h('div', { class: 'periph-list' },
-              h('div', { class: 'search' }, icon('search', 13), h('input', { type: 'text', placeholder: 'Çevre birimi…', oninput: (e) => { dbg.filter = e.target.value.toUpperCase(); renderPeriphList(); } })),
+              h('div', { class: 'search' }, icon('search', 13), h('input', { type: 'text', placeholder: t('Çevre birimi…'), oninput: (e) => { dbg.filter = e.target.value.toUpperCase(); renderPeriphList(); } })),
               h('div', { id: 'dbg-plist' })),
             h('div', { class: 'periph-regs', id: 'dbg-regs' }))),
         h('section', { class: 'dbg-col' },
-          h('div', { class: 'pane-head' }, h('span', { class: 'pane-title', text: 'Bellek' })),
+          h('div', { class: 'pane-head' }, h('span', { class: 'pane-title', text: t('Bellek') })),
           h('div', { class: 'mem-bar' },
-            h('input', { type: 'text', id: 'mem-addr', class: 'mono', value: hex(dbg.memAddr), 'aria-label': 'Adres', onkeydown: (e) => { if (e.key === 'Enter') goMem(); } }),
-            h('button', { class: 'small', onclick: goMem }, 'Git'),
+            h('input', { type: 'text', id: 'mem-addr', class: 'mono', value: hex(dbg.memAddr), 'aria-label': t('Adres'), onkeydown: (e) => { if (e.key === 'Enter') goMem(); } }),
+            h('button', { class: 'small', onclick: goMem }, t('Git')),
             h('button', { class: 'ghost small', onclick: () => setMem(0x20000000) }, 'SRAM'),
             h('button', { class: 'ghost small', onclick: () => setMem(0x08000000) }, 'Flash')),
           h('div', { id: 'dbg-mem', class: 'mem' })))));
@@ -106,7 +106,7 @@
   ES.on('debug.symbols', (m) => {
     dbg.symbols = m.symbols;
     dbg.symSource = m.source || '';
-    if (m.error) toast(m.symbols.length ? 'info' : 'warn', m.symbols.length ? `ELF yok; simülasyon için örnek değişkenler gösteriliyor.` : m.error);
+    if (m.error) toast(m.symbols.length ? 'info' : 'warn', m.symbols.length ? t('ELF yok; simülasyon için örnek değişkenler gösteriliyor.') : m.error);
     renderSymbols();
   });
   ES.on('debug.data', (m) => {
@@ -174,18 +174,18 @@
     if (!$('dbg-conn')) return;
     $('dbg-mode').value = dbg.mode;
     $('dbg-mode').disabled = dbg.connected;
-    $('dbg-conn').textContent = dbg.connecting ? 'Bağlanıyor…' : dbg.connected ? 'Bağlantıyı kes' : 'Bağlan';
+    $('dbg-conn').textContent = dbg.connecting ? t('Bağlanıyor…') : dbg.connected ? t('Bağlantıyı kes') : t('Bağlan');
     $('dbg-conn').disabled = dbg.connecting;
     const st = $('dbg-state');
-    st.textContent = dbg.connected ? (dbg.state === 'halted' ? 'DURDU' : dbg.state === 'running' ? 'ÇALIŞIYOR' : dbg.state.toUpperCase()) : 'BAĞLI DEĞİL';
+    st.textContent = dbg.connected ? (dbg.state === 'halted' ? t('DURDU') : dbg.state === 'running' ? t('ÇALIŞIYOR') : dbg.state.toUpperCase()) : t('BAĞLI DEĞİL');
     st.className = `badge ${dbg.connected ? (dbg.state === 'halted' ? 'warn' : 'ok') : ''}`;
     for (const id of ['dbg-halt', 'dbg-resume', 'dbg-step', 'dbg-reset']) $(id).disabled = !dbg.connected;
     $('dbg-step').disabled = !dbg.connected || dbg.state !== 'halted';
     const msg = $('dbg-msg');
     msg.className = `dbg-msg${dbg.error ? ' error' : ''}`;
     msg.textContent = dbg.error || (dbg.connected
-      ? (dbg.mode === 'sim' ? 'Simülasyon: register değerleri tasarımınızdan (pinler, saat ağacı, çevre birimleri) hesaplanır; Board_Init sonrası beklenen durumu gösterir.' : 'Kart bağlı. Register\'lar çalışırken okunur; DR/SR2 gibi okunması bayrak temizleyen register\'lar sadece hedef durduğunda okunur.')
-      : 'Kart yoksa "Simülasyon" ile deneyin. Gerçek kart için ST-Link\'i takın ve "OpenOCD · ST-Link" seçin.');
+      ? (dbg.mode === 'sim' ? t('Simülasyon: register değerleri tasarımınızdan (pinler, saat ağacı, çevre birimleri) hesaplanır; Board_Init sonrası beklenen durumu gösterir.') : t('Kart bağlı. Register\'lar çalışırken okunur; DR/SR2 gibi okunması bayrak temizleyen register\'lar sadece hedef durduğunda okunur.'))
+      : t('Kart yoksa "Simülasyon" ile deneyin. Gerçek kart için ST-Link\'i takın ve "OpenOCD · ST-Link" seçin.'));
   }
 
   function renderPeriphList() {
@@ -197,8 +197,8 @@
     const item = (p) => h('div', { class: `p-item${p.name === dbg.periph ? ' active' : ''}`, onclick: () => { dbg.periph = p.name; dbg.open.clear(); renderPeriphList(); renderRegs(); poll(); } },
       dbg.used.includes(p.name) ? h('span', { class: 'dot' }) : null, h('span', { text: p.name }), h('span', { class: 'hint', text: hex(p.base) }));
     list.replaceChildren(...[
-      used.length ? h('div', { class: 'p-group', text: 'Projede kullanılan' }) : null, ...used.map(item),
-      rest.length ? h('div', { class: 'p-group', text: 'Diğer' }) : null, ...rest.map(item)].filter(Boolean));
+      used.length ? h('div', { class: 'p-group', text: t('Projede kullanılan') }) : null, ...used.map(item),
+      rest.length ? h('div', { class: 'p-group', text: t('Diğer') }) : null, ...rest.map(item)].filter(Boolean));
     $('dbg-src').textContent = dbg.source;
   }
 
@@ -211,7 +211,7 @@
     const box = $('dbg-regs');
     if (!box) return;
     const p = dbg.defs.find((x) => x.name === dbg.periph);
-    if (!p) { box.replaceChildren(h('div', { class: 'hint pad', text: 'Bağlanınca register tanımları yüklenir.' })); return; }
+    if (!p) { box.replaceChildren(h('div', { class: 'hint pad', text: t('Bağlanınca register tanımları yüklenir.') })); return; }
     if (!dbg.connected) dbg.values = {};
     const halted = dbg.state === 'halted';
     const rows = [];
@@ -224,7 +224,7 @@
       rows.push(h('tr', { class: `reg${changed ? ' changed' : ''}${open ? ' open' : ''}`, onclick: () => { open ? dbg.open.delete(r.name) : dbg.open.add(r.name); renderRegs(); } },
         h('td', { class: 'mono' }, h('span', { class: 'tw', text: r.fields.length ? (open ? '▾' : '▸') : '' }), r.name),
         h('td', { class: 'mono hint', text: `+0x${r.offset.toString(16).toUpperCase().padStart(2, '0')}` }),
-        h('td', { class: 'mono val', title: skipped ? 'Okuması bayrak temizler; hedef durunca okunur.' : '', text: skipped ? '(durdurunca)' : v === undefined ? '—' : hex(v) }),
+        h('td', { class: 'mono val', title: skipped ? t('Okuması bayrak temizler; hedef durunca okunur.') : '', text: skipped ? '(durdurunca)' : v === undefined ? '—' : hex(v) }),
         h('td', { class: 'hint desc', text: r.desc || '' })));
       if (open && v !== undefined && !skipped) {
         for (const f of r.fields) {
@@ -237,17 +237,17 @@
         }
       }
     }
-    box.replaceChildren(h('div', { class: 'regs-head' }, h('strong', { text: p.name }), h('span', { class: 'hint mono', text: hex(p.base) }), h('span', { class: 'hint', text: 'Satıra tıklayınca bit alanları açılır. Değişen değerler vurgulanır.' })),
-      h('table', { class: 'regs' }, h('tr', {}, ...['Register', 'Offset', 'Değer', 'Açıklama'].map((t) => h('th', { text: t }))), ...rows));
+    box.replaceChildren(h('div', { class: 'regs-head' }, h('strong', { text: p.name }), h('span', { class: 'hint mono', text: hex(p.base) }), h('span', { class: 'hint', text: t('Satıra tıklayınca bit alanları açılır. Değişen değerler vurgulanır.') })),
+      h('table', { class: 'regs' }, h('tr', {}, ...['Register', 'Offset', t('Değer'), t('Açıklama')].map((x) => h('th', { text: x }))), ...rows));
   }
 
   const CORE = ['r0', 'r1', 'r2', 'r3', 'r4', 'r5', 'r6', 'r7', 'r8', 'r9', 'r10', 'r11', 'r12', 'sp', 'lr', 'pc', 'xPSR'];
   function renderCore() {
     const box = $('dbg-core');
     if (!box) return;
-    if (!dbg.connected) { box.replaceChildren(h('div', { class: 'hint pad', text: 'Bağlı değil.' })); return; }
+    if (!dbg.connected) { box.replaceChildren(h('div', { class: 'hint pad', text: t('Bağlı değil.') })); return; }
     if (dbg.state !== 'halted' || !dbg.core) {
-      box.replaceChildren(h('div', { class: 'hint pad' }, dbg.coreErr || 'Hedef çalışıyor. Core register\'ları görmek için ', h('button', { class: 'small', onclick: () => cmd('halt') }, 'Durdur')));
+      box.replaceChildren(h('div', { class: 'hint pad' }, dbg.coreErr || t('Hedef çalışıyor. Core register\'ları görmek için '), h('button', { class: 'small', onclick: () => cmd('halt') }, t('Durdur@@debug'))));
       return;
     }
     const x = dbg.core.xPSR >>> 0;
@@ -256,14 +256,14 @@
       h('td', { class: 'mono', text: n }),
       h('td', { class: 'mono val', text: dbg.core[n] === undefined ? '—' : hex(dbg.core[n]) }),
       h('td', { class: 'mono hint', text: n === 'xPSR' ? '' : dbg.core[n] === undefined ? '' : String(dbg.core[n] | 0) })))),
-    h('div', { class: 'flags' }, h('span', { class: 'hint', text: 'xPSR bayrakları' }), ...flags, h('span', { class: 'hint mono', text: `ISR ${x & 0x1ff}` })));
+    h('div', { class: 'flags' }, h('span', { class: 'hint', text: t('xPSR bayrakları') }), ...flags, h('span', { class: 'hint mono', text: `ISR ${x & 0x1ff}` })));
   }
 
   function renderSymbols() {
     const list = $('dbg-symlist');
     if (!list) return;
     const q = dbg.symFilter.toLowerCase();
-    if (!q) { list.replaceChildren(...(dbg.symbols.length ? [h('div', { class: 'hint pad', text: `${dbg.symbols.length} değişken (${dbg.symSource || 'ELF'}). Aramak için yazın.` })] : [])); return; }
+    if (!q) { list.replaceChildren(...(dbg.symbols.length ? [h('div', { class: 'hint pad', text: t('{0} değişken ({1}). Aramak için yazın.', dbg.symbols.length, dbg.symSource || 'ELF') })] : [])); return; }
     const hits = dbg.symbols.filter((sym) => sym.name.toLowerCase().includes(q)).slice(0, 12);
     list.replaceChildren(...hits.map((sym) => h('div', {
       class: 'sym', onclick: () => {
@@ -294,7 +294,7 @@
   function renderWatch() {
     const box = $('dbg-watch');
     if (!box) return;
-    if (!dbg.watch.length) { box.replaceChildren(h('div', { class: 'hint pad', text: 'İzlenen değişken yok.' })); return; }
+    if (!dbg.watch.length) { box.replaceChildren(h('div', { class: 'hint pad', text: t('İzlenen değişken yok.') })); return; }
     box.replaceChildren(h('table', { class: 'regs' }, ...dbg.watch.map((w, i) => {
       const words = dbg.values[`w:${w.name}`];
       return h('tr', {},
@@ -302,7 +302,7 @@
         h('td', { class: 'mono val', text: words ? decode(w, words) : '—' }),
         h('td', {}, w.size <= 4 ? h('select', { class: 'tiny', onchange: (e) => { w.fmt = e.target.value; renderWatch(); } },
           ...[['dec', 'u'], ['sdec', 'i'], ['hex', 'hex'], ['float', 'f32']].filter(([k]) => k !== 'float' || w.size === 4).map(([k, l]) => h('option', { value: k, selected: w.fmt === k, text: l }))) : null),
-        h('td', {}, h('button', { class: 'icon tiny', title: 'Kaldır', onclick: () => { dbg.watch.splice(i, 1); renderWatch(); } }, icon('close', 11))));
+        h('td', {}, h('button', { class: 'icon tiny', title: t('Kaldır'), onclick: () => { dbg.watch.splice(i, 1); renderWatch(); } }, icon('close', 11))));
     })));
   }
 
@@ -314,14 +314,14 @@
   }
   function goMem() {
     const v = parseInt($('mem-addr').value.replace(/^0x/i, ''), 16);
-    if (Number.isNaN(v)) return toast('warn', 'Geçerli bir onaltılık adres girin (ör. 0x20000000).');
+    if (Number.isNaN(v)) return toast('warn', t('Geçerli bir onaltılık adres girin (ör. 0x20000000).'));
     setMem(v & ~3);
   }
   function renderMem() {
     const box = $('dbg-mem');
     if (!box) return;
     const words = dbg.values.mem;
-    if (!words) { box.replaceChildren(h('div', { class: 'hint pad', text: dbg.connected ? 'Okunuyor…' : 'Bağlı değil.' })); return; }
+    if (!words) { box.replaceChildren(h('div', { class: 'hint pad', text: dbg.connected ? t('Okunuyor…') : t('Bağlı değil.') })); return; }
     const rows = [];
     for (let r = 0; r < words.length / 4; r++) {
       const ws = words.slice(r * 4, r * 4 + 4);

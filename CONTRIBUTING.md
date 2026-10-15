@@ -12,6 +12,7 @@ hale getirmeyi amaçlıyor. Her katkı, ister tek satırlık bir düzeltme ister
 - [Komponente sürücü yazmak](#komponente-sürücü-yazmak)
 - [Yeni mikrodenetleyici eklemek](#yeni-mikrodenetleyici-eklemek)
 - [Kod kuralları](#kod-kuralları)
+- [Arayüz metinleri ve çeviri](#arayüz-metinleri-ve-çeviri)
 - [Pull request süreci](#pull-request-süreci)
 
 ## Nasıl yardım edebilirim?
@@ -145,6 +146,17 @@ aileye göre değişir. Böyle bir işe başlamadan önce yaklaşımı konuşmak
 - Üretilen C kodu `-Wall -Wextra` ile uyarısız derlenmeli.
 - Webview'da (`media/`) DOM'u `ES.h(...)` / `ES.s(...)` yardımcılarıyla kur; kullanıcı verisini asla `innerHTML` ile ekleme.
 - Arayüz değişikliklerinde açık ve koyu temada kontrol et. Renkler VS Code tema değişkenlerinden gelir.
+
+## Arayüz metinleri ve çeviri
+
+Arayüz Türkçe ve İngilizce. Dil, VS Code görüntüleme dilinden seçilir; `embeddedStudio.language` ayarı (`auto`, `tr`, `en`) bunu ezer.
+
+- Kullanıcıya görünen her metni Türkçe yazıp `t()` ile sarın: webview'da `const { t } = ES;`, eklentide `const { t } = require('./i18n');`.
+- Değişkenleri metnin içine gömmeyin, yer tutucu kullanın: `t('{0} tasarımdan çıkarıldı.', label)`. İngilizcede kelime sırası farklı olabilir.
+- İngilizce karşılığı [`i18n/en.json`](i18n/en.json) dosyasına ekleyin. Anahtar, Türkçe metnin kendisidir.
+- Aynı Türkçe metin farklı yerlerde farklı çevrilecekse bağlam ekleyin: `t('Durdur@@debug')`. Türkçede `@@` sonrası görünmez.
+- Hazır komponentlerin `name`, `description` ve `category` alanları da bu sözlükten çevrilir. Kullanıcının kendi komponentleri çevrilmez.
+- `node test/smoke.js` eksik, fazla ve yer tutucusu uyuşmayan çevirileri yakalar. Arayüz testi de İngilizce ekranda Türkçe metin kalmadığını denetler.
 
 ## Pull request süreci
 

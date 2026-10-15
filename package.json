@@ -48,20 +48,32 @@
     "commands": [
       {
         "command": "embeddedStudio.openDesigner",
-        "title": "Tasarımcıyı Aç",
+        "title": "%command.openDesigner%",
         "category": "Embedded Studio",
         "icon": "$(circuit-board)"
       },
       {
         "command": "embeddedStudio.newProject",
-        "title": "Yeni Proje",
+        "title": "%command.newProject%",
         "category": "Embedded Studio"
       },
       {
         "command": "embeddedStudio.generateCode",
-        "title": "Kod Üret",
+        "title": "%command.generateCode%",
         "category": "Embedded Studio"
       }
-    ]
+    ],
+    "configuration": {
+      "title": "Embedded Studio",
+      "properties": {
+        "embeddedStudio.language": {
+          "type": "string",
+          "enum": ["auto", "tr", "en"],
+          "enumDescriptions": ["%config.language.auto%", "Türkçe", "English"],
+          "default": "auto",
+          "description": "%config.language%"
+        }
+      }
+    }
   }
 }

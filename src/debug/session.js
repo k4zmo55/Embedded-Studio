@@ -11,6 +11,7 @@
 const net = require('net');
 const fs = require('fs');
 const { spawn, execFile } = require('child_process');
+const { t } = require('../i18n');
 
 const CORE_REGS = ['r0', 'r1', 'r2', 'r3', 'r4', 'r5', 'r6', 'r7', 'r8', 'r9', 'r10', 'r11', 'r12', 'sp', 'lr', 'pc', 'xPSR'];
 
@@ -33,7 +34,7 @@ class TclClient {
         reject(e);
         this.failAll(e);
       });
-      s.on('close', () => this.failAll(new Error('OpenOCD bağlantısı kapandı')));
+      s.on('close', () => this.failAll(new Error(t('OpenOCD bağlantısı kapandı'))));
       s.on('data', (d) => this.onData(String(d)));
       this.sock = s;
     });
@@ -68,13 +69,13 @@ class TclClient {
   send(cmd, timeoutMs = 5000) {
     return new Promise((resolve, reject) => {
       const entry = { cmd, resolve, reject };
-      const t = setTimeout(() => {
+      const timer = setTimeout(() => {
         const idx = this.queue.indexOf(entry);
         if (idx >= 0) this.queue.splice(idx, 1);
-        reject(new Error(`OpenOCD yanıt vermedi: ${cmd}`));
+        reject(new Error(t('OpenOCD yanıt vermedi: {0}', cmd)));
       }, timeoutMs);
-      entry.resolve = (v) => { clearTimeout(t); resolve(v); };
-      entry.reject = (e) => { clearTimeout(t); reject(e); };
+      entry.resolve = (v) => { clearTimeout(timer); resolve(v); };
+      entry.reject = (e) => { clearTimeout(timer); reject(e); };
       this.queue.push(entry);
       this.pump();
     });
@@ -113,9 +114,9 @@ class OpenOcdTarget {
       };
       p.stdout.on('data', onText);
       p.stderr.on('data', onText);
-      p.on('error', (e) => reject(new Error(`openocd başlatılamadı (${e.message}). OpenOCD kurulu ve PATH'te mi?`)));
-      p.on('exit', (code) => reject(new Error(explainOpenOcd(log) || `openocd kapandı (kod ${code}).`)));
-      setTimeout(() => reject(new Error('openocd 15 sn içinde hazır olmadı.\n' + log.slice(-400))), 15000);
+      p.on('error', (e) => reject(new Error(t('openocd başlatılamadı ({0}). OpenOCD kurulu ve PATH\'te mi?', e.message))));
+      p.on('exit', (code) => reject(new Error(explainOpenOcd(log) || t('openocd kapandı (kod {0}).', code))));
+      setTimeout(() => reject(new Error(t('openocd 15 sn içinde hazır olmadı.') + '\n' + log.slice(-400))), 15000);
     });
     await this.tcl.connect(o.port);
   }
@@ -138,7 +139,7 @@ class OpenOcdTarget {
   async readMemory(addr, words) {
     const r = await this.tcl.send(`[target current] read_memory 0x${addr.toString(16)} 32 ${words}`);
     const vals = r.trim().split(/\s+/).filter(Boolean).map((v) => parseInt(v, 16));
-    if (vals.length !== words || vals.some((v) => Number.isNaN(v))) throw new Error(`Bellek okunamadı @0x${addr.toString(16)}: ${r.trim().slice(0, 120)}`);
+    if (vals.length !== words || vals.some((v) => Number.isNaN(v))) throw new Error(t('Bellek okunamadı @0x{0}: {1}', addr.toString(16), r.trim().slice(0, 120)));
     return vals;
   }
 
@@ -148,7 +149,7 @@ class OpenOcdTarget {
     // get_reg çıktısı: "r0 0x00000000 r1 0x..." (Tcl dict)
     const parts = r.trim().split(/\s+/);
     for (let i = 0; i + 1 < parts.length; i += 2) out[parts[i]] = parseInt(parts[i + 1], 16);
-    if (!Object.keys(out).length) throw new Error('Register okunamadı (hedef durdurulmuş olmalı): ' + r.trim().slice(0, 120));
+    if (!Object.keys(out).length) throw new Error(t('Register okunamadı (hedef durdurulmuş olmalı): {0}', r.trim().slice(0, 120)));
     return out;
   }
 
@@ -159,12 +160,12 @@ class OpenOcdTarget {
   }
 }
 
-/** Sık görülen openocd hatalarını anlaşılır Türkçe mesaja çevirir. */
+/** Sık görülen openocd hatalarını anlaşılır mesaja çevirir. */
 function explainOpenOcd(log) {
-  if (/open failed|unable to open|no device found|LIBUSB_ERROR/i.test(log)) return 'ST-Link bulunamadı. Programlayıcının takılı olduğundan ve sürücüsünün kurulu olduğundan emin olun.';
-  if (/init mode failed|unable to connect to the target|target voltage may be too low/i.test(log)) return 'ST-Link bulundu ama hedefe bağlanılamadı. SWDIO/SWCLK/GND/3V3 kablolarını ve kartın beslemesini kontrol edin.';
-  if (/couldn't bind|Address already in use/i.test(log)) return 'TCL portu (6666) kullanımda: başka bir openocd açık olabilir.';
-  if (/Can't find interface|Can't find target/i.test(log)) return 'OpenOCD yapılandırma dosyası bulunamadı: ' + (log.match(/Can't find [^\n]+/) || [''])[0];
+  if (/open failed|unable to open|no device found|LIBUSB_ERROR/i.test(log)) return t('ST-Link bulunamadı. Programlayıcının takılı olduğundan ve sürücüsünün kurulu olduğundan emin olun.');
+  if (/init mode failed|unable to connect to the target|target voltage may be too low/i.test(log)) return t('ST-Link bulundu ama hedefe bağlanılamadı. SWDIO/SWCLK/GND/3V3 kablolarını ve kartın beslemesini kontrol edin.');
+  if (/couldn't bind|Address already in use/i.test(log)) return t('TCL portu (6666) kullanımda: başka bir openocd açık olabilir.');
+  if (/Can't find interface|Can't find target/i.test(log)) return t('OpenOCD yapılandırma dosyası bulunamadı: {0}', (log.match(/Can't find [^\n]+/) || [''])[0]);
   return '';
 }
 
@@ -185,7 +186,7 @@ class SimTarget {
   async resume() { this.halted = false; }
   async step() { this.pc += 2; }
   async reset() { this.t0 = Date.now(); this.pc = 0x08000420; this.halted = false; }
-  async program() { return 'simülasyon: yükleme atlandı'; }
+  async program() { return t('simülasyon: yükleme atlandı'); }
 
   async readMemory(addr, words) {
     const ms = Date.now() - this.t0;
@@ -202,7 +203,7 @@ class SimTarget {
   }
 
   async coreRegisters() {
-    if (!this.halted) throw new Error('Core register\'ları okumak için hedefi durdurun.');
+    if (!this.halted) throw new Error(t('Core register\'ları okumak için hedefi durdurun.'));
     const r = {};
     CORE_REGS.forEach((n, i) => (r[n] = (0x1000 * i + 0x24) >>> 0));
     r.sp = 0x2001ffb0; r.lr = 0x08000a3d; r.pc = this.pc; r.xPSR = 0x61000000;
@@ -306,9 +307,9 @@ function simModel(design, lib, result, clock, peripherals) {
 /** ELF içindeki global değişkenler (izleme listesi için). */
 function elfSymbols(elfPath, nm = 'arm-none-eabi-nm') {
   return new Promise((resolve, reject) => {
-    if (!fs.existsSync(elfPath)) return reject(new Error(`ELF bulunamadı: ${elfPath}. Önce projeyi derleyin.`));
+    if (!fs.existsSync(elfPath)) return reject(new Error(t('ELF bulunamadı: {0}. Önce projeyi derleyin.', elfPath)));
     execFile(nm, ['-S', '-C', '--defined-only', elfPath], { windowsHide: true, maxBuffer: 1 << 24 }, (err, stdout) => {
-      if (err) return reject(new Error(`${nm} çalıştırılamadı: ${err.message}`));
+      if (err) return reject(new Error(t('{0} çalıştırılamadı: {1}', nm, err.message)));
       const syms = [];
       for (const line of stdout.split(/\r?\n/)) {
         const m = /^([0-9a-f]{8}) ([0-9a-f]{8}) ([bBdD]) (.+)$/.exec(line.trim());

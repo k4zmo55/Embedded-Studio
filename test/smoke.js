@@ -169,5 +169,52 @@ test('debug simülasyonu: GPIOB MODER, I2C1 ve RCC beklenen değerler', async ()
   });
 });
 
+console.log('Arayüz dili');
+test('koddaki her t() metninin İngilizcesi var, yer tutucular eşleşiyor, fazla anahtar yok', () => {
+  const dict = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'i18n', 'en.json'), 'utf8'));
+  const files = ['src', 'src/engine', 'src/ai', 'src/debug', 'src/monitor', 'media']
+    .flatMap((d) => fs.readdirSync(path.join(__dirname, '..', d)).filter((f) => f.endsWith('.js')).map((f) => path.join(__dirname, '..', d, f)));
+  const used = new Set();
+  // t('...') : tek tırnaklı metin, \' kaçışı olabilir
+  const re = /(?<![\w$.])t\('((?:[^'\\\n]|\\.)*)'/g;
+  for (const f of files) {
+    // Yorumlardaki örnek metinler sayılmasın
+    const code = fs.readFileSync(f, 'utf8').replace(/\/\*[\s\S]*?\*\//g, '').split('\n').filter((l) => !/^\s*\/\//.test(l)).join('\n');
+    for (const m of code.matchAll(re)) used.add(m[1].replace(/\\(.)/g, (_, c) => ({ n: '\n' }[c] || c)));
+  }
+  const missing = [...used].filter((k) => !(k in dict) && !/^[^a-zçğıöşüA-ZÇĞİÖŞÜ]*$/.test(k));
+  // Hazır komponentlerin görünen alanları da sözlükten çevrilir; dilden bağımsız olanlar ("Servo SG90") zorunlu değil
+  for (const c of Object.values(lib.components)) {
+    for (const k of ['name', 'description', 'category']) {
+      if (!c[k]) continue;
+      used.add(c[k]);
+      if (/[çğıöşüÇĞİÖŞÜ]/.test(c[k]) && !(c[k] in dict)) missing.push(c[k]);
+    }
+  }
+  const holes = (s) => (s.match(/\{\d+\}/g) || []).sort().join();
+  const badHoles = Object.entries(dict).filter(([k, v]) => holes(k) !== holes(v)).map(([k]) => k);
+  const unused = Object.keys(dict).filter((k) => !used.has(k));
+  assert.deepStrictEqual(missing, [], 'sözlükte olmayan metinler');
+  assert.deepStrictEqual(badHoles, [], 'yer tutucusu farklı çeviriler');
+  assert.deepStrictEqual(unused, [], 'kullanılmayan sözlük anahtarları');
+});
+test('dil seçimi: ayar > VS Code dili; İngilizcede çeviri, bağlam eki ve yer tutucu', () => {
+  const i18n = require('../src/i18n');
+  assert.strictEqual(i18n.resolveLanguage('auto', 'tr'), 'tr');
+  assert.strictEqual(i18n.resolveLanguage('auto', 'en-US'), 'en');
+  assert.strictEqual(i18n.resolveLanguage('auto', 'de'), 'en');
+  assert.strictEqual(i18n.resolveLanguage('tr', 'en'), 'tr');
+  i18n.setLanguage('en');
+  try {
+    assert.strictEqual(i18n.t('{0} tasarımdan çıkarıldı. Geri almak için Ctrl+Z.', 'LED_1'), 'LED_1 removed from the design. Press Ctrl+Z to undo.');
+    assert.strictEqual(i18n.t('Durdur@@debug'), 'Halt');
+    assert.strictEqual(i18n.t('sözlükte olmayan'), 'sözlükte olmayan');
+    assert.ok(validateComponent({}).every((e) => !/[çğıöşüÇĞİÖŞÜ]/.test(e)), 'doğrulama mesajları İngilizce');
+  } finally {
+    i18n.setLanguage('tr');
+  }
+  assert.strictEqual(i18n.t('Durdur@@debug'), 'Durdur');
+});
+
 fs.rmSync(root, { recursive: true, force: true });
 console.log(`\nsmoke: ${passed} test geçti`);

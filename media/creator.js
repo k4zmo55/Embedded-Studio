@@ -2,31 +2,31 @@
  * Solda form, sağda canlı önizleme (şema sembolü, bilgi kartı, doğrulama, JSON).
  * Doğrulama tek kaynaktan: eklentideki validateComponent (comp.validate mesajı). */
 (function () {
-  const { h, s, $, post, state, icon, modal, toast, KIND_LABEL } = ES;
+  const { t, h, s, $, post, state, icon, modal, toast, KIND_LABEL } = ES;
 
   const ROLES = [
-    ['power', 'Besleme (VCC)'],
-    ['ground', 'Toprak (GND)'],
+    ['power', t('Besleme (VCC)')],
+    ['ground', t('Toprak (GND)')],
     ['i2c.SCL', 'I2C SCL'],
     ['i2c.SDA', 'I2C SDA'],
-    ['spi.SCK', 'SPI SCK (saat)'],
-    ['spi.MISO', 'SPI MISO (modül → MCU)'],
-    ['spi.MOSI', 'SPI MOSI (MCU → modül)'],
-    ['spi.CS', 'SPI CS (seçim)'],
-    ['uart.TX', 'UART: MCU TX\'e bağlanır (modülün RX\'i)'],
-    ['uart.RX', 'UART: MCU RX\'e bağlanır (modülün TX\'i)'],
-    ['gpio.in', 'GPIO giriş (MCU okur)'],
-    ['gpio.out', 'GPIO çıkış (MCU sürer)'],
-    ['adc', 'Analog çıkış (MCU ADC okur)'],
-    ['pwm', 'PWM girişi (MCU PWM üretir)']
+    ['spi.SCK', t('SPI SCK (saat)')],
+    ['spi.MISO', t('SPI MISO (modül → MCU)')],
+    ['spi.MOSI', t('SPI MOSI (MCU → modül)')],
+    ['spi.CS', t('SPI CS (seçim)')],
+    ['uart.TX', t('UART: MCU TX\'e bağlanır (modülün RX\'i)')],
+    ['uart.RX', t('UART: MCU RX\'e bağlanır (modülün TX\'i)')],
+    ['gpio.in', t('GPIO giriş (MCU okur)')],
+    ['gpio.out', t('GPIO çıkış (MCU sürer)')],
+    ['adc', t('Analog çıkış (MCU ADC okur)')],
+    ['pwm', t('PWM girişi (MCU PWM üretir)')]
   ];
   const INTERFACES = [
-    ['i2c', 'I2C', 'Adresli iki telli bus. Birden çok cihaz aynı hatta.'],
-    ['spi', 'SPI', 'Hızlı 4 telli bus; her cihaza ayrı CS.'],
-    ['uart', 'UART', 'Seri port (GPS, modem, USB-seri…).'],
-    ['gpio', 'GPIO', 'Dijital giriş/çıkış (buton, LED, röle…).'],
-    ['adc', 'Analog', 'Gerilim okuma (pot, LDR, analog sensör).'],
-    ['pwm', 'PWM', 'Darbe genişliği (servo, motor sürücü, LED parlaklığı).']
+    ['i2c', 'I2C', t('Adresli iki telli bus. Birden çok cihaz aynı hatta.')],
+    ['spi', 'SPI', t('Hızlı 4 telli bus; her cihaza ayrı CS.')],
+    ['uart', 'UART', t('Seri port (GPS, modem, USB-seri…).')],
+    ['gpio', 'GPIO', t('Dijital giriş/çıkış (buton, LED, röle…).')],
+    ['adc', t('Analog'), t('Gerilim okuma (pot, LDR, analog sensör).')],
+    ['pwm', 'PWM', t('Darbe genişliği (servo, motor sürücü, LED parlaklığı).')]
   ];
   /** Arayüze göre standart pin seti. */
   const DEFAULT_PINS = {
@@ -37,7 +37,7 @@
     adc: [['VCC', 'power'], ['GND', 'ground'], ['OUT', 'adc']],
     pwm: [['VCC', 'power'], ['GND', 'ground'], ['SIG', 'pwm']]
   };
-  const CHIP_SHAPES = [['qfn', 'QFN (kare çip)'], ['soic', 'SOIC (bacaklı)'], ['metal-lid', 'Metal kapak'], ['oled', 'Ekran']];
+  const CHIP_SHAPES = [['qfn', t('QFN (kare çip)')], ['soic', t('SOIC (bacaklı)')], ['metal-lid', t('Metal kapak')], ['oled', t('Ekran')]];
 
   let draft = null;        // düzenlenen komponent
   let originalId = null;   // düzenleme modunda eski kimlik
@@ -56,7 +56,7 @@
 
   function blank() {
     return {
-      id: '', name: '', category: 'Sensör', description: '', keywords: [], interface: 'i2c',
+      id: '', name: '', category: t('Sensör'), description: '', keywords: [], interface: 'i2c',
       voltage: { min: 3.0, max: 3.6 },
       i2c: { address: '0x40', altAddresses: [], maxSpeedHz: 400000, onboardPullups: true },
       spi: { maxSpeedHz: 1000000, mode: 0 },
@@ -84,7 +84,7 @@
     delete d.imageFile;
     if (copy) {
       d.id = `${c.id}_ozel`;
-      d.name = `${c.name} (özel)`;
+      d.name = t('{0} (özel)', c.name);
       d.image = '';
       d.imageUri = undefined;
     }
@@ -142,51 +142,51 @@
     let ifaceFields = null;
     if (d.interface === 'i2c') {
       ifaceFields = h('div', { class: 'cf-row' },
-        field('I2C adresi (7-bit)', text(d.i2c.address, (v) => (d.i2c.address = v.trim()), { placeholder: '0x76', class: 'mono', id: 'cf-addr' }), 'Datasheet\'te "slave address".'),
-        field('Alternatif adresler', text((d.i2c.altAddresses || []).join(', '), (v) => (d.i2c.altAddresses = v.split(',').map((x) => x.trim()).filter(Boolean)), { placeholder: '0x77', class: 'mono' }), 'ADDR/SDO pinine göre. Çakışmada kullanılır.'),
-        field('En yüksek hız', select(d.i2c.maxSpeedHz, [[100000, '100 kHz (standart)'], [400000, '400 kHz (fast)'], [1000000, '1 MHz (fast+)']], (v) => (d.i2c.maxSpeedHz = Number(v)))),
-        h('label', { class: 'check cf-check' }, h('input', { type: 'checkbox', checked: d.i2c.onboardPullups, onchange: (e) => { d.i2c.onboardPullups = e.target.checked; change(false); } }), h('span', { text: 'Modülde pull-up direnci var' })));
+        field(t('I2C adresi (7-bit)'), text(d.i2c.address, (v) => (d.i2c.address = v.trim()), { placeholder: '0x76', class: 'mono', id: 'cf-addr' }), t('Datasheet\'te "slave address".')),
+        field(t('Alternatif adresler'), text((d.i2c.altAddresses || []).join(', '), (v) => (d.i2c.altAddresses = v.split(',').map((x) => x.trim()).filter(Boolean)), { placeholder: '0x77', class: 'mono' }), t('ADDR/SDO pinine göre. Çakışmada kullanılır.')),
+        field(t('En yüksek hız'), select(d.i2c.maxSpeedHz, [[100000, t('100 kHz (standart)')], [400000, '400 kHz (fast)'], [1000000, '1 MHz (fast+)']], (v) => (d.i2c.maxSpeedHz = Number(v)))),
+        h('label', { class: 'check cf-check' }, h('input', { type: 'checkbox', checked: d.i2c.onboardPullups, onchange: (e) => { d.i2c.onboardPullups = e.target.checked; change(false); } }), h('span', { text: t('Modülde pull-up direnci var') })));
     } else if (d.interface === 'spi') {
       ifaceFields = h('div', { class: 'cf-row' },
-        field('En yüksek saat (Hz)', num(d.spi.maxSpeedHz, (v) => (d.spi.maxSpeedHz = v), { min: 1000, step: 1000 })),
-        field('SPI modu', select(d.spi.mode, [[0, 'Mod 0 (CPOL 0, CPHA 0)'], [1, 'Mod 1'], [2, 'Mod 2'], [3, 'Mod 3']], (v) => (d.spi.mode = Number(v)))));
+        field(t('En yüksek saat (Hz)'), num(d.spi.maxSpeedHz, (v) => (d.spi.maxSpeedHz = v), { min: 1000, step: 1000 })),
+        field(t('SPI modu'), select(d.spi.mode, [[0, t('Mod 0 (CPOL 0, CPHA 0)')], [1, t('Mod 1')], [2, t('Mod 2')], [3, t('Mod 3')]], (v) => (d.spi.mode = Number(v)))));
     } else if (d.interface === 'uart') {
       ifaceFields = h('div', { class: 'cf-row' },
-        field('Baud hızı', select(d.uart.baud, [4800, 9600, 19200, 38400, 57600, 115200, 230400, 460800, 921600].map((b) => [b, String(b)]), (v) => (d.uart.baud = Number(v)))));
+        field(t('Baud hızı'), select(d.uart.baud, [4800, 9600, 19200, 38400, 57600, 115200, 230400, 460800, 921600].map((b) => [b, String(b)]), (v) => (d.uart.baud = Number(v)))));
     } else if (d.interface === 'pwm') {
       ifaceFields = h('div', { class: 'cf-row' },
-        field('PWM frekansı (Hz)', num(d.pwm.frequencyHz, (v) => (d.pwm.frequencyHz = v), { min: 1 }), 'Servo için 50 Hz.'));
+        field(t('PWM frekansı (Hz)'), num(d.pwm.frequencyHz, (v) => (d.pwm.frequencyHz = v), { min: 1 }), t('Servo için 50 Hz.')));
     }
 
     // ---- pinler ----
     const pinRows = d.pins.map((p, i) => h('div', { class: 'cf-pin' },
       h('span', { class: 'hint mono', text: String(i + 1) }),
-      text(p.name, (v) => (p.name = v.toUpperCase()), { class: 'mono', placeholder: 'Pin adı', 'aria-label': `Pin ${i + 1} adı` }),
-      select(p.role, ROLES, (v) => (p.role = v), false, { 'aria-label': `Pin ${i + 1} rolü` }),
-      h('button', { class: 'icon tiny', title: 'Yukarı', disabled: i === 0, onclick: () => { [d.pins[i - 1], d.pins[i]] = [d.pins[i], d.pins[i - 1]]; change(true); } }, '↑'),
-      h('button', { class: 'icon tiny', title: 'Aşağı', disabled: i === d.pins.length - 1, onclick: () => { [d.pins[i + 1], d.pins[i]] = [d.pins[i], d.pins[i + 1]]; change(true); } }, '↓'),
-      h('button', { class: 'icon tiny', title: 'Pini sil', onclick: () => { d.pins.splice(i, 1); change(true); } }, icon('close', 11))));
+      text(p.name, (v) => (p.name = v.toUpperCase()), { class: 'mono', placeholder: t('Pin adı'), 'aria-label': t('Pin {0} adı', i + 1) }),
+      select(p.role, ROLES, (v) => (p.role = v), false, { 'aria-label': t('Pin {0} rolü', i + 1) }),
+      h('button', { class: 'icon tiny', title: t('Yukarı'), disabled: i === 0, onclick: () => { [d.pins[i - 1], d.pins[i]] = [d.pins[i], d.pins[i - 1]]; change(true); } }, '↑'),
+      h('button', { class: 'icon tiny', title: t('Aşağı'), disabled: i === d.pins.length - 1, onclick: () => { [d.pins[i + 1], d.pins[i]] = [d.pins[i], d.pins[i + 1]]; change(true); } }, '↓'),
+      h('button', { class: 'icon tiny', title: t('Pini sil'), onclick: () => { d.pins.splice(i, 1); change(true); } }, icon('close', 11))));
 
     // ---- ölçümler ----
-    const telRows = d.telemetry.map((t, i) => {
-      const special = t.sim && t.sim.kind;
-      if (!t.sim) t.sim = { base: 0, amp: 1, periodS: 10, noise: 0 };
+    const telRows = d.telemetry.map((m, i) => {
+      const special = m.sim && m.sim.kind;
+      if (!m.sim) m.sim = { base: 0, amp: 1, periodS: 10, noise: 0 };
       return h('div', { class: 'cf-tel' },
-        text(t.id, (v) => {
-          const old = t.id;
-          t.id = v.trim();
-          for (const w of d.monitor) w.channels = w.channels.map((c) => (c === old ? t.id : c));
-        }, { class: 'mono', placeholder: 'ad (ör. temp)', 'aria-label': `Ölçüm ${i + 1} adı`, onchange: () => change(true) }),
-        text(t.unit, (v) => (t.unit = v), { placeholder: 'birim', class: 'unit', 'aria-label': `Ölçüm ${i + 1} birimi` }),
-        special ? h('span', { class: 'hint', text: `simülasyon: ${t.sim.kind}` }) : h('span', { class: 'cf-sim', title: 'Simülasyonda üretilecek değer: taban ± genlik, periyot saniye' },
-          'sim', num(t.sim.base, (v) => (t.sim.base = v ?? 0), { title: 'taban', 'aria-label': 'taban' }),
-          '±', num(t.sim.amp, (v) => (t.sim.amp = v ?? 0), { title: 'genlik', 'aria-label': 'genlik' }),
-          num(t.sim.periodS, (v) => (t.sim.periodS = v || 10), { title: 'periyot (sn)', 'aria-label': 'periyot' }), 'sn'),
+        text(m.id, (v) => {
+          const old = m.id;
+          m.id = v.trim();
+          for (const w of d.monitor) w.channels = w.channels.map((c) => (c === old ? m.id : c));
+        }, { class: 'mono', placeholder: t('ad (ör. temp)'), 'aria-label': t('Ölçüm {0} adı', i + 1), onchange: () => change(true) }),
+        text(m.unit, (v) => (m.unit = v), { placeholder: t('birim'), class: 'unit', 'aria-label': t('Ölçüm {0} birimi', i + 1) }),
+        special ? h('span', { class: 'hint', text: t('simülasyon: {0}', m.sim.kind) }) : h('span', { class: 'cf-sim', title: t('Simülasyonda üretilecek değer: taban ± genlik, periyot saniye') },
+          'sim', num(m.sim.base, (v) => (m.sim.base = v ?? 0), { title: t('taban'), 'aria-label': t('taban') }),
+          '±', num(m.sim.amp, (v) => (m.sim.amp = v ?? 0), { title: t('genlik'), 'aria-label': t('genlik') }),
+          num(m.sim.periodS, (v) => (m.sim.periodS = v || 10), { title: t('periyot (sn)'), 'aria-label': t('periyot') }), t('sn')),
         h('button', {
-          class: 'icon tiny', title: 'Ölçümü sil',
+          class: 'icon tiny', title: t('Ölçümü sil'),
           onclick: () => {
             d.telemetry.splice(i, 1);
-            for (const w of d.monitor) w.channels = w.channels.filter((c) => c !== t.id);
+            for (const w of d.monitor) w.channels = w.channels.filter((c) => c !== m.id);
             d.monitor = d.monitor.filter((w) => w.channels.length);
             change(true);
           }
@@ -194,70 +194,70 @@
     });
 
     // ---- monitör ----
-    const ids = d.telemetry.map((t) => t.id).filter(Boolean);
+    const ids = d.telemetry.map((m) => m.id).filter(Boolean);
     const monRows = d.monitor.map((w, i) => {
-      const okTypes = Object.entries(ES.widgets.types).filter(([, t]) => t.ok(w.channels.length || 1, w.channels));
+      const okTypes = Object.entries(ES.widgets.types).filter(([, wt]) => wt.ok(w.channels.length || 1, w.channels));
       return h('div', { class: 'cf-mon' },
-        select(w.type, okTypes.map(([k, t]) => [k, t.label]), (v) => (w.type = v), true, { 'aria-label': 'Widget türü' }),
+        select(w.type, okTypes.map(([k, wt]) => [k, wt.label]), (v) => (w.type = v), true, { 'aria-label': t('Widget türü') }),
         h('div', { class: 'cf-chans' }, ...ids.map((id) => h('label', { class: 'check' },
           h('input', { type: 'checkbox', checked: w.channels.includes(id), onchange: (e) => { w.channels = e.target.checked ? [...w.channels, id] : w.channels.filter((c) => c !== id); change(true); } }),
           h('span', { text: id })))),
         ['gauge', 'thermo'].includes(w.type) ? h('span', { class: 'cf-minmax' }, 'min', num(w.min, (v) => (w.min = v)), 'max', num(w.max, (v) => (w.max = v))) : null,
-        h('button', { class: 'icon tiny', title: 'Widget\'ı sil', onclick: () => { d.monitor.splice(i, 1); change(true); } }, icon('close', 11)));
+        h('button', { class: 'icon tiny', title: t('Widget\'ı sil'), onclick: () => { d.monitor.splice(i, 1); change(true); } }, icon('close', 11)));
     });
 
     box.replaceChildren(
-      section('Temel bilgiler',
+      section(t('Temel bilgiler'),
         h('div', { class: 'cf-row' },
-          field('Ad', text(d.name, (v) => { d.name = v; if (!idTouched && !originalId) { d.id = slug(v); const el = $('cf-id'); if (el) el.value = d.id; } }, { id: 'cf-name', placeholder: 'ör. BMP180' })),
-          field('Kimlik (id)', text(d.id, (v) => { d.id = v.trim(); idTouched = true; }, { id: 'cf-id', class: 'mono', placeholder: 'bmp180', disabled: usedInDesign }),
-            usedInDesign ? 'Tasarımda kullanıldığı için değiştirilemez.' : 'Küçük harf, rakam ve _. Kod ve dosya adında kullanılır.')),
+          field(t('Ad'), text(d.name, (v) => { d.name = v; if (!idTouched && !originalId) { d.id = slug(v); const el = $('cf-id'); if (el) el.value = d.id; } }, { id: 'cf-name', placeholder: t('ör. BMP180') })),
+          field(t('Kimlik (id)'), text(d.id, (v) => { d.id = v.trim(); idTouched = true; }, { id: 'cf-id', class: 'mono', placeholder: 'bmp180', disabled: usedInDesign }),
+            usedInDesign ? t('Tasarımda kullanıldığı için değiştirilemez.') : t('Küçük harf, rakam ve _. Kod ve dosya adında kullanılır.'))),
         h('div', { class: 'cf-row' },
-          field('Kategori', h('span', {}, text(d.category, (v) => (d.category = v), { list: 'cf-cats' }), h('datalist', { id: 'cf-cats' }, ...categories.map((c) => h('option', { value: c }))))),
-          field('Örnekleme periyodu (ms)', num(d.sampleMs, (v) => (d.sampleMs = v ?? 0), { min: 0, step: 10 }), '0: periyodik okuma yok (ör. ekran).')),
-        field('Açıklama', text(d.description, (v) => (d.description = v), { placeholder: 'Kısa açıklama' })),
+          field(t('Kategori'), h('span', {}, text(d.category, (v) => (d.category = v), { list: 'cf-cats' }), h('datalist', { id: 'cf-cats' }, ...categories.map((c) => h('option', { value: c }))))),
+          field(t('Örnekleme periyodu (ms)'), num(d.sampleMs, (v) => (d.sampleMs = v ?? 0), { min: 0, step: 10 }), t('0: periyodik okuma yok (ör. ekran).'))),
+        field(t('Açıklama'), text(d.description, (v) => (d.description = v), { placeholder: t('Kısa açıklama') })),
         h('div', { class: 'cf-row' },
-          field('Anahtar kelimeler', text(d.keywords.join(', '), (v) => (d.keywords = v.split(',').map((x) => x.trim()).filter(Boolean)), { placeholder: 'basınç, barometre' }), 'Asistan bu kelimelerle önerir.'),
-          field('Datasheet bağlantısı', text(d.datasheet, (v) => (d.datasheet = v.trim()), { placeholder: 'https://…/datasheet.pdf' })))),
-      section('Arayüz ve besleme',
+          field(t('Anahtar kelimeler'), text(d.keywords.join(', '), (v) => (d.keywords = v.split(',').map((x) => x.trim()).filter(Boolean)), { placeholder: t('basınç, barometre') }), t('Asistan bu kelimelerle önerir.')),
+          field(t('Datasheet bağlantısı'), text(d.datasheet, (v) => (d.datasheet = v.trim()), { placeholder: 'https://…/datasheet.pdf' })))),
+      section(t('Arayüz ve besleme'),
         ifaceCards,
         ifaceFields,
         h('div', { class: 'cf-row' },
-          field('Besleme min (V)', num(d.voltage.min, (v) => (d.voltage.min = v), { step: 0.1 })),
-          field('Besleme max (V)', num(d.voltage.max, (v) => (d.voltage.max = v), { step: 0.1 }), 'Min > 3.3 V ise 5 V hattına bağlanır.'))),
-      section('Pinler',
-        h('p', { class: 'hint', text: 'Rol, pinin MCU tarafında neye bağlanacağını belirler. Asistan pin atamasını bu rollere göre yapar.' }),
+          field(t('Besleme min (V)'), num(d.voltage.min, (v) => (d.voltage.min = v), { step: 0.1 })),
+          field(t('Besleme max (V)'), num(d.voltage.max, (v) => (d.voltage.max = v), { step: 0.1 }), t('Min > 3.3 V ise 5 V hattına bağlanır.')))),
+      section(t('Pinler'),
+        h('p', { class: 'hint', text: t('Rol, pinin MCU tarafında neye bağlanacağını belirler. Asistan pin atamasını bu rollere göre yapar.') }),
         h('div', { class: 'cf-pins', id: 'cf-pins' }, ...pinRows),
         h('div', { class: 'cf-actions' },
-          h('button', { class: 'ghost small', id: 'cf-add-pin', onclick: () => { d.pins.push({ name: `P${d.pins.length + 1}`, role: 'gpio.in' }); change(true); } }, icon('plus', 11), 'Pin ekle'),
-          h('button', { class: 'ghost small', id: 'cf-fill-pins', onclick: () => { d.pins = DEFAULT_PINS[d.interface].map(([name, role]) => ({ name, role })); change(true); } }, `${KIND_LABEL[d.interface]} için standart pinler`))),
-      section('Ölçümler (telemetri)',
-        h('p', { class: 'hint', text: 'Firmware\'in monitöre göndereceği değerler. Simülasyon alanları kart yokken monitörde görülecek veriyi belirler.' }),
+          h('button', { class: 'ghost small', id: 'cf-add-pin', onclick: () => { d.pins.push({ name: `P${d.pins.length + 1}`, role: 'gpio.in' }); change(true); } }, icon('plus', 11), t('Pin ekle')),
+          h('button', { class: 'ghost small', id: 'cf-fill-pins', onclick: () => { d.pins = DEFAULT_PINS[d.interface].map(([name, role]) => ({ name, role })); change(true); } }, t('{0} için standart pinler', KIND_LABEL[d.interface])))),
+      section(t('Ölçümler (telemetri)'),
+        h('p', { class: 'hint', text: t('Firmware\'in monitöre göndereceği değerler. Simülasyon alanları kart yokken monitörde görülecek veriyi belirler.') }),
         ...telRows,
         h('div', { class: 'cf-actions' },
-          h('button', { class: 'ghost small', id: 'cf-add-tel', onclick: () => { d.telemetry.push({ id: d.telemetry.length ? `deger${d.telemetry.length + 1}` : 'deger', unit: '', sim: { base: 0, amp: 1, periodS: 10, noise: 0 } }); change(true); } }, icon('plus', 11), 'Ölçüm ekle'))),
-      section('Monitör görünümü',
-        h('p', { class: 'hint', text: ids.length ? 'Boş bırakılırsa tüm ölçümler tek grafikte gösterilir.' : 'Önce bir ölçüm ekleyin.' }),
+          h('button', { class: 'ghost small', id: 'cf-add-tel', onclick: () => { d.telemetry.push({ id: d.telemetry.length ? `deger${d.telemetry.length + 1}` : 'deger', unit: '', sim: { base: 0, amp: 1, periodS: 10, noise: 0 } }); change(true); } }, icon('plus', 11), t('Ölçüm ekle')))),
+      section(t('Monitör görünümü'),
+        h('p', { class: 'hint', text: ids.length ? t('Boş bırakılırsa tüm ölçümler tek grafikte gösterilir.') : t('Önce bir ölçüm ekleyin.') }),
         ...monRows,
         h('div', { class: 'cf-actions' },
           h('button', {
             class: 'ghost small', id: 'cf-add-mon', disabled: !ids.length,
             onclick: () => {
-              const now = d.telemetry.map((t) => t.id).filter(Boolean);
+              const now = d.telemetry.map((m) => m.id).filter(Boolean);
               if (!now.length) return;
               d.monitor.push({ type: now.length === 1 ? 'gauge' : 'chart', channels: now.slice(0, now.length === 1 ? 1 : 3) });
               change(true);
             }
-          }, icon('plus', 11), 'Widget ekle'))),
-      section('Görünüm',
+          }, icon('plus', 11), t('Widget ekle')))),
+      section(t('Görünüm'),
         h('div', { class: 'cf-row' },
-          field('Kart rengi', h('input', { type: 'color', value: d.art.board || '#1d4f91', oninput: (e) => { d.art.board = e.target.value; change(false); } })),
-          field('Çip etiketi', text(d.art.chip, (v) => (d.art.chip = v), { placeholder: d.name.slice(0, 10) || 'BMP180' })),
-          field('Çip şekli', select(d.art.chipShape, CHIP_SHAPES, (v) => (d.art.chipShape = v)))),
+          field(t('Kart rengi'), h('input', { type: 'color', value: d.art.board || '#1d4f91', oninput: (e) => { d.art.board = e.target.value; change(false); } })),
+          field(t('Çip etiketi'), text(d.art.chip, (v) => (d.art.chip = v), { placeholder: d.name.slice(0, 10) || 'BMP180' })),
+          field(t('Çip şekli'), select(d.art.chipShape, CHIP_SHAPES, (v) => (d.art.chipShape = v)))),
         h('div', { class: 'cf-actions' },
-          h('button', { class: 'ghost small', onclick: () => post({ type: 'comp.pickImage' }) }, icon('upload', 11), d.image ? 'Görseli değiştir' : 'Kendi görselini seç…'),
-          d.image ? h('button', { class: 'ghost small', onclick: () => { d.image = ''; d.imageUri = undefined; change(true); } }, 'Görseli kaldır') : null,
-          h('span', { class: 'hint', text: d.image ? d.image : 'Görsel seçilmezse yukarıdaki ayarlarla çizim üretilir.' }))));
+          h('button', { class: 'ghost small', onclick: () => post({ type: 'comp.pickImage' }) }, icon('upload', 11), d.image ? t('Görseli değiştir') : t('Kendi görselini seç…')),
+          d.image ? h('button', { class: 'ghost small', onclick: () => { d.image = ''; d.imageUri = undefined; change(true); } }, t('Görseli kaldır')) : null,
+          h('span', { class: 'hint', text: d.image ? d.image : t('Görsel seçilmezse yukarıdaki ayarlarla çizim üretilir.') }))));
   }
 
   // ================================================================ önizleme
@@ -267,10 +267,10 @@
     const pow = d.pins.filter((p) => p.role === 'power' || p.role === 'ground');
     const rows = Math.max(sig.length, pow.length, 1);
     const H = (rows + 1) * P;
-    const svg = s('svg', { viewBox: `-60 -26 ${W + 120} ${H + 46}`, class: 'cf-symbol', role: 'img', 'aria-label': 'Şema sembolü önizlemesi' },
-      s('text', { class: 'sym-title', x: 0, y: -8, text: `${(d.id || 'KOMPONENT').toUpperCase()}_1` }),
+    const svg = s('svg', { viewBox: `-60 -26 ${W + 120} ${H + 46}`, class: 'cf-symbol', role: 'img', 'aria-label': t('Şema sembolü önizlemesi') },
+      s('text', { class: 'sym-title', x: 0, y: -8, text: `${(d.id || t('KOMPONENT')).toUpperCase()}_1` }),
       s('rect', { class: 'sym-body', x: 0, y: 0, width: W, height: H, rx: 2 }),
-      s('text', { class: 'sym-sub', x: W / 2, y: H + 14, 'text-anchor': 'middle', text: d.name || 'Ad' }));
+      s('text', { class: 'sym-sub', x: W / 2, y: H + 14, 'text-anchor': 'middle', text: d.name || t('Ad') }));
     const kind = (role) => (role.startsWith('i2c') ? 'i2c' : role.startsWith('spi') ? 'spi' : role.startsWith('uart') ? 'uart' : role === 'adc' ? 'adc' : role === 'pwm' ? 'pwm' : 'gpio');
     sig.forEach((p, i) => {
       const y = (i + 1) * P;
@@ -295,16 +295,16 @@
     const d = draft;
     const c = { ...output(), image: d.imageUri };
     box.replaceChildren(
-      h('div', { class: 'cf-prev-head', text: 'Şema sembolü' }),
+      h('div', { class: 'cf-prev-head', text: t('Şema sembolü') }),
       h('div', { class: 'cf-prev-symbol' }, symbol(d)),
-      h('div', { class: 'cf-prev-head', text: 'Bilgi kartı' }),
+      h('div', { class: 'cf-prev-head', text: t('Bilgi kartı') }),
       h('div', { class: 'cf-prev-card' }, ES.compCard(c)),
-      h('div', { class: 'cf-prev-head' }, 'Doğrulama ', !validated ? h('span', { class: 'badge', text: '…' }) : errors.length ? h('span', { class: 'badge err', text: String(errors.length) }) : h('span', { class: 'badge ok', text: '✓' })),
+      h('div', { class: 'cf-prev-head' }, t('Doğrulama') + ' ', !validated ? h('span', { class: 'badge', text: '…' }) : errors.length ? h('span', { class: 'badge err', text: String(errors.length) }) : h('span', { class: 'badge ok', text: '✓' })),
       h('div', { class: 'notes', id: 'cf-errors' }, ...(!validated
-        ? [h('div', { class: 'note info' }, h('span', { class: 'ic', text: '…' }), h('span', { text: 'Doğrulanıyor…' }))]
+        ? [h('div', { class: 'note info' }, h('span', { class: 'ic', text: '…' }), h('span', { text: t('Doğrulanıyor…') }))]
         : errors.length
         ? errors.map((e) => h('div', { class: 'note error' }, h('span', { class: 'ic', text: '✕' }), h('span', { text: e })))
-        : [h('div', { class: 'note info' }, h('span', { class: 'ic', text: '✓' }), h('span', { text: 'Kaydetmeye hazır.' }))])),
+        : [h('div', { class: 'note info' }, h('span', { class: 'ic', text: '✓' }), h('span', { text: t('Kaydetmeye hazır.') }))])),
       h('details', { class: 'cf-json' }, h('summary', { text: 'JSON' }), h('pre', { text: JSON.stringify(output(), null, 2) })));
     const save = $('cf-save');
     const blocked = saving || !validated || errors.length > 0;
@@ -327,23 +327,23 @@
     const body = h('div', { class: 'creator' }, h('div', { class: 'cf-form', id: 'cf-form' }), h('aside', { class: 'cf-preview', id: 'cf-preview' }));
     let confirmClose = false;
     dlg = modal({
-      title: mode === 'edit' ? `Komponenti düzenle · ${comp.name}` : mode === 'copy' ? `Kopyasını düzenle · ${comp.name}` : 'Yeni komponent',
+      title: mode === 'edit' ? t('Komponenti düzenle · {0}', comp.name) : mode === 'copy' ? t('Kopyasını düzenle · {0}', comp.name) : t('Yeni komponent'),
       className: 'modal-wide',
       body,
       footLeft: h('span', { class: 'cf-foot-left' },
-        h('button', { class: 'ghost small', title: 'JSON dosyası olarak kaydet (paylaşmak için)', onclick: () => post({ type: 'comp.export', component: output() }) }, 'Dışa aktar…'),
+        h('button', { class: 'ghost small', title: t('JSON dosyası olarak kaydet (paylaşmak için)'), onclick: () => post({ type: 'comp.export', component: output() }) }, t('Dışa aktar…')),
         warn),
       beforeClose: () => {
         if (!dirty || confirmClose) return true;
         confirmClose = true;
-        warn.replaceChildren('Kaydedilmemiş değişiklikler var. Yine de kapatmak için tekrar Kapat\'a basın.');
+        warn.replaceChildren(t('Kaydedilmemiş değişiklikler var. Yine de kapatmak için tekrar Kapat\'a basın.'));
         return false;
       },
       onClose: () => { clearTimeout(validateTimer); dlg = null; draft = null; },
       buttons: [
-        { label: 'Kapat' },
-        { label: 'Kaydet', id: 'cf-save', action: () => { save(false); return false; } },
-        { label: 'Kaydet ve tasarıma ekle', id: 'cf-save-add', primary: true, action: () => { save(true); return false; } }
+        { label: t('Kapat') },
+        { label: t('Kaydet'), id: 'cf-save', action: () => { save(false); return false; } },
+        { label: t('Kaydet ve tasarıma ekle'), id: 'cf-save-add', primary: true, action: () => { save(true); return false; } }
       ]
     });
     renderForm();
@@ -354,7 +354,7 @@
 
   function save(addToDesign) {
     if (!validated || saving) return;
-    if (errors.length) return toast('warn', 'Önce doğrulama hatalarını düzeltin.');
+    if (errors.length) return toast('warn', t('Önce doğrulama hatalarını düzeltin.'));
     saving = true;
     renderPreview();
     post({ type: 'comp.save', component: output(), originalId, addToDesign });

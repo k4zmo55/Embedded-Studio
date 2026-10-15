@@ -2,7 +2,7 @@
  * cfg: { type, channels: ['BME280_1.temp', ...], min, max, style }
  * ctx: { series(ch) -> [{t, v}], last(ch), unit(ch), short(ch), post } */
 (function () {
-  const { h, s } = ES;
+  const { t, h, s } = ES;
   const AXIS = ['#e5484d', '#30a46c', '#3e63dd']; // X kırmızı, Y yeşil, Z mavi
   const css = (name, fb) => getComputedStyle(document.body).getPropertyValue(name).trim() || fb;
   const palette = () => [1, 2, 3, 4, 5, 6].map((i) => css(`--s${i}`, AXIS[(i - 1) % 3]));
@@ -62,8 +62,8 @@
           g.beginPath(); g.moveTo(36, y); g.lineTo(w - 4, y); g.stroke();
           g.fillText(fmt(v), 2, y + 3);
         }
-        g.fillText('-30 sn', 36, hh - 2);
-        g.fillText('şimdi', w - 30, hh - 2);
+        g.fillText(t('-30 sn'), 36, hh - 2);
+        g.fillText(t('şimdi'), w - 30, hh - 2);
         all.forEach((ser, i) => {
           if (ser.length < 2) return;
           g.beginPath();
@@ -175,7 +175,7 @@
         const v = ctx.last(ch);
         const onState = v !== undefined && v > 0.5;
         bulb.classList.toggle('on', onState);
-        txt.textContent = v === undefined ? '—' : onState ? 'AÇIK / 1' : 'KAPALI / 0';
+        txt.textContent = v === undefined ? '—' : onState ? t('AÇIK / 1') : t('KAPALI / 0');
         const ser = ctx.series(ch).slice(-40);
         hist.replaceChildren(...ser.map((d) => h('i', { class: d.v > 0.5 ? 'on' : '' })));
       }
@@ -238,13 +238,13 @@
     const canvas = h('canvas', { class: 'w-imu' });
     const att = h('div', { class: 'imu-att' });
     let mode = 'plane';
-    const modeBtn = h('button', { class: 'ghost small', onclick: () => { mode = mode === 'plane' ? 'axes' : 'plane'; modeBtn.textContent = mode === 'plane' ? 'Eksen görünümü' : 'Uçak görünümü'; } }, 'Eksen görünümü');
+    const modeBtn = h('button', { class: 'ghost small', onclick: () => { mode = mode === 'plane' ? 'axes' : 'plane'; modeBtn.textContent = mode === 'plane' ? t('Eksen görünümü') : t('Uçak görünümü'); } }, t('Eksen görünümü'));
     const accel = axesBars([ax, ay, az], ctx, 2);
     const gyro = gx ? axesBars([gx, gy, gz], ctx, 250) : null;
     const o = { roll: 0, pitch: 0, yaw: 0, lastT: 0 };
     const el = h('div', { class: 'w-imu-wrap' },
-      h('div', { class: 'imu-view' }, canvas, h('div', { class: 'imu-tools' }, modeBtn, h('button', { class: 'ghost small', onclick: () => (o.yaw = 0) }, 'Yaw sıfırla'))),
-      h('div', { class: 'imu-side' }, att, h('div', { class: 'imu-h', text: 'İvme (g)' }), accel.el, gyro ? h('div', { class: 'imu-h', text: 'Açısal hız (°/s)' }) : null, gyro ? gyro.el : null));
+      h('div', { class: 'imu-view' }, canvas, h('div', { class: 'imu-tools' }, modeBtn, h('button', { class: 'ghost small', onclick: () => (o.yaw = 0) }, t('Yaw sıfırla')))),
+      h('div', { class: 'imu-side' }, att, h('div', { class: 'imu-h', text: t('İvme (g)') }), accel.el, gyro ? h('div', { class: 'imu-h', text: t('Açısal hız (°/s)') }) : null, gyro ? gyro.el : null));
 
     function integrate() {
       // Tamamlayıcı filtre: jiroskop kısa vadede, ivmeölçer uzun vadede.
@@ -360,7 +360,7 @@
         const a = ctx.last(lat), b = ctx.last(lon);
         if (a !== undefined) ctx.post({ type: 'openExternal', url: `https://www.openstreetmap.org/?mlat=${a.toFixed(6)}&mlon=${b.toFixed(6)}#map=17/${a.toFixed(6)}/${b.toFixed(6)}` });
       }
-    }, 'Haritada aç');
+    }, t('Haritada aç'));
     return {
       el: h('div', { class: 'w-col' }, canvas, h('div', { class: 'gps-foot' }, info, btn)),
       update() {
@@ -368,10 +368,10 @@
         const n = Math.min(a.length, b.length);
         const la = ctx.last(lat), lo = ctx.last(lon);
         info.replaceChildren(...[
-          h('span', {}, 'Enlem ', h('b', { text: la !== undefined ? la.toFixed(6) + '°' : '—' })),
-          h('span', {}, 'Boylam ', h('b', { text: lo !== undefined ? lo.toFixed(6) + '°' : '—' })),
-          alt ? h('span', {}, 'İrtifa ', h('b', { text: `${fmt(ctx.last(alt))} m` })) : null,
-          sats ? h('span', {}, 'Uydu ', h('b', { text: String(ctx.last(sats) ?? '—') })) : null].filter(Boolean));
+          h('span', {}, t('Enlem') + ' ', h('b', { text: la !== undefined ? la.toFixed(6) + '°' : '—' })),
+          h('span', {}, t('Boylam') + ' ', h('b', { text: lo !== undefined ? lo.toFixed(6) + '°' : '—' })),
+          alt ? h('span', {}, t('İrtifa') + ' ', h('b', { text: `${fmt(ctx.last(alt))} m` })) : null,
+          sats ? h('span', {}, t('Uydu') + ' ', h('b', { text: String(ctx.last(sats) ?? '—') })) : null].filter(Boolean));
         const c = setupCanvas(canvas);
         if (!c || n < 1) return;
         const { g, w, h: hh } = c;
@@ -393,8 +393,8 @@
         for (let m = -Math.ceil(spanY / step) * step; m <= spanY; m += step) { g.beginPath(); g.moveTo(0, hh / 2 + m * k); g.lineTo(w, hh / 2 + m * k); g.stroke(); }
         g.fillStyle = css('--muted-c', '#888');
         g.font = '10px sans-serif';
-        g.fillText(`ızgara ${step} m`, 6, hh - 6);
-        g.fillText('K ↑', w - 26, 14);
+        g.fillText(t('ızgara {0} m', step), 6, hh - 6);
+        g.fillText(t('K ↑'), w - 26, 14);
         g.strokeStyle = css('--info', '#3e63dd');
         g.lineWidth = 2;
         g.beginPath();
@@ -410,14 +410,14 @@
 
   ES.widgets = {
     types: {
-      chart: { label: 'Çizgi grafik', create: chart, ok: () => true },
-      value: { label: 'Sayısal', create: value, ok: () => true },
-      gauge: { label: 'Gösterge', create: gauge, ok: (n) => n === 1 },
-      thermo: { label: 'Termometre', create: thermo, ok: (n) => n === 1 },
-      lamp: { label: 'Lamba', create: lamp, ok: (n) => n === 1 },
-      axes: { label: 'Eksen çubukları (XYZ)', create: axes, ok: (n) => n >= 3 },
-      imu: { label: '3B IMU (uçak)', create: imu, ok: (n, ids) => ['ax', 'ay', 'az'].every((x) => ids.includes(x)) },
-      gps: { label: 'GPS rota', create: gps, ok: (n, ids) => ids.includes('lat') && ids.includes('lon') }
+      chart: { label: t('Çizgi grafik'), create: chart, ok: () => true },
+      value: { label: t('Sayısal'), create: value, ok: () => true },
+      gauge: { label: t('Gösterge'), create: gauge, ok: (n) => n === 1 },
+      thermo: { label: t('Termometre'), create: thermo, ok: (n) => n === 1 },
+      lamp: { label: t('Lamba'), create: lamp, ok: (n) => n === 1 },
+      axes: { label: t('Eksen çubukları (XYZ)'), create: axes, ok: (n) => n >= 3 },
+      imu: { label: t('3B IMU (uçak)'), create: imu, ok: (n, ids) => ['ax', 'ay', 'az'].every((x) => ids.includes(x)) },
+      gps: { label: t('GPS rota'), create: gps, ok: (n, ids) => ids.includes('lat') && ids.includes('lon') }
     },
     fmt
   };

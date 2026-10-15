@@ -12,7 +12,8 @@
     "kayit",
     "log",
     "memory",
-    "storage"
+    "storage",
+    "logging"
   ],
   "interface": "spi",
   "voltage": {

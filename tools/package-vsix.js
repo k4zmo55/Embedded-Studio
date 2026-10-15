@@ -6,8 +6,8 @@ const zlib = require('zlib');
 
 const ROOT = path.join(__dirname, '..');
 const pkg = JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8'));
-const INCLUDE_DIRS = ['src', 'media', 'data'];
-const INCLUDE_FILES = { 'package.json': 'package.json', 'README.md': 'README.md', 'CHANGELOG.md': 'CHANGELOG.md', LICENSE: 'LICENSE.txt' };
+const INCLUDE_DIRS = ['src', 'media', 'data', 'i18n'];
+const INCLUDE_FILES = { 'package.json': 'package.json', 'package.nls.json': 'package.nls.json', 'package.nls.tr.json': 'package.nls.tr.json', 'README.md': 'README.md', 'CHANGELOG.md': 'CHANGELOG.md', LICENSE: 'LICENSE.txt' };
 
 const esc = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 

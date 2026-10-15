@@ -9,7 +9,8 @@
     "analog",
     "ayar",
     "adc",
-    "knob"
+    "knob",
+    "potentiometer"
   ],
   "interface": "adc",
   "voltage": {

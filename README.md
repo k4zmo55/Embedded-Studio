@@ -164,7 +164,7 @@ Okuması bayrak temizleyen register'lar (ör. `USART->DR`) sadece hedef durduğu
 - [ ] Monitörde seri port üzerinden gerçek kart verisi
 - [ ] Yeni MCU'lar: STM32F4 ailesinin geri kalanı, STM32G4/L4, ESP32, RP2040
 - [ ] LLM destekli asistan ve datasheet'ten komponent taslağı çıkarma
-- [ ] İngilizce arayüz
+- [x] İngilizce arayüz (VS Code dili İngilizceyse kendiliğinden; ayar: `embeddedStudio.language`)
 
 Fikriniz mi var? [Özellik isteği açın](https://github.com/k4zmo55/Embedded-Studio/issues/new?template=feature_request.yml).
 
@@ -205,8 +205,9 @@ code, optionally with **FreeRTOS**. Your code inside `USER CODE` blocks is prese
 It also includes a live monitor (3D IMU, GPS track, gauges, RTOS task table), a debugger front-end for OpenOCD + ST-Link
 (peripheral registers with bit fields, memory, variable watch) and a component creator for adding your own sensors.
 
-The UI is currently in Turkish; an English UI is on the roadmap. Contributions are welcome, see
-[CONTRIBUTING.md](CONTRIBUTING.md) (in Turkish; feel free to open issues in English).
+The UI follows your VS Code display language: English, or Turkish when VS Code is in Turkish. You can force it with the
+`embeddedStudio.language` setting (`auto`, `en`, `tr`). Generated code comments and the documentation are still in
+Turkish. Contributions are welcome, see [CONTRIBUTING.md](CONTRIBUTING.md) (in Turkish; feel free to open issues in English).
 
 </details>
 

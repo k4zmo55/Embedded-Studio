@@ -10,7 +10,9 @@
     "aktuator",
     "pwm",
     "açı",
-    "aci"
+    "aci",
+    "angle",
+    "actuator"
   ],
   "interface": "pwm",
   "voltage": {
