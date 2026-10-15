@@ -2,3 +2,5 @@ node_modules/
 *.vsix
 generated/
 embedded-studio.json
+__pycache__/
+*.pyc
