@@ -33,6 +33,7 @@ const DEFAULT_BUILD = {
   cflags: '',
   ldflags: '',
   linkerScript: '',
+  stackUsage: true,
   toolchain: { compiler: 'gcc', gccPath: '', llvmPath: '' }
 };
 
@@ -59,6 +60,7 @@ function normalizeBuild(b) {
     cflags: String(s.cflags || '').trim(),
     ldflags: String(s.ldflags || '').trim(),
     linkerScript: String(s.linkerScript || '').trim(),
+    stackUsage: s.stackUsage !== false,
     toolchain: {
       compiler: tc.compiler === 'clang' ? 'clang' : 'gcc',
       gccPath: String(tc.gccPath || '').trim(),
@@ -172,7 +174,7 @@ set(ES_SYSTEM_INCLUDE_DIRS
 ${list([`\${ES_ROOT}/${P.cmsisCore}`, `\${ES_ROOT}/${P.deviceInc}`, ...(framework === 'hal' ? [`\${ES_ROOT}/${P.hal}/Inc`] : []), ...(o.rtos ? [`\${ES_ROOT}/${P.rtos}/include`, `\${ES_ROOT}/${P.rtos}/portable/GCC/${port}`] : [])])})
 set(ES_DEFINES
 ${list(defines.map(qs))})
-set(ES_C_FLAGS -ffunction-sections -fdata-sections -g3${b.cflags ? ' ' + splitFlags(b.cflags).map(qs).join(' ') : ''})
+set(ES_C_FLAGS -ffunction-sections -fdata-sections -g3${b.stackUsage ? ' -fstack-usage $<$<C_COMPILER_ID:GNU>:-fcallgraph-info=su>' : ''}${b.cflags ? ' ' + splitFlags(b.cflags).map(qs).join(' ') : ''})
 set(ES_OPT_FLAGS
   $<$<CONFIG:Debug>:${b.opt.Debug}> $<$<CONFIG:Release>:${b.opt.Release}>
   $<$<CONFIG:MinSizeRel>:${b.opt.MinSizeRel}> $<$<CONFIG:RelWithDebInfo>:${b.opt.RelWithDebInfo}>)

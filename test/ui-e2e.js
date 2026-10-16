@@ -1049,22 +1049,68 @@ async function until(fn, ms = 8000, what = 'koşul') {
     assert.ok(fs.readFileSync(P('CMakeLists.txt'), 'utf8').includes('# benim satirim'), 'USER CODE bloğu korunmalı');
     await cdp.click('#tab-design');
   });
+  await step('Bellek raporu (ES-210): bölgeler, semboller ve kaynağa gitme, dosyalar, bölümler, yığın; kod değişince önceki derlemeye göre fark', async () => {
+    const setValue = (sel, v, ev = 'change') => cdp.eval(`(() => { const e = document.querySelector('${sel}'); e.value = ${JSON.stringify(v)}; e.dispatchEvent(new Event('${ev}')); })()`);
+    await cdp.click('#tab-analyzer');
+    await setValue('#an-config', 'Release');
+    await until(() => cdp.eval(`document.querySelectorAll('#an-regions .an-region').length === 2`), 8000, 'bölgeler');
+    const regions = await cdp.eval(`document.querySelector('#an-regions').textContent`);
+    assert.ok(/FLASH/.test(regions) && /RAM/.test(regions) && /\.text/.test(regions) && /\.bss/.test(regions), regions.slice(0, 300));
+    assert.ok(await cdp.eval(`[...document.querySelectorAll('#an-symbols tr')].some((r) => r.textContent.includes('ucHeap'))`), 'en büyük semboller');
+    // Ada tıklayınca kaynağa gidilir (addr2line)
+    await setValue('#an-q', 'main', 'input');
+    const opened = recorded.opened.length;
+    await cdp.click(`([...document.querySelectorAll('#an-symbols .src-link')].find((a) => a.textContent === 'main'))`);
+    await until(() => recorded.opened.length > opened, 5000, 'main.c açıldı');
+    assert.ok(/main\.c$/.test(recorded.opened[recorded.opened.length - 1].file), JSON.stringify(recorded.opened[recorded.opened.length - 1]));
+    await setValue('#an-q', '', 'input');
+    await cdp.shot('31-bellek-raporu');
+    await cdp.click('#an-tab-files');
+    assert.ok(await cdp.eval(`document.querySelector('#an-files').textContent.includes('Core/Src/main.c')`), 'dosya katkıları');
+    await cdp.click('#an-tab-sections');
+    assert.ok(await cdp.eval(`/\\.data[\\s\\S]*FLASH/.test(document.querySelector('#an-sections').textContent)`), '.data yükleme adresi flash');
+    await cdp.click('#an-tab-stack');
+    await until(() => cdp.eval(`!!document.querySelector('#an-stack')`), 3000, 'yığın tablosu');
+    const stack = await cdp.eval(`document.querySelector('#an-stack').textContent`);
+    assert.ok(/Task_Monitor/.test(stack) && /main/.test(stack) && /→/.test(stack), stack.slice(0, 300));
+    await cdp.shot('32-bellek-yigin');
+    await cdp.click('#an-tab-diff');
+    assert.ok(await cdp.eval(`!!document.querySelector('#an-nodiff')`), 'ilk analizde fark yok');
+    // Kod değişir, yeniden derlenir → main büyür, yeni değişken
+    const mainC = path.join(PROJECT, 'Core/Src/main.c');
+    const orig = fs.readFileSync(mainC, 'utf8');
+    try {
+      fs.writeFileSync(mainC, orig.replace('/* USER CODE BEGIN PreInit */', '/* USER CODE BEGIN PreInit */\n  { static volatile char e2e_pad[512]; for (int i = 0; i < 512; i++) e2e_pad[i] = (char)i; }'));
+      execSync('cmake --build build/release', { cwd: PROJECT, stdio: 'pipe', shell: process.platform === 'win32' ? 'cmd.exe' : undefined });
+      await cdp.click('#an-run');
+      await until(() => cdp.eval(`!!document.querySelector('#an-diff')`), 8000, 'fark tablosu');
+      const diff = await cdp.eval(`document.querySelector('#an-diff').textContent`);
+      assert.ok(/main/.test(diff) && /e2e_pad/.test(diff) && /yeni/.test(diff), diff.slice(0, 300));
+      assert.ok(!/null/.test(await cdp.eval(`document.querySelector('#analyzer').textContent`)), 'ekranda "null" metni');
+      assert.ok(await cdp.eval(`/RAM: [\\s\\S]*\\+/.test(document.querySelector('.an-diffsum').textContent)`), 'RAM büyüdü');
+      await cdp.shot('33-bellek-fark');
+    } finally {
+      fs.writeFileSync(mainC, orig);
+    }
+    await setValue('#an-config', 'Debug');
+    await cdp.click('#tab-design');
+  });
   await step('Çalışma modu: Profesyonel sekme sırası, kısayollar, çizimsiz kartlar; Acemi\'ye dönüş', async () => {
     assert.strictEqual(design().mode, 'beginner', 'sihirbaz varsayılanı Acemi');
     assert.ok(await cdp.eval(`!document.body.classList.contains('mode-pro') && document.querySelector('#mode-badge').textContent === 'Acemi'`));
     const order = () => cdp.eval(`[...document.querySelectorAll('#topbar .tabs button')].filter((b) => !b.hidden).map((b) => b.id.slice(4))`);
-    assert.deepStrictEqual(await order(), ['design', 'clock', 'monitor', 'debug', 'settings']);
+    assert.deepStrictEqual(await order(), ['design', 'clock', 'monitor', 'debug', 'analyzer', 'settings']);
     await cdp.click('#tab-settings');
     await cdp.click(`(document.querySelector('input[name=set-mode][value=pro]').closest('label'))`);
     await until(() => design().mode === 'pro', 4000, 'pro kaydedildi');
     await until(() => cdp.eval(`document.body.classList.contains('mode-pro') && document.querySelector('#debug').classList.contains('active')`), 3000, 'pro: debug ana sekme');
-    assert.deepStrictEqual(await order(), ['debug', 'monitor', 'clock', 'design', 'settings']);
+    assert.deepStrictEqual(await order(), ['debug', 'analyzer', 'monitor', 'clock', 'design', 'settings']);
     assert.strictEqual(await cdp.eval(`document.querySelector('#mode-badge').textContent`), 'Profesyonel');
     await cdp.shot('25-pro-mod');
-    // Alt+3 → moddaki 3. sekme (Clock)
-    await cdp.send('Input.dispatchKeyEvent', { type: 'keyDown', key: '3', code: 'Digit3', windowsVirtualKeyCode: 51, modifiers: 1 });
-    await cdp.send('Input.dispatchKeyEvent', { type: 'keyUp', key: '3', code: 'Digit3', windowsVirtualKeyCode: 51, modifiers: 1 });
-    await until(() => cdp.eval(`document.querySelector('#clock').classList.contains('active')`), 3000, 'Alt+3');
+    // Alt+4 → moddaki 4. sekme (Clock)
+    await cdp.send('Input.dispatchKeyEvent', { type: 'keyDown', key: '4', code: 'Digit4', windowsVirtualKeyCode: 52, modifiers: 1 });
+    await cdp.send('Input.dispatchKeyEvent', { type: 'keyUp', key: '4', code: 'Digit4', windowsVirtualKeyCode: 52, modifiers: 1 });
+    await until(() => cdp.eval(`document.querySelector('#clock').classList.contains('active')`), 3000, 'Alt+4');
     // Pro modda bilgi kartında modül çizimi yok, asistan kapalı başlar
     await cdp.click('#tab-design');
     assert.ok(await cdp.eval(`document.querySelector('#design').classList.contains('dock-closed')`), 'asistan kapalı');
@@ -1276,7 +1322,7 @@ async function until(fn, ms = 8000, what = 'koşul') {
       return [...new Set(words)].filter((w) => !userText.includes(w)).map((w) => `${where}: ${w}`);
     };
     const found = [];
-    for (const tab of ['design', 'clock', 'monitor', 'debug', 'settings']) {
+    for (const tab of ['design', 'clock', 'monitor', 'debug', 'analyzer', 'settings']) {
       await cdp.click(`#tab-${tab}`);
       await sleep(500);
       found.push(...(await turkish(tab)));

@@ -50,6 +50,7 @@ const { readRegion, toIntelHex, checkWrite, simSymbols, MAX_SAVE } = require('./
 const fault = require('./debug/fault');
 const trace = require('./debug/trace');
 const rtos = require('./debug/rtos');
+const A = require('./analyzer');
 const i18n = require('./i18n');
 const { t } = i18n;
 
@@ -577,6 +578,13 @@ class Studio {
         break;
       case 'build':
         await actions.build();
+        break;
+      // ES-210: bellek kullanım raporu
+      case 'analyzer.run':
+        await this.analyzeBuild(m.config);
+        break;
+      case 'analyzer.source':
+        await this.analyzerSource(m);
         break;
       case 'flash':
         await this.flash();
@@ -1310,6 +1318,75 @@ class Studio {
     }
   }
 
+  // ---------------------------------------------------------------- ES-210: Build Analyzer
+  analyzerElf(config) {
+    const b = cm.normalizeBuild(this.design.build);
+    const type = config || b.type;
+    return { type, elf: path.join(this.root, cm.elfRel({ ...this.design, build: { ...this.design.build, type } })) };
+  }
+
+  /** .elf + .map + .su/.ci → bölgeler, bölümler, semboller, dosyalar, yığın; önceki derlemeyle fark */
+  async analyzeBuild(config) {
+    if (!this.root) return this.post({ type: 'analyzer.data', error: t('Önce bir proje açın.') });
+    const { type, elf } = this.analyzerElf(config);
+    try {
+      if (!fs.existsSync(elf)) throw new Error(t('{0} derlemesi yok ({1}). Önce derleyin.', type, path.relative(this.root, elf)));
+      const st = fs.statSync(elf);
+      const parsed = A.readElf(fs.readFileSync(elf));
+      const mapFile = elf.replace(/\.elf$/i, '.map');
+      const map = fs.existsSync(mapFile) ? A.parseMap(fs.readFileSync(mapFile, 'utf8')) : { regions: [], inputs: [] };
+      const dev = this.lib.mcus[this.design.mcuId].device;
+      const regions = map.regions.length ? map.regions : A.defaultRegions(dev.flashKB, dev.ramKB);
+      const usage = A.regionUsage(parsed.sections, regions);
+      const symbols = A.symbolList(parsed, regions);
+      // Geçmiş: ELF değiştiyse şimdiki önceki olur
+      const file = path.join(this.root, STATE_DIR, 'analyzer.json');
+      let hist = {};
+      try { hist = JSON.parse(fs.readFileSync(file, 'utf8')) || {}; } catch { hist = {}; }
+      const h = hist[type] || {};
+      const key = `${st.size}:${Math.round(st.mtimeMs)}`;
+      if (!h.current || h.current.key !== key) {
+        h.previous = h.current || null;
+        h.current = A.snapshot(key, usage, symbols);
+        hist[type] = h;
+        fs.mkdirSync(path.dirname(file), { recursive: true });
+        fs.writeFileSync(file, JSON.stringify(hist) + '\n');
+      }
+      const b = cm.normalizeBuild(this.design.build);
+      this.post({
+        type: 'analyzer.data', config: type, elf: path.relative(this.root, elf).split(path.sep).join('/'), builtAt: st.mtimeMs,
+        regions: usage, sections: A.sectionList(parsed.sections, regions), symbols, files: A.fileList(map.inputs, regions),
+        map: map.regions.length > 0, stack: A.stackFromDir(path.dirname(elf)), stackUsage: b.stackUsage, compiler: b.toolchain.compiler,
+        diff: A.diffSnapshots(h.previous, h.current)
+      });
+    } catch (e) {
+      this.post({ type: 'analyzer.data', config: type, error: e.message });
+    }
+  }
+
+  /** Sembolün kaynağı: fonksiyon için addr2line, değişken için nm -l (ELF değişene kadar önbellekli) */
+  async analyzerSource(m) {
+    if (m.file && m.line) return this.openSource(path.isAbsolute(m.file) ? m.file : path.join(this.root, m.file), m.line);
+    const { elf } = this.analyzerElf(m.config);
+    let loc = null;
+    if (m.kind === 'func') [loc] = await fault.addr2line(elf, [m.addr], cm.gccTool(this.design.build, 'addr2line'));
+    else {
+      const key = `${elf}:${fs.existsSync(elf) ? fs.statSync(elf).mtimeMs : 0}`;
+      if (!this._nmLines || this._nmLines.key !== key) {
+        const out = await new Promise((resolve) => require('child_process').execFile(cm.gccTool(this.design.build, 'nm'), ['-l', '--defined-only', elf], { windowsHide: true, maxBuffer: 1 << 26 }, (e, o) => resolve(e ? '' : o)));
+        const map = new Map();
+        for (const line of out.split(/\r?\n/)) {
+          const x = /^[0-9a-f]+ \w (\S+)\t(.+):(\d+)$/.exec(line);
+          if (x && !map.has(x[1])) map.set(x[1], { file: x[2], line: Number(x[3]) });
+        }
+        this._nmLines = { key, map };
+      }
+      loc = this._nmLines.map.get(m.name) || null;
+    }
+    if (!loc || !loc.file || !loc.line) return this.toast('info', t('{0} için kaynak satırı yok (kütüphaneden ya da debug bilgisi olmadan derlenmiş).', m.name));
+    await this.openSource(path.isAbsolute(loc.file) ? loc.file : path.join(this.root, loc.file), loc.line);
+  }
+
   /** Konsol çıktısını dosyaya kaydet */
   async saveConsole(text, name) {
     const uri = await vscode.window.showSaveDialog({
@@ -1367,7 +1444,7 @@ class Studio {
     const webview = this.panel.webview;
     const media = (f) => webview.asWebviewUri(vscode.Uri.joinPath(this.context.extensionUri, 'media', f));
     const nonce = [...Array(32)].map(() => Math.random().toString(36)[2]).join('');
-    const scripts = ['i18n.js', 'core.js', 'art.js', 'wizard.js', 'design.js', 'creator.js', 'clock.js', 'widgets.js', 'monitor.js', 'rtos.js', 'console.js', 'debug.js', 'settings.js', 'genpreview.js', 'main.js'];
+    const scripts = ['i18n.js', 'core.js', 'art.js', 'wizard.js', 'design.js', 'creator.js', 'clock.js', 'widgets.js', 'monitor.js', 'rtos.js', 'console.js', 'debug.js', 'analyzer.js', 'settings.js', 'genpreview.js', 'main.js'];
     return `<!doctype html>
 <html lang="${i18n.getLanguage()}">
 <head>

@@ -688,3 +688,31 @@ body.mode-pro .note { padding: 3px 8px; }
 .stk.bad .stk-peak, .stk.bad .stk-now { background: var(--err); }
 .rtos-stack { display: flex; flex-direction: column; gap: 6px; max-height: 70vh; overflow-y: auto; }
 .rtos-stack h4 { margin: 10px 0 2px; font-size: 12px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); }
+
+/* ---- Bellek raporu / Build Analyzer (ES-210) ---- */
+#analyzer { grid-template-rows: auto minmax(0, 1fr); }
+.an-bar { display: flex; align-items: center; gap: 8px; padding: 8px 12px; border-bottom: 1px solid var(--border); flex-wrap: wrap; }
+.an-bar select { width: auto; }
+.an-body { overflow-y: auto; min-height: 0; padding-bottom: 16px; }
+.an-regions { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 10px; padding: 10px 12px; }
+.an-region { border: 1px solid var(--border); border-radius: 6px; padding: 8px 10px; }
+.an-region.hot { border-color: var(--err); }
+.an-rhead { display: flex; align-items: baseline; gap: 8px; font-size: 12px; flex-wrap: wrap; }
+.an-rbar { position: relative; height: 12px; margin: 6px 0; border-radius: 3px; background: var(--hover); overflow: hidden; }
+.an-rbar .seg { position: absolute; top: 0; bottom: 0; }
+.an-legend { display: flex; flex-wrap: wrap; gap: 4px 12px; font-size: 11px; color: var(--muted); }
+.an-legend i { display: inline-block; width: 8px; height: 8px; border-radius: 2px; margin-right: 4px; }
+.an-region .c0 { background: var(--accent); } .an-region .c1 { background: #2fa37a; } .an-region .c2 { background: #c78a1f; }
+.an-region .c3 { background: #9a63d1; } .an-region .c4 { background: #d1517a; } .an-region .c5 { background: #6b8796; }
+.an-region .load { background-image: repeating-linear-gradient(45deg, transparent 0 3px, rgba(255,255,255,.35) 3px 5px); }
+.delta.up { color: var(--err); } .delta.down { color: var(--ok); }
+.an-tabs { display: flex; gap: 2px; padding: 0 12px; border-bottom: 1px solid var(--border); }
+.an-ctl { display: flex; align-items: center; gap: 8px; padding: 8px 12px; flex-wrap: wrap; }
+.an-ctl .search { width: 260px; margin: 0; }
+.an-ctl select { width: auto; }
+.an-view { padding: 0 4px; }
+.an-table td, .an-table th { white-space: nowrap; }
+.an-table .an-path { max-width: 520px; overflow: hidden; text-overflow: ellipsis; }
+.an-table tr.warnrow td:first-child { box-shadow: inset 3px 0 0 var(--warn); }
+.an-diffsum { display: flex; flex-wrap: wrap; gap: 4px 18px; padding: 0 12px 8px; font-size: 12px; }
+.an-more { margin: 8px 12px; }

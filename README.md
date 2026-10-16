@@ -231,6 +231,12 @@ Konsol: SWO/ITM `printf` (port seçimi, SWO frekansı), SEGGER RTT okuma/yazma, 
 değişken erişimlerini durdurmadan izleyen SWV data trace. Bare-metal projelerde `es_trace` örnek sürücüsü `printf`'i ITM ve RTT'ye yönlendirir.
 FreeRTOS: görevler (durum, öncelik, yığın kullanımı ve tepe değeri, CPU %), kuyruk/semafor/mutex (sahibi ve bekleyenler), zamanlayıcılar ve heap
 çekirdek yapılarından okunur; yığın taşması ve heap tükenmesi uyarılır; görevin kayıtlı bağlamından call stack çıkarılır.
+
+### Bellek raporu (Build Analyzer)
+
+Derlenmiş `.elf` ve `.map`'ten bölge bazında Flash/RAM kullanımı (bölümlere ayrılmış çubuk), boyuta göre sıralı semboller (ada tıklayınca kaynağa gider),
+dosya ve kütüphane katkıları, bölümler, önceki derlemeye göre değişim (hangi fonksiyon büyüdü) ve `-fstack-usage` / `-fcallgraph-info` ile
+fonksiyon başına en kötü yığın derinliği (en derin çağrı zinciri; özyineleme, dolaylı ve kütüphane çağrıları işaretli). Her derlemeden sonra yenilenir.
 Okuması bayrak temizleyen register'lar (ör. `USART->DR`) sadece hedef durduğunda okunur; çalışan firmware'den veri çalınmaz.
 VS Code debug oturumu başlarken panelin OpenOCD bağlantısı probu kendiliğinden bırakır.
 

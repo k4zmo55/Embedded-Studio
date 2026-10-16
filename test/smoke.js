@@ -1143,6 +1143,102 @@ test('register yazma: alan ekleme, değer ayrıştırma; FPU ve özel register a
     passed++;
     console.log('  ✓ FreeRTOS farkındalıklı debug (ES-209): yapılandırma → TCB/Queue yerleşimi, görev durumu, yığın tepe değeri, CPU %, kuyruk/mutex, zamanlayıcı, uyarılar, call stack');
   }
+  {
+    // ES-210: Build Analyzer — map, ELF, bölge kullanımı, dosyalar, fark, yığın grafiği, derleme bayrakları
+    const A = require('../src/analyzer');
+    const mapText = [
+      'Memory Configuration', '', 'Name             Origin             Length             Attributes',
+      'FLASH            0x08000000         0x00080000         xr', 'RAM              0x20000000         0x00020000         xrw',
+      '*default*        0x00000000         0xffffffff', '', 'Linker script and memory map', '',
+      '.text           0x08000000      0x200', ' .text.main     0x08000000       0x40 CMakeFiles/app.dir/Core/Src/main.c.obj',
+      '                0x08000000                main', ' .text.a_very_long_function_name_here',
+      '                0x08000040       0x80 CMakeFiles/app.dir/Core/Src/board.c.obj', ' *fill*         0x080000c0        0x4 ',
+      ' .text          0x080000c4       0x30 C:/gcc/lib/thumb/libc_nano.a(lib_a-memcpy.o)',
+      ' .text          0x080000f4       0x20 C:/gcc/lib/thumb/libc_nano.a(lib_a-memset.o)',
+      ' .data.counter  0x20000000        0x4 CMakeFiles/app.dir/Core/Src/main.c.obj',
+      ' .bss.buf       0x20000004      0x100 CMakeFiles/app.dir/Core/Src/board.c.obj', ' COMMON         0x20000104       0x10 CMakeFiles/app.dir/Core/Src/main.c.obj'
+    ].join('\n');
+    const map = A.parseMap(mapText);
+    assert.deepStrictEqual(map.regions.map((r) => [r.name, r.length]), [['FLASH', 0x80000], ['RAM', 0x20000]]);
+    assert.deepStrictEqual(map.inputs.map((x) => [x.section, x.size]), [['.text.main', 0x40], ['.text.a_very_long_function_name_here', 0x80], ['.text', 0x30], ['.text', 0x20], ['.data.counter', 4], ['.bss.buf', 0x100], ['COMMON', 0x10]]);
+    const files = A.fileList(map.inputs, map.regions);
+    assert.deepStrictEqual(files.map((f) => [f.name, f.flash, f.ram, f.members]), [['Core/Src/board.c', 0x80, 0x100, 0], ['Core/Src/main.c', 0x44, 0x14, 0], ['libc_nano.a', 0x50, 0, 2]]);
+    // Bölge kullanımı: .data hem RAM'de hem flash'ta (LMA); .bss yalnızca RAM'de
+    const secs = [
+      { name: '.text', type: 1, flags: 6, addr: 0x08000000, lma: 0x08000000, size: 0x200 },
+      { name: '.data', type: 1, flags: 3, addr: 0x20000000, lma: 0x08000200, size: 0x10 },
+      { name: '.bss', type: 8, flags: 3, addr: 0x20000010, lma: 0x08000210, size: 0x100 },
+      { name: '.debug_info', type: 1, flags: 0, addr: 0, lma: 0, size: 999 }
+    ];
+    const ru = A.regionUsage(secs, map.regions);
+    assert.deepStrictEqual(ru.map((r) => [r.name, r.used, r.flash]), [['FLASH', 0x210, true], ['RAM', 0x110, false]]);
+    assert.deepStrictEqual(ru[0].parts, [{ name: '.text', size: 0x200 }, { name: '.data', size: 0x10, load: true }]);
+    assert.deepStrictEqual(A.sectionList(secs, map.regions).map((s) => [s.name, s.kind, s.loadRegion]), [['.text', 'code', ''], ['.data', 'data', 'FLASH'], ['.bss', 'bss', '']]);
+    assert.deepStrictEqual(A.shortFile('C:/x/CMakeFiles/app.dir/__/lib/x.c.obj'), { name: '../lib/x.c', lib: false });
+    // Önceki derlemeye göre fark
+    const s1 = A.snapshot('a', ru, [{ name: 'main', kind: 'func', size: 64 }, { name: 'old', kind: 'func', size: 8 }, { name: 'buf', kind: 'data', size: 256 }]);
+    const s2 = A.snapshot('b', ru.map((r) => ({ ...r, used: r.used + (r.flash ? 100 : 0) })), [{ name: 'main', kind: 'func', size: 160 }, { name: 'buf', kind: 'data', size: 256 }, { name: 'neu', kind: 'data', size: 4 }]);
+    const df = A.diffSnapshots(s1, s2);
+    assert.deepStrictEqual(df.regions.map((r) => [r.name, r.delta]), [['FLASH', 100], ['RAM', 0]]);
+    assert.deepStrictEqual(df.symbols.map((x) => [x.name, x.delta, x.status]), [['main', 96, 'changed'], ['old', -8, 'removed'], ['neu', 4, 'new']]);
+    assert.strictEqual(A.diffSnapshots(null, s2), null);
+    // Yığın: .su ve .ci (static "dosya:ad", weak tanım, özyineleme, dolaylı ve kütüphane çağrısı)
+    assert.deepStrictEqual(A.parseStackUsage('C:/p/main.c:7:5:main\t8\tstatic\nC:/p/x.c:5:5:dyn\t16\tdynamic,bounded\n'), [
+      { file: 'C:/p/main.c', line: 7, name: 'main', bytes: 8, qual: 'static' }, { file: 'C:/p/x.c', line: 5, name: 'dyn', bytes: 16, qual: 'dynamic,bounded' }]);
+    const g1 = A.parseCallgraph(`graph: { title: "a.c"
+node: { title: "a.c:leaf" label: "leaf\\na.c:2:12\\n32 bytes (static)" }
+node: { title: "mid" label: "mid\\na.c:3:5\\n72 bytes (static)" }
+node: { title: "HAL_GetTick" label: "HAL_GetTick\\nhal.h:9:10" shape : ellipse }
+node: { title: "memcpy" label: "memcpy\\nstring.h:1:1" shape : ellipse }
+edge: { sourcename: "mid" targetname: "a.c:leaf" label: "a.c:3:65" }
+edge: { sourcename: "mid" targetname: "HAL_GetTick" label: "a.c:3:70" }
+edge: { sourcename: "mid" targetname: "memcpy" label: "a.c:3:80" }
+node: { title: "rec" label: "rec\\na.c:4:5\\n8 bytes (static)" }
+edge: { sourcename: "rec" targetname: "rec" label: "a.c:4:29" }
+node: { title: "Task_A" label: "Task_A\\na.c:9:6\\n16 bytes (dynamic)" }
+node: { title: "__indirect_call" label: "Indirect Call Placeholder" shape : ellipse }
+edge: { sourcename: "Task_A" targetname: "mid" label: "a.c:9:20" }
+edge: { sourcename: "Task_A" targetname: "rec" label: "a.c:9:30" }
+edge: { sourcename: "Task_A" targetname: "__indirect_call" label: "a.c:9:40" }
+}`);
+    const g2 = A.parseCallgraph('node: { title: "hal.c:HAL_GetTick" label: "HAL_GetTick\\nhal.c:5:17\\n40 bytes (static)" }');
+    assert.deepStrictEqual(g1.nodes[0], { id: 'a.c:leaf', name: 'leaf', file: 'a.c', line: 2, bytes: 32, qual: 'static', external: false });
+    const rep = Object.fromEntries(A.stackReport([g1, g2]).map((f) => [f.name, f]));
+    assert.deepStrictEqual([rep.mid.worst, rep.mid.path, rep.mid.unknown], [112, ['mid', 'HAL_GetTick'], ['memcpy']], 'weak tanım ada göre bulunur');
+    assert.deepStrictEqual([rep.Task_A.worst, rep.Task_A.root, rep.Task_A.recursive, rep.Task_A.indirect, rep.Task_A.dynamic], [128, true, true, true, true]);
+    assert.deepStrictEqual([rep.leaf.root, rep.rec.recursive, rep.HAL_GetTick.root], [false, true, false]);
+    // Derleme bayrakları: varsayılan açık, kapatılabilir; GCC'ye özgü bayrak koşullu
+    const cmB = require('../src/codegen/build');
+    assert.strictEqual(cmB.normalizeBuild({}).stackUsage, true);
+    assert.strictEqual(cmB.normalizeBuild({ stackUsage: false }).stackUsage, false);
+    const gen = (b) => generate({ ...design([inst('led')]), build: b }, lib, assign(design([inst('led')]), lib), computeClock(mcu, mcu.clock.default), {}).files.find((f) => f.path === 'cmake/embedded-studio.cmake').content;
+    assert.ok(gen({}).includes('-fstack-usage $<$<C_COMPILER_ID:GNU>:-fcallgraph-info=su>'));
+    assert.ok(!gen({ stackUsage: false }).includes('-fstack-usage'));
+    // Gerçek derleme varsa: ELF + map bölge kullanımı linker'ın --print-memory-usage değerleriyle aynı; yığın grafiği
+    const bdir = 'C:/Users/mehme/AppData/Local/Temp/es-build/t_hal_rtos/build/debug';
+    const belf = path.join(bdir, 't_hal_rtos.elf');
+    if (fs.existsSync(belf)) {
+      const e = A.readElf(fs.readFileSync(belf));
+      const m = A.parseMap(fs.readFileSync(belf.replace(/\.elf$/, '.map'), 'utf8'));
+      const used = Object.fromEntries(A.regionUsage(e.sections, m.regions).map((r) => [r.name, r.used]));
+      // size -A: RAM adresli bölümlerin toplamı (Berkeley biçimi .init_array'i "data" sayıp RAM'e de ekler)
+      const sizeA = await new Promise((r) => require('child_process').execFile('arm-none-eabi-size', ['-A', belf], (err, out) => r(out)));
+      const ramA = sizeA.split(/\r?\n/).map((l) => l.trim().split(/\s+/)).filter((x) => Number(x[2]) >= 0x20000000).reduce((a, x) => a + Number(x[1]), 0);
+      const size = require('../src/toolchain').parseSize(await new Promise((r) => require('child_process').execFile('arm-none-eabi-size', [belf], (err, out) => r(out))));
+      assert.deepStrictEqual([used.FLASH, used.RAM], [size.flash, ramA], JSON.stringify(used));
+      const syms = A.symbolList(e, m.regions);
+      assert.ok(syms.find((s) => s.name === 'main' && s.kind === 'func' && s.region === 'FLASH') && syms.find((s) => s.name === 'ucHeap' && s.kind === 'data' && s.region === 'RAM'));
+      assert.ok(A.fileList(m.inputs, m.regions).some((f) => f.name === 'Core/Src/main.c'));
+      const st = A.stackFromDir(bdir);
+      if (st) {
+        const main = st.functions.find((f) => f.name === 'main');
+        assert.ok(st.graph && main.root && main.worst > main.own && main.path[0] === 'main', JSON.stringify(main));
+        assert.ok(st.functions.find((f) => f.name === 'Task_Monitor').root, 'görev giriş noktası');
+      }
+    }
+    passed++;
+    console.log('  ✓ Build Analyzer (ES-210): map bölgeleri ve girdiler, ELF section/sembol, bölge kullanımı, dosya katkısı, fark, yığın grafiği, -fstack-usage');
+  }
   const { OpenOcdTarget, freePort } = require('../src/debug/session');
   const port = await freePort();
   assert.ok(port > 0 && port !== 6666, String(port));

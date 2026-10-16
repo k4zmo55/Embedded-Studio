@@ -1,5 +1,16 @@
 # Değişiklik günlüğü
 
+## 0.5.10 (önizleme)
+
+- **Bellek raporu (Build Analyzer) sekmesi:** derleme tipi seçilir (Debug / Release …), derleme bitince rapor kendiliğinden yenilenir.
+- **Bölgeler:** linker script'teki bellek bölgeleri (`.map` → Memory Configuration; yoksa işlemcinin flash/RAM boyutu) için kullanım, yüzde ve boş alan; çubuk bölümlere ayrılır (`.text`, `.rodata`, `.bss` …). `.data` gibi ilk değerleri flash'ta duran bölümler hem RAM'de hem flash'ta (taralı) sayılır. Değerler linker'ın `--print-memory-usage` çıktısıyla aynı (Berkeley `size` `.init_array`'i RAM'e de ekler).
+- **Semboller:** ELF sembol tablosu araç gerektirmeden okunur; fonksiyon / değişken / sabit veri ve bölge süzgeci, arama, boyuta göre sıralı. Ada tıklayınca kaynağa gidilir (fonksiyonlar `addr2line`, değişkenler `nm -l`). **Dosyalar:** her kaynak dosyanın ve kütüphanenin (ör. `libc_nano.a`, nesne sayısıyla) flash ve RAM katkısı. **Bölümler:** adres, yükleme adresi, bölge, tür.
+- **Değişim:** her analizde ELF değiştiyse önceki derlemenin özeti `.embedded-studio/analyzer.json`'da tutulur (derleme tipi başına). Bölge farkları (+/− bayt) ve büyüyen, küçülen, yeni, silinen semboller; sembol tablosunda Δ sütunu.
+- **Yığın:** `-fstack-usage` (.su) ve GCC'nin `-fcallgraph-info=su` (.ci) çağrı grafiği birleştirilerek her fonksiyon için en kötü yığın = kendi çerçevesi + en derin çağrı zinciri; zincir gösterilir. Weak tanımlar (HAL `__weak`) ve static fonksiyonlar doğru eşlenir. Özyineleme, dolaylı çağrı (fonksiyon işaretçisi), değişken boyutlu çerçeve (alloca/VLA) ve kütüphane çağrıları işaretlenir, değer "+" ile alt sınır olarak gösterilir. "Yalnızca giriş noktaları": görevler, kesme işleyicileri, main.
+- **Derleme ayarı:** "Yığın kullanımı analizi" (varsayılan açık) `-fstack-usage` ve (yalnızca GCC'de) `-fcallgraph-info=su` ekler.
+- Pro modda sekme sırası: Debug, Bellek raporu, Monitör, Clock, Tasarım, Ayarlar (Alt+1…6).
+- Testler: birim 68 (map ve uzun ad satırları, bölge/LMA hesabı, dosya katkıları, fark, çağrı grafiği; derlenmiş projede linker değerleriyle karşılaştırma), derleme 54 varyant, arayüz 40 (kaynağa gitme, yığın tablosu, kod değişince fark).
+
 ## 0.5.9 (önizleme)
 
 - **FreeRTOS sekmesi (Debug > Konsol):** çekirdek yapıları GDB'siz, doğrudan hedef belleğinden okunur. TCB, `Queue_t` ve `Timer_t` ofsetleri projenin `FreeRTOSConfig.h`'inden hesaplanır (ad uzunluğu, trace, mutex, run-time stats, TLS, `configRECORD_STACK_HIGH_ADDRESS`…; V10.x ve V11.x, MPU'suz); derlenmiş projede gdb'nin DWARF çıktısıyla doğrulandı. LTO'lu derlemelerdeki `ad.lto_priv.N` sembolleri de bulunur.

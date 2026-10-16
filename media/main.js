@@ -1,7 +1,7 @@
 /* Uygulama iskeleti: üst çubuk, sekmeler, karşılama ekranı ve mesaj yönlendirme. */
 (function () {
   const { h, $, post, state, ui, saveUi, update, icon, t } = ES;
-  const TABS = [['design', t('Tasarım')], ['clock', 'Clock'], ['monitor', t('Monitör')], ['debug', 'Debug'], ['settings', t('Ayarlar')]];
+  const TABS = [['design', t('Tasarım')], ['clock', 'Clock'], ['monitor', t('Monitör')], ['debug', 'Debug'], ['analyzer', t('Bellek raporu')], ['settings', t('Ayarlar')]];
 
   function skeleton() {
     const app = $('app');

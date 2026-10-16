@@ -208,10 +208,10 @@ STM32CubeIDE'deki *Fault Analyzer* eşdeğeri.
 ### ES-210 · Bellek kullanım raporu (Build Analyzer)
 `etiketler: tip:özellik, alan:derleme, öncelik:orta, seviye:hepsi`
 
-- [ ] `.map` / `.elf` analizi: bölge bazında Flash ve RAM kullanımı (yüzde ve bayt)
-- [ ] Bölüm (section) ve sembol listesi, boyuta göre sıralama, kaynağa gitme
-- [ ] Önceki derlemeye göre değişim (hangi fonksiyon büyüdü)
-- [ ] Stack kullanımı tahmini (`-fstack-usage` çıktısı)
+- [x] `.map` / `.elf` analizi: bölge bazında Flash ve RAM kullanımı (yüzde ve bayt)
+- [x] Bölüm (section) ve sembol listesi, boyuta göre sıralama, kaynağa gitme
+- [x] Önceki derlemeye göre değişim (hangi fonksiyon büyüdü)
+- [x] Stack kullanımı tahmini (`-fstack-usage` çıktısı)
 
 ### ES-211 · Seri port terminali (Tera Term benzeri)
 `etiketler: tip:özellik, alan:terminal, öncelik:yüksek, seviye:hepsi`
