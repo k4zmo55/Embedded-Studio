@@ -13,6 +13,7 @@ const fs = require('fs');
 const { spawn, execFile } = require('child_process');
 const { t } = require('../i18n');
 const { familyOf, kernelClock } = require('../codegen/families');
+const { explainFlashError } = require('./flashcmd');
 
 const CORE_REGS = ['r0', 'r1', 'r2', 'r3', 'r4', 'r5', 'r6', 'r7', 'r8', 'r9', 'r10', 'r11', 'r12', 'sp', 'lr', 'pc', 'xPSR'];
 
@@ -89,9 +90,12 @@ class TclClient {
 }
 
 class OpenOcdTarget {
-  /** @param {{ interfaceCfg?: string, targetCfg: string, openocdPath?: string, port?: number, log?: (s: string) => void }} opts */
+  /**
+   * @param {{ interfaceCfg?: string, targetCfg: string, serial?: string, speedKHz?: number, openocdPath?: string, port?: number,
+   *   log?: (s: string) => void, onExit?: (reason: string) => void }} opts  port 0/verilmezse boş bir port seçilir
+   */
   constructor(opts) {
-    this.opts = { interfaceCfg: 'interface/stlink.cfg', openocdPath: 'openocd', port: 6666, log: () => {}, ...opts };
+    this.opts = { interfaceCfg: 'interface/stlink.cfg', openocdPath: 'openocd', port: 0, log: () => {}, onExit: () => {}, ...opts };
     this.proc = null;
     this.tcl = new TclClient();
     this.mode = 'openocd';
@@ -99,34 +103,55 @@ class OpenOcdTarget {
 
   async connect() {
     const o = this.opts;
-    const args = ['-f', o.interfaceCfg, '-f', o.targetCfg, '-c', `tcl_port ${o.port}`, '-c', 'telnet_port disabled', '-c', 'gdb_port disabled'];
-    let log = '';
-    await new Promise((resolve, reject) => {
-      const p = spawn(o.openocdPath, args, { windowsHide: true });
-      this.proc = p;
-      const onText = (d) => {
-        const s = String(d);
-        log += s;
-        o.log(s);
-        // "Listening on port" adaptör açılmadan önce de yazılır; hedef gerçekten algılanınca hazırız.
-        if (/processor detected|Examination succeed/i.test(log) && /Listening on port \d+ for tcl/.test(log)) resolve(undefined);
-        const hata = explainOpenOcd(log);
-        if (hata) reject(new Error(hata));
-      };
-      p.stdout.on('data', onText);
-      p.stderr.on('data', onText);
-      p.on('error', (e) => reject(new Error(t('openocd başlatılamadı ({0}). OpenOCD kurulu ve PATH\'te mi?', e.message))));
-      p.on('exit', (code) => reject(new Error(explainOpenOcd(log) || t('openocd kapandı (kod {0}).', code))));
-      setTimeout(() => reject(new Error(t('openocd 15 sn içinde hazır olmadı.') + '\n' + log.slice(-400))), 15000);
-    });
-    await this.tcl.connect(o.port);
+    // Sabit 6666 başka bir OpenOCD açıkken çakışıyordu
+    const port = o.port || (await freePort());
+    const args = ['-f', o.interfaceCfg, ...(o.serial ? ['-c', `adapter serial ${o.serial}`] : []), '-f', o.targetCfg,
+      ...(o.speedKHz ? ['-c', `adapter speed ${o.speedKHz}`] : []),
+      '-c', `tcl_port ${port}`, '-c', 'telnet_port disabled', '-c', 'gdb_port disabled'];
+    let log = '', ready = false, timer;
+    try {
+      await new Promise((resolve, reject) => {
+        const p = spawn(o.openocdPath, args, { windowsHide: true });
+        this.proc = p;
+        const onText = (d) => {
+          const s = String(d);
+          log += s;
+          o.log(s);
+          // "Listening on port" adaptör açılmadan önce de yazılır; hedef gerçekten algılanınca hazırız.
+          if (!ready && /processor detected|Examination succeed/i.test(log) && /Listening on port \d+ for tcl/.test(log)) { ready = true; resolve(undefined); }
+          const hata = !ready && explainOpenOcd(log);
+          if (hata) reject(new Error(hata));
+        };
+        p.stdout.on('data', onText);
+        p.stderr.on('data', onText);
+        p.on('error', (e) => reject(new Error(t('openocd başlatılamadı ({0}). OpenOCD kurulu ve PATH\'te mi?', e.message))));
+        p.on('exit', (code) => {
+          const why = explainOpenOcd(log) || t('openocd kapandı (kod {0}).', code);
+          // Bağlandıktan sonra kapanırsa (prob çekildi, kart beslemesi gitti) arayüz haberdar olsun
+          if (ready && this.proc === p) { this.proc = null; this.tcl.close(); o.onExit(why); }
+          reject(new Error(why));
+        });
+        timer = setTimeout(() => reject(new Error(t('openocd 15 sn içinde hazır olmadı.') + '\n' + log.slice(-400))), 15000);
+      });
+      await this.tcl.connect(port);
+    } catch (e) {
+      // Bağlanamayınca arkada açık kalan openocd probu kilitliyordu
+      const p = this.proc;
+      this.proc = null;
+      try { p?.kill(); } catch { /* kapandı */ }
+      this.tcl.close();
+      throw e;
+    } finally {
+      clearTimeout(timer);
+    }
   }
 
   async disconnect() {
-    try { await this.tcl.send('resume', 1000); } catch { /* zaten çalışıyor olabilir */ }
+    const p = this.proc;
+    this.proc = null; // onExit tetiklenmesin: kapatan biziz
+    if (p) try { await this.tcl.send('resume', 1000); } catch { /* zaten çalışıyor olabilir */ }
     this.tcl.close();
-    this.proc?.kill();
-    this.proc = null;
+    try { p?.kill(); } catch { /* kapandı */ }
   }
 
   async state() {
@@ -161,13 +186,24 @@ class OpenOcdTarget {
   }
 }
 
-/** Sık görülen openocd hatalarını anlaşılır mesaja çevirir. */
+/** Sık görülen openocd hatalarını anlaşılır mesaja çevirir (yüklemeyle aynı açıklamalar; sadece ST-Link'e özel değil). */
 function explainOpenOcd(log) {
-  if (/open failed|unable to open|no device found|LIBUSB_ERROR/i.test(log)) return t('ST-Link bulunamadı. Programlayıcının takılı olduğundan ve sürücüsünün kurulu olduğundan emin olun.');
-  if (/init mode failed|unable to connect to the target|target voltage may be too low/i.test(log)) return t('ST-Link bulundu ama hedefe bağlanılamadı. SWDIO/SWCLK/GND/3V3 kablolarını ve kartın beslemesini kontrol edin.');
-  if (/couldn't bind|Address already in use/i.test(log)) return t('TCL portu (6666) kullanımda: başka bir openocd açık olabilir.');
+  if (/couldn't bind|Address already in use/i.test(log)) return t('TCL portu kullanımda: başka bir openocd açık olabilir.');
   if (/Can't find interface|Can't find target/i.test(log)) return t('OpenOCD yapılandırma dosyası bulunamadı: {0}', (log.match(/Can't find [^\n]+/) || [''])[0]);
-  return '';
+  return explainFlashError(log) || '';
+}
+
+/** Boş bir TCP portu */
+function freePort() {
+  return new Promise((resolve, reject) => {
+    const srv = net.createServer();
+    srv.unref();
+    srv.on('error', reject);
+    srv.listen(0, '127.0.0.1', () => {
+      const a = srv.address();
+      srv.close(() => resolve(typeof a === 'object' && a ? a.port : 6666));
+    });
+  });
 }
 
 // ------------------------------------------------------------------ Simülasyon
@@ -327,4 +363,4 @@ function elfSymbols(elfPath, nm = 'arm-none-eabi-nm') {
   });
 }
 
-module.exports = { OpenOcdTarget, SimTarget, TclClient, simModel, elfSymbols, explainOpenOcd, CORE_REGS };
+module.exports = { OpenOcdTarget, SimTarget, TclClient, simModel, elfSymbols, explainOpenOcd, freePort, CORE_REGS };

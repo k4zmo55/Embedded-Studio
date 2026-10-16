@@ -1,5 +1,15 @@
 # Değişiklik günlüğü
 
+## 0.5.4 (önizleme)
+
+- **launch.json üretimi:** "Debug Yapılandırması Oluştur" komutu GDB sunucusunu sorar (OpenOCD, ST-LINK GDB server, pyOCD, J-Link) ve üç Cortex-Debug yapılandırması yazar: *Debug* (`main`'de durur), *reset'te dur* (Reset_Handler'da), *attach* (resetlemeden bağlanır). Algılanan prob, birden fazla probda seri numarası, SVD, FreeRTOS farkındalığı (`rtos`) ve SWD hızı eklenir. Derleme görevi `preLaunchTask` olarak bağlanır. Mevcut launch.json/tasks.json yorumlarıyla okunur; kullanıcının yapılandırmaları korunur, bozuk dosyanın üzerine yazılmaz. Kod Üret'in ilk launch.json'u da aynı üç yapılandırma.
+- **Donanım breakpoint sınırı:** etkin breakpoint sayısı çekirdeğin FPB sınırına (M0/M0+: 4, M3/M4: 6, M7/M33: 8) ulaşınca ya da aşınca uyarı.
+- **Hedefi Resetle (Debug)** komutu (Cortex-Debug `reset-device`); çağrı yığını sağ tık menüsünde.
+- **Disassembly listesi:** `objdump -d -S` ile kaynakla karışık liste `build/<tip>/<ad>.lst`. Oturumdaki disassembly görünümü, koşullu breakpoint, hit count, logpoint, step over/into/out ve Run to Cursor VS Code + Cortex-Debug'dan gelir.
+- `embeddedStudio.debug.server` ayarı: F5'in kullandığı GDB sunucusu.
+- **Debug paneli düzeltmeleri:** bağlanamayınca arkada açık kalan openocd kapatılıyor (probu kilitliyordu); sabit TCL portu 6666 yerine boş port; algılanan prob (J-Link, CMSIS-DAP) ve seri numarası kullanılıyor (önceden hep ST-Link); bağlantı koparsa (prob çekildi) panel haberdar oluyor; VS Code debug oturumu başlarken panel probu bırakıyor, oturum açıkken panel OpenOCD'ye bağlanmıyor; hata mesajları yüklemeyle aynı (ST-Link'e özel değil).
+- Testler: birim 60, arayüz 35 (launch.json birleştirme, breakpoint uyarısı, reset isteği). Gerçek kartla uçtan uca debug henüz denenmedi.
+
 ## 0.5.3 (önizleme)
 
 - **Tek tuşla flash:** Flash ve Run artık OpenOCD'yi (ya da STM32_Programmer_CLI'yi) doğrudan çalıştırır. Araç algılanan proba göre seçilir: ST-Link, J-Link ve CMSIS-DAP için OpenOCD (doğru arayüz dosyası, birden fazla probda seri numarası); USB DFU ve UART önyükleyicisi için STM32CubeProgrammer.

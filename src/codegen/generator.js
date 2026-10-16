@@ -16,6 +16,7 @@ const { layout, join } = require('./layout');
 const cm = require('./build');
 const { familyOf } = require('./families');
 const { regDriverFiles } = require('./regdrivers');
+const { launchConfigs, buildTaskLabel } = require('../debug/launch');
 const { cIdent, indent } = bsp;
 
 const GENERATOR_VERSION = 6; // 3: bare-metal sade klasör yapısı; 4: cmake/embedded-studio.cmake + CMakePresets.json; 5: çoklu aile (ES-106); 6: örnek register sürücüleri, H7 .dma_buffer
@@ -422,7 +423,7 @@ ${indent(userBlock('PostInit'))}
   add('CMakePresets.json', cm.cmakePresets(), userCmake ? 'once' : 'generated');
   add(join(P.linkerDir, `${mcu.name}_FLASH.ld`), linkerScript(mcu));
   add('.vscode/tasks.json', tasksJson(name, mcu), 'once');
-  add('.vscode/launch.json', launchJson(name, mcu), 'once');
+  add('.vscode/launch.json', launchJson(design, mcu), 'once');
   add('.vscode/settings.json', JSON.stringify({ 'files.autoSave': 'afterDelay', 'files.autoSaveDelay': 1000, 'cmake.configureOnOpen': false }, null, 2) + '\n', 'once');
   add('.gitignore', 'build/\n.embedded-studio/removed/\n', 'once');
 
@@ -708,7 +709,7 @@ const WIN_SHELL = { options: { shell: { executable: 'cmd.exe', args: ['/d', '/c'
 
 function tasksJson(name, mcu) {
   const build = (type, isDefault) => ({
-    label: `Embedded Studio: Derle${isDefault ? '' : ` (${type})`}`, type: 'shell', command: cm.buildCommand(type), windows: WIN_SHELL,
+    label: buildTaskLabel(type), type: 'shell', command: cm.buildCommand(type), windows: WIN_SHELL,
     group: isDefault ? { kind: 'build', isDefault: true } : 'build', problemMatcher: ['$gcc']
   });
   return JSON.stringify({
@@ -720,20 +721,14 @@ function tasksJson(name, mcu) {
   }, null, 2) + '\n';
 }
 
-function launchJson(name, mcu) {
+/** Debug, reset'te dur ve attach yapılandırmaları (ES-204; "Debug Yapılandırması Oluştur" komutuyla aynı) */
+function launchJson(design, mcu) {
   return JSON.stringify({
     version: '0.2.0',
-    configurations: [{
-      name: 'Debug (Cortex-Debug + OpenOCD)',
-      type: 'cortex-debug',
-      request: 'launch',
-      servertype: 'openocd',
-      cwd: '${workspaceFolder}',
-      executable: `build/debug/${name}.elf`,
-      configFiles: ['interface/stlink.cfg', mcu.device.openocdTarget],
-      runToEntryPoint: 'main',
-      preLaunchTask: 'Embedded Studio: Derle'
-    }]
+    configurations: launchConfigs({
+      project: design.project.name, cwd: '${workspaceFolder}', elf: '${workspaceFolder}/' + cm.elfRel(design),
+      mcuName: mcu.name, targetCfg: mcu.device.openocdTarget, rtos: !!design.rtos, preLaunchTask: buildTaskLabel(cm.normalizeBuild(design.build).type)
+    })
   }, null, 2) + '\n';
 }
 

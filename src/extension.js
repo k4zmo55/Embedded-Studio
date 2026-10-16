@@ -63,7 +63,8 @@ function activate(context) {
   actions = new ProjectActions(currentProject, {
     onState: () => statusBar && statusBar.refresh(),
     onSize: (s) => Studio.current?.post({ type: 'build.size', ...s }),
-    onTask: (name, ok) => Studio.current?.post(ok === null ? { type: 'task.start', name } : { type: 'task.done', name, ok })
+    onTask: (name, ok) => Studio.current?.post(ok === null ? { type: 'task.start', name } : { type: 'task.done', name, ok }),
+    releaseProbe: () => Studio.current?.releaseProbe()
   });
   statusBar = new StatusBar(actions, currentProject);
   const watcher = vscode.workspace.createFileSystemWatcher?.(`**/${DESIGN_FILE}`);
@@ -78,7 +79,19 @@ function activate(context) {
     vscode.commands.registerCommand('embeddedStudio.debug', () => actions.debug()),
     vscode.commands.registerCommand('embeddedStudio.terminal', async () => (await Studio.show(context)).post({ type: 'tab', tab: 'monitor' })),
     vscode.commands.registerCommand('embeddedStudio.probe', () => probeCommand()),
-    vscode.commands.registerCommand('embeddedStudio.flashFile', (uri) => flashFileCommand(uri)));
+    vscode.commands.registerCommand('embeddedStudio.flashFile', (uri) => flashFileCommand(uri)),
+    vscode.commands.registerCommand('embeddedStudio.debugLaunchJson', () => launchJsonCommand()),
+    vscode.commands.registerCommand('embeddedStudio.debugReset', () => actions.debugReset()),
+    vscode.commands.registerCommand('embeddedStudio.disassembly', () => actions.disassembly()));
+
+  // ---- ES-204: donanım breakpoint sınırı (flash'taki koda konan her breakpoint bir FPB karşılaştırıcısı harcar) ----
+  const checkBps = () => {
+    if (!currentProject()) return;
+    actions.checkBreakpoints((vscode.debug.breakpoints || []).map((b) => ({
+      enabled: b.enabled, kind: b.functionName !== undefined ? 'function' : b.location ? 'source' : 'data'
+    })));
+  };
+  if (vscode.debug.onDidChangeBreakpoints) context.subscriptions.push(vscode.debug.onDidChangeBreakpoints(checkBps));
 
   // ---- ES-202: tak/çıkar izleme; debug probu takılınca (debug oturumu yoksa) kart kendiliğinden sorgulanır ----
   let usbWatch = null;
@@ -130,6 +143,15 @@ function currentProject() {
   } catch {
     return null;
   }
+}
+
+/** ES-204: launch.json üret; GDB sunucusu seçilir (OpenOCD varsayılan) */
+async function launchJsonCommand() {
+  const { SERVERS } = require('./debug/launch');
+  const hint = { openocd: t('ST-Link, J-Link, CMSIS-DAP; ek kurulum gerekmez'), stlink: t('STM32CubeIDE / STM32CubeCLT ile gelir'), pyocd: t('pip install pyocd'), jlink: t('SEGGER J-Link yazılımı') };
+  const pick = await vscode.window.showQuickPick(Object.entries(SERVERS).map(([id, s]) => ({ id, label: s.label, description: hint[id] })), { title: t('GDB sunucusu') });
+  if (!pick) return false;
+  return actions.writeLaunchJson(pick.id);
 }
 
 /** ES-203: herhangi bir .elf / .hex / .bin dosyasını seçeneklerle yükle (gezginde sağ tık ya da komut paleti) */
@@ -463,7 +485,7 @@ class Studio {
         await this.connectDebug(m.mode);
         break;
       case 'debug.disconnect':
-        await this.target?.disconnect();
+        await this.target?.disconnect().catch(() => {});
         this.target = null;
         this.post({ type: 'debug.status', connected: false });
         break;
@@ -845,9 +867,28 @@ class Studio {
       if (!this.svdName && !this.peripheralDefs.length) await this.loadSvd(this.design.mcuId !== 'stm32f411ceu6');
       this.target = new SimTarget(simModel(this.design, this.lib, result, clock, this.peripheralDefs));
     } else {
+      // VS Code debug oturumu (Cortex-Debug) probu tutarken ikinci bir OpenOCD açılamaz
+      if (vscode.debug.activeDebugSession?.type === 'cortex-debug') {
+        this.post({ type: 'debug.status', connected: false, error: t('Prob VS Code debug oturumunda kullanılıyor. Önce oturumu durdurun ya da simülasyonla bağlanın.') });
+        return;
+      }
       this.post({ type: 'debug.status', connected: false, connecting: true });
       const out = vscode.window.createOutputChannel ? this.outputChannel() : null;
-      this.target = new OpenOcdTarget({ targetCfg: mcu.device.openocdTarget, log: (s) => out && out.append(s) });
+      // Algılanan prob (J-Link, CMSIS-DAP); birden fazla aynı tür probda seri numarasıyla
+      const probes = actions?.state.probes || [];
+      const probe = probes.find((x) => x.interfaceCfg);
+      const target = new OpenOcdTarget({
+        targetCfg: mcu.device.openocdTarget, interfaceCfg: probe?.interfaceCfg,
+        serial: probe && probes.filter((x) => x.kind === probe.kind).length > 1 ? probe.serial : undefined,
+        speedKHz: vscode.workspace.getConfiguration?.('embeddedStudio').get('flash.speedKHz', 0) || undefined,
+        log: (s) => out && out.append(s),
+        onExit: (why) => {
+          if (this.target !== target) return;
+          this.target = null;
+          this.post({ type: 'debug.status', connected: false, error: why });
+        }
+      });
+      this.target = target;
     }
     try {
       await this.target.connect();
@@ -860,6 +901,14 @@ class Studio {
     if (!this.svdName) await this.loadSvd(this.design.mcuId !== 'stm32f411ceu6');
     else this.postRegs();
     this.post({ type: 'debug.status', connected: true, mode, state: await this.target.state() });
+  }
+
+  /** VS Code debug oturumu başlamadan önce: panelin OpenOCD bağlantısı probu bırakır */
+  async releaseProbe() {
+    if (!this.target || this.target.mode !== 'openocd') return;
+    await this.target.disconnect().catch(() => {});
+    this.target = null;
+    this.post({ type: 'debug.status', connected: false, error: t('Prob VS Code debug oturumuna devredildi; panel bağlantısı kapatıldı.') });
   }
 
   outputChannel() {

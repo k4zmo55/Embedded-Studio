@@ -39,6 +39,7 @@ let onWebviewMessage = null;
 const dialogQueue = [];
 const settings = {};
 const configListeners = [];
+const bpListeners = []; // ES-204: breakpoint değişikliği
 const taskEndListeners = []; // test, görev bitişini (derleme sonrası boyut özeti) elle tetikler
 const uriOf = (p) => ({ fsPath: p, path: p, toString: () => p });
 const vscodeFake = {
@@ -66,6 +67,7 @@ const vscodeFake = {
       onDidDispose: () => {}, reveal() {}
     }),
     showOpenDialog: async () => dialogQueue.shift(),
+    showQuickPick: async (items) => items[0],
     showInformationMessage: async (msg, ...items) => { recorded.info.push(msg); return items.includes('İndir') ? 'İndir' : undefined; },
     showWarningMessage: async (msg, opts, ...items) => { recorded.warn.push(msg); return items[0]; },
     showErrorMessage: async (msg) => { recorded.errors.push(msg); },
@@ -81,7 +83,7 @@ const vscodeFake = {
   ThemeColor: class { constructor(id) { this.id = id; } },
   languages: { getDiagnostics: () => [] },
   extensions: { getExtension: () => ({ id: 'marus25.cortex-debug' }) },
-  debug: { startDebugging: async (folder, cfg) => { recorded.debug.push(cfg); return true; } },
+  debug: { breakpoints: [], activeDebugSession: undefined, onDidChangeBreakpoints: (fn) => { bpListeners.push(fn); return { dispose() {} }; }, startDebugging: async (folder, cfg) => { recorded.debug.push(cfg); return true; } },
   env: { language: 'tr', openExternal: async (u) => recorded.external.push(String(u.toString ? u.toString() : u)) }
 };
 const origResolve = Module._resolveFilename;
@@ -891,7 +893,7 @@ async function until(fn, ms = 8000, what = 'koşul') {
     await until(() => fs.existsSync(P('Core/Src/app.c')), 20000, 'HAL dosyaları');
     await cdp.click('#tab-design');
   });
-  await step('Durum çubuğu (ES-201): Build/Flash/Debug/Run/Terminal/prob; görev bitişi, Debug yapılandırması, prob yokken uyarı', async () => {
+  await step('Durum çubuğu (ES-201): Build/Flash/Debug/Run/Terminal/prob; görev bitişi, Debug yapılandırması, prob yokken uyarı; launch.json, breakpoint sınırı, reset (ES-204)', async () => {
     assert.strictEqual(recorded.context['embeddedStudio.projectOpen'], true, 'bağlam anahtarı');
     const texts = () => statusItems.filter((i) => i.visible).map((i) => i.text);
     for (const w of ['Build', 'Flash', 'Debug', 'Run', 'Terminal']) assert.ok(texts().some((x) => x.includes(w)), `${w} görünür: ${texts()}`);
@@ -940,6 +942,37 @@ async function until(fn, ms = 8000, what = 'koşul') {
     assert.strictEqual(await f, false);
     assert.ok(recorded.output.some((l) => /verify exit"$/.test(l)), 'reset olmadan yükleme komutu');
     assert.ok(recorded.errors.length > errs, 'flash hatası bildirildi');
+    // ES-204: launch.json + tasks.json; kullanıcının yapılandırması ve yorumlu JSON korunur
+    const vsdir = path.join(PROJECT, '.vscode');
+    fs.mkdirSync(vsdir, { recursive: true });
+    fs.writeFileSync(path.join(vsdir, 'launch.json'), '{\n  // benim\n  "version": "0.2.0",\n  "configurations": [ { "name": "Benim", "type": "node", "request": "launch" }, ]\n}\n');
+    assert.strictEqual(await cmds['embeddedStudio.debugLaunchJson'](), true);
+    const launch = JSON.parse(fs.readFileSync(path.join(vsdir, 'launch.json'), 'utf8'));
+    const tasksJson = JSON.parse(fs.readFileSync(path.join(vsdir, 'tasks.json'), 'utf8'));
+    assert.deepStrictEqual(launch.configurations.map((c) => c.type), ['node', 'cortex-debug', 'cortex-debug', 'cortex-debug']);
+    const lc = launch.configurations[1];
+    assert.ok(lc.executable === '${workspaceFolder}/build/debug/demo_proje.elf' && lc.servertype === 'openocd' && lc.runToEntryPoint === 'main', JSON.stringify(lc));
+    assert.strictEqual(tasksJson.tasks[0].label, lc.preLaunchTask, 'preLaunchTask derleme görevine bağlı');
+    assert.ok(/cmake --build build\/debug/.test(tasksJson.tasks[0].command), tasksJson.tasks[0].command);
+    assert.strictEqual(await cmds['embeddedStudio.debugLaunchJson'](), true);
+    assert.strictEqual(JSON.parse(fs.readFileSync(path.join(vsdir, 'launch.json'), 'utf8')).configurations.length, 4, 'ikinci üretimde çoğalmaz');
+    // Donanım breakpoint sınırı: F411 (Cortex-M4) 6
+    let warns = recorded.warn.length;
+    vscodeFake.debug.breakpoints = [...Array(7)].map(() => ({ enabled: true, location: {} }));
+    bpListeners.forEach((fn) => fn());
+    assert.ok(recorded.warn.slice(warns).some((m) => /7 etkin breakpoint.*6 donanım/.test(m)), recorded.warn.slice(warns).join(' | '));
+    warns = recorded.warn.length;
+    bpListeners.forEach((fn) => fn());
+    assert.strictEqual(recorded.warn.length, warns, 'aynı durum için tekrar uyarmaz');
+    vscodeFake.debug.breakpoints = [];
+    bpListeners.forEach((fn) => fn());
+    // Reset: oturum yokken uyarı; Cortex-Debug oturumunda reset-device isteği
+    assert.strictEqual(await cmds['embeddedStudio.debugReset'](), false);
+    const reqs = [];
+    vscodeFake.debug.activeDebugSession = { type: 'cortex-debug', customRequest: async (...a) => reqs.push(a) };
+    assert.strictEqual(await cmds['embeddedStudio.debugReset'](), true);
+    assert.deepStrictEqual(reqs, [['reset-device', 'reset']]);
+    vscodeFake.debug.activeDebugSession = undefined;
     // Terminal → Monitör sekmesi
     await cmds['embeddedStudio.terminal']();
     await until(() => cdp.eval(`document.querySelector('#monitor').classList.contains('active')`), 3000, 'monitör sekmesi');

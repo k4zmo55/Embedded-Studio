@@ -2,7 +2,7 @@
   "name": "embedded-studio",
   "displayName": "Embedded Studio",
   "description": "STM32 için görsel gömülü sistem tasarımı: komponent seçimi, otomatik pin/saat ataması, HAL veya bare-metal + FreeRTOS kod üretimi, canlı monitör ve debug.",
-  "version": "0.5.3",
+  "version": "0.5.4",
   "publisher": "mhmtakfseckin",
   "license": "MIT",
   "repository": {
@@ -103,6 +103,24 @@
         "title": "%command.flashFile%",
         "category": "Embedded Studio",
         "icon": "$(zap)"
+      },
+      {
+        "command": "embeddedStudio.debugLaunchJson",
+        "title": "%command.debugLaunchJson%",
+        "category": "Embedded Studio",
+        "icon": "$(debug-configure)"
+      },
+      {
+        "command": "embeddedStudio.debugReset",
+        "title": "%command.debugReset%",
+        "category": "Embedded Studio",
+        "icon": "$(debug-restart)"
+      },
+      {
+        "command": "embeddedStudio.disassembly",
+        "title": "%command.disassembly%",
+        "category": "Embedded Studio",
+        "icon": "$(file-binary)"
       }
     ],
     "configuration": {
@@ -177,6 +195,25 @@
           "minimum": 0,
           "maximum": 24000,
           "description": "%config.flashSpeed%"
+        },
+        "embeddedStudio.debug.server": {
+          "type": "string",
+          "enum": [
+            "auto",
+            "openocd",
+            "stlink",
+            "pyocd",
+            "jlink"
+          ],
+          "enumDescriptions": [
+            "%config.debugServer.auto%",
+            "OpenOCD",
+            "ST-LINK GDB server (STM32CubeIDE / STM32CubeCLT)",
+            "pyOCD",
+            "SEGGER J-Link GDB server"
+          ],
+          "default": "auto",
+          "description": "%config.debugServer%"
         }
       }
     },
@@ -232,12 +269,31 @@
         {
           "command": "embeddedStudio.flashFile",
           "when": "embeddedStudio.projectOpen"
+        },
+        {
+          "command": "embeddedStudio.debugLaunchJson",
+          "when": "embeddedStudio.projectOpen"
+        },
+        {
+          "command": "embeddedStudio.debugReset",
+          "when": "embeddedStudio.projectOpen && debugType == 'cortex-debug'"
+        },
+        {
+          "command": "embeddedStudio.disassembly",
+          "when": "embeddedStudio.projectOpen"
         }
       ],
       "explorer/context": [
         {
           "command": "embeddedStudio.flashFile",
           "when": "embeddedStudio.projectOpen && resourceExtname =~ /^\\.(elf|hex|bin)$/",
+          "group": "embeddedStudio"
+        }
+      ],
+      "debug/callstack/context": [
+        {
+          "command": "embeddedStudio.debugReset",
+          "when": "debugType == 'cortex-debug'",
           "group": "embeddedStudio"
         }
       ]

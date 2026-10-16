@@ -20,5 +20,10 @@
   "config.flashErase.full": "The whole flash (mass erase)",
   "config.flashVerify": "Verify the flash contents after writing.",
   "config.flashUnderReset": "Connect under reset (hold NRST while connecting). Needed when the firmware puts the MCU to sleep or reuses the SWD pins.",
-  "config.flashSpeed": "SWD clock in kHz (0: tool default). Lower it for long wires or unstable connections."
+  "config.flashSpeed": "SWD clock in kHz (0: tool default). Lower it for long wires or unstable connections.",
+  "command.debugLaunchJson": "Create Debug Configuration (launch.json)…",
+  "command.debugReset": "Reset Target (Debug)",
+  "command.disassembly": "Disassembly Listing (Mixed with Source)",
+  "config.debugServer": "GDB server used by Debug (F5). \"auto\": OpenOCD (works with ST-Link, J-Link and CMSIS-DAP).",
+  "config.debugServer.auto": "OpenOCD"
 }

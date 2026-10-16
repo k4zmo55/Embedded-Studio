@@ -20,5 +20,10 @@
   "config.flashErase.full": "Tüm flash (mass erase)",
   "config.flashVerify": "Yazdıktan sonra flash içeriğini doğrula.",
   "config.flashUnderReset": "Reset altında bağlan (bağlanırken NRST tutulur). Program işlemciyi uyutuyor ya da SWD pinlerini başka işe kullanıyorsa gerekir.",
-  "config.flashSpeed": "SWD saati, kHz (0: aracın varsayılanı). Uzun kablo ya da kararsız bağlantıda düşürün."
+  "config.flashSpeed": "SWD saati, kHz (0: aracın varsayılanı). Uzun kablo ya da kararsız bağlantıda düşürün.",
+  "command.debugLaunchJson": "Debug Yapılandırması Oluştur (launch.json)…",
+  "command.debugReset": "Hedefi Resetle (Debug)",
+  "command.disassembly": "Disassembly Listesi (Kaynakla Karışık)",
+  "config.debugServer": "Debug (F5) için GDB sunucusu. \"auto\": OpenOCD (ST-Link, J-Link ve CMSIS-DAP ile çalışır).",
+  "config.debugServer.auto": "OpenOCD"
 }

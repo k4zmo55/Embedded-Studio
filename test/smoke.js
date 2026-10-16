@@ -499,7 +499,7 @@ Info : [stm32f4x.cpu] Cortex-M4 r0p1 processor detected
 Info : [stm32f4x.cpu] target has 6 breakpoints, 4 watchpoints`);
   assert.deepStrictEqual([ok.ok, ok.probe, ok.firmware, ok.voltage, ok.core], [true, 'ST-Link V2', 'V2J37S7', '3.245270', 'Cortex-M4']);
   const none = parseProbe('Error: open failed\nin procedure \'init\'');
-  assert.ok(!none.ok && /ST-Link bulunamadı/.test(none.error), none.error);
+  assert.ok(!none.ok && /Prob bulunamadı/.test(none.error), none.error);
   const noTarget = parseProbe('Info : STLINK V3J7M2 (API v3)\nInfo : Target voltage: 0.003\nError: init mode failed (unable to connect to the target)');
   assert.ok(!noTarget.ok && noTarget.error && noTarget.voltage === '0.003');
   assert.strictEqual(openocdCmd(lib.mcus.stm32g474ret6, ['program build/debug/a.elf verify exit']), 'openocd -f interface/stlink.cfg -f target/stm32g4x.cfg -c "program build/debug/a.elf verify exit"');
@@ -695,5 +695,71 @@ test('flash çıktısı: ilerleme, istatistik, başarı ölçütü ve hata açı
   assert.strictEqual(fc.explainFlashError('her şey yolunda'), null);
 });
 
-fs.rmSync(root, { recursive: true, force: true });
-console.log(`\nsmoke: ${passed} test geçti`);
+test('debug yapılandırması (ES-204): OpenOCD/ST-LINK/pyOCD/J-Link, reset\'te dur, attach, Cortex-Debug alanları', () => {
+  const L = require('../src/debug/launch');
+  assert.strictEqual(L.partName('STM32F411CEU6'), 'STM32F411CE');
+  assert.strictEqual(L.partName('STM32H743ZIT6'), 'STM32H743ZI');
+  assert.strictEqual(L.partName('STM32F103C8T6'), 'STM32F103C8');
+  const o = { project: 'demo', elf: '${workspaceFolder}/build/debug/demo.elf', cwd: '${workspaceFolder}', mcuName: 'STM32F411CEU6', targetCfg: 'target/stm32f4x.cfg', preLaunchTask: 'Derle' };
+  const [dbg, halt, attach] = L.launchConfigs(o);
+  assert.deepStrictEqual([dbg.type, dbg.request, dbg.servertype, dbg.runToEntryPoint, dbg.preLaunchTask], ['cortex-debug', 'launch', 'openocd', 'main', 'Derle']);
+  assert.deepStrictEqual(dbg.configFiles, ['interface/stlink.cfg', 'target/stm32f4x.cfg']);
+  assert.ok(halt.breakAfterReset && !halt.runToEntryPoint, 'reset\'te dur: main\'e koşmaz');
+  assert.ok(attach.request === 'attach' && !attach.preLaunchTask && !attach.runToEntryPoint && !attach.breakAfterReset, JSON.stringify(attach));
+  assert.strictEqual(new Set([dbg.name, halt.name, attach.name]).size, 3);
+  const jl = L.cortexConfig({ ...o, name: 'x', server: 'jlink', serial: '5001', rtos: true });
+  assert.deepStrictEqual([jl.device, jl.interface, jl.serialNumber, jl.rtos, jl.configFiles], ['STM32F411CE', 'swd', '5001', 'FreeRTOS', undefined]);
+  assert.strictEqual(L.cortexConfig({ ...o, name: 'x', server: 'pyocd' }).targetId, 'stm32f411ce');
+  const st = L.cortexConfig({ ...o, name: 'x', server: 'stlink' });
+  assert.ok(st.servertype === 'stlink' && !st.configFiles && !st.device);
+  const oc = L.cortexConfig({ ...o, name: 'x', interfaceCfg: 'interface/cmsis-dap.cfg', serial: 'ABC', speedKHz: 1000, rtos: true, svd: 's.svd' });
+  assert.deepStrictEqual([oc.configFiles[0], oc.openOCDPreConfigLaunchCommands, oc.openOCDLaunchCommands, oc.rtos, oc.svdFile], ['interface/cmsis-dap.cfg', ['adapter serial ABC'], ['adapter speed 1000'], 'auto', 's.svd']);
+  assert.ok(Object.values(oc).every((v) => v !== undefined), 'tanımsız alan yazılmaz');
+});
+test('launch.json/tasks.json birleştirme: kullanıcı yapılandırmaları korunur, JSONC okunur, bozuk dosyaya yazılmaz', () => {
+  const L = require('../src/debug/launch');
+  const cur = `{
+  // kullanıcının yorumu
+  "version": "0.2.0",
+  "configurations": [
+    { "name": "Benim", "type": "cppdbg", "url": "http://x//y", }, /* blok */
+    { "name": "Debug: demo (OpenOCD)", "type": "eski" },
+  ],
+}`;
+  assert.ok(L.parseJsonc(cur).configurations[0].url === 'http://x//y', 'dizgedeki // yorum sayılmaz');
+  const m = L.mergeJsonList(cur, 'configurations', [{ name: 'Debug: demo (OpenOCD)', type: 'cortex-debug' }, { name: 'Yeni', type: 'cortex-debug' }], '0.2.0');
+  const doc = JSON.parse(m.text);
+  assert.deepStrictEqual(doc.configurations.map((c) => [c.name, c.type]), [['Benim', 'cppdbg'], ['Debug: demo (OpenOCD)', 'cortex-debug'], ['Yeni', 'cortex-debug']]);
+  assert.deepStrictEqual([m.added, m.replaced, doc.version], [1, 1, '0.2.0']);
+  assert.strictEqual(JSON.parse(L.mergeJsonList('', 'tasks', [L.buildTask('Derle', 'cmake --build build/debug')], '2.0.0').text).version, '2.0.0');
+  assert.strictEqual(L.mergeJsonList('{ "configurations": [ ', 'configurations', [], '0.2.0'), null);
+  const task = L.buildTask('Derle', 'a && b');
+  assert.ok(task.problemMatcher[0] === '$gcc' && task.windows.options.shell.executable === 'cmd.exe', 'Windows: cmd.exe');
+});
+test('donanım breakpoint sınırı: çekirdeğe göre, devre dışı ve veri breakpoint\'leri sayılmaz', () => {
+  const L = require('../src/debug/launch');
+  const bp = (n, extra = []) => [...Array(n)].map(() => ({ enabled: true, kind: 'source' })).concat(extra);
+  assert.deepStrictEqual(L.breakpointUsage(bp(3), 'cortex-m0plus'), { used: 3, limit: 4, level: 'ok' });
+  assert.strictEqual(L.breakpointUsage(bp(4), 'cortex-m0').level, 'full');
+  assert.strictEqual(L.breakpointUsage(bp(7), 'cortex-m4').level, 'over');
+  assert.strictEqual(L.breakpointUsage(bp(6, [{ enabled: false, kind: 'source' }, { enabled: true, kind: 'data' }]), 'cortex-m4').level, 'full');
+  assert.strictEqual(L.breakpointUsage(bp(7), 'cortex-m7').level, 'ok');
+  assert.deepStrictEqual(L.disassemblyArgs('a.elf').slice(0, 3), ['-d', '-S', '-C']);
+  // Her ailenin çekirdeği tabloda
+  const { FAMILIES } = require('../src/codegen/families');
+  if (FAMILIES) for (const f of Object.values(FAMILIES)) assert.ok(L.HW_BREAKPOINTS[f.core], f.core);
+});
+(async () => {
+  // Asenkron testler
+  const { OpenOcdTarget, freePort } = require('../src/debug/session');
+  const port = await freePort();
+  assert.ok(port > 0 && port !== 6666, String(port));
+  const tg = new OpenOcdTarget({ targetCfg: 'target/stm32f4x.cfg', openocdPath: 'olmayan-openocd-xyz' });
+  await assert.rejects(() => tg.connect(), /başlatılamadı|olmayan/);
+  assert.strictEqual(tg.proc, null, 'süreç bırakılmadı');
+  passed++;
+  console.log('  ✓ debug paneli oturumu: boş port seçilir; bağlanamayınca openocd kapatılır');
+
+  fs.rmSync(root, { recursive: true, force: true });
+  console.log(`\nsmoke: ${passed} test geçti`);
+})().catch((e) => { console.error(e); process.exit(1); });

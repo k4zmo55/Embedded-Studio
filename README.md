@@ -223,9 +223,23 @@ Kısayollar sadece Embedded Studio projesinde ve debug oturumu dışında geçer
 
 <p align="center"><img src="docs/images/debug.png" width="900" alt="Debug sekmesi"></p>
 
-Simülasyon ya da **OpenOCD + ST-Link**: durdur, devam, adım, reset; core register'lar ve xPSR bayrakları; bit alanlarıyla
+Simülasyon ya da **OpenOCD** (algılanan prob: ST-Link, J-Link, CMSIS-DAP): durdur, devam, adım, reset; core register'lar ve xPSR bayrakları; bit alanlarıyla
 çevre birimi register'ları (yerleşik tanımlar ya da tam CMSIS-SVD); bellek görüntüleyici; ELF'ten değişken izleme.
 Okuması bayrak temizleyen register'lar (ör. `USART->DR`) sadece hedef durduğunda okunur; çalışan firmware'den veri çalınmaz.
+VS Code debug oturumu başlarken panelin OpenOCD bağlantısı probu kendiliğinden bırakır.
+
+**VS Code'un kendi debug arayüzü** (Cortex-Debug ile): breakpoint, koşullu breakpoint, hit count, logpoint; step over / into / out,
+Run to Cursor; call stack, değişkenler, watch; **Open Disassembly View** ile kaynakla karışık disassembly ve komut komut adımlama.
+
+| Komut | Ne yapar |
+|---|---|
+| **Debug Yapılandırması Oluştur (launch.json)** | GDB sunucusu seçilir (OpenOCD, ST-LINK GDB server, pyOCD, J-Link). Üç yapılandırma: *Debug* (`main`'de durur), *reset'te dur* (Reset_Handler'da durur), *attach* (çalışan karta resetlemeden bağlanır). Derleme görevi `preLaunchTask` olarak bağlanır; kendi yapılandırmalarınız ve yorumlarınız korunur |
+| **Hedefi Resetle (Debug)** | Oturum açıkken hedefi resetler (çağrı yığını sağ tık menüsünde de var) |
+| **Disassembly Listesi (Kaynakla Karışık)** | `arm-none-eabi-objdump -d -S` çıktısı `build/<tip>/<ad>.lst` dosyasına yazılır ve açılır |
+
+**Donanım breakpoint sınırı:** flash'taki koda konan her breakpoint bir FPB karşılaştırıcısı harcar (Cortex-M0/M0+: 4, M3/M4: 6,
+M7/M33: 8). Etkin breakpoint sayısı sınıra ulaşınca ya da aşınca uyarılır. `embeddedStudio.debug.server` ayarı F5'in kullandığı
+sunucuyu seçer (varsayılan OpenOCD).
 
 ## 🔌 Desteklenenler
 

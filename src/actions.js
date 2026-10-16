@@ -6,7 +6,7 @@
  *  build : CMake + Ninja görevi; bitince gcc hata/uyarı sayısı (problem matcher tanılamaları) ve boyut özeti
  *  flash : derle, sonra OpenOCD ile yükle + doğrula; hedef durdurulmuş kalır
  *  run   : derle, yükle ve çalıştır (reset), debugger olmadan
- *  debug : derle, Cortex-Debug ile başlat, main'de dur
+ *  debug : derle, Cortex-Debug ile başlat, main'de dur (launch.json üretimi, breakpoint sınırı, reset, disassembly: ES-204)
  *  probe : OpenOCD ile bir kez bağlanıp prob/hedef bilgisini oku (sürekli algılama ES-202)
  */
 const vscode = require('vscode');
@@ -20,6 +20,8 @@ const { runFlash, flashSettings, resultText } = require('./flasher');
 const { detectTools } = require('./debug/tools');
 const { classify, listUsb } = require('./debug/usb');
 const { readCommands, decodeTarget, matchesProject } = require('./debug/stm32id');
+const { cortexConfig, launchConfigs, mergeJsonList, buildTask, buildTaskLabel, breakpointUsage, disassemblyArgs, SERVERS } = require('./debug/launch');
+const { familyOf } = require('./codegen/families');
 const { t } = require('./i18n');
 
 const SOURCE = 'Embedded Studio';
@@ -211,36 +213,142 @@ class ProjectActions {
     return this.flash({ run: true });
   }
 
-  /** Cortex-Debug yapılandırması (launch.json'a gerek yok) */
-  debugConfig(p) {
+  /** Debug yapılandırması girdileri: algılanan prob, seçilen GDB sunucusu, SVD, araç zinciri, RTOS */
+  debugInputs(p, opts = {}) {
     const mcu = p.lib.mcus[p.design.mcuId];
     const svd = path.join(p.root, '.embedded-studio', `${mcu.name}.svd`);
+    const probes = this.state.probes || [];
+    const probe = probes.find((x) => x.interfaceCfg);
+    const multiple = probe && probes.filter((x) => x.kind === probe.kind).length > 1;
+    let server = opts.server || vscode.workspace.getConfiguration?.('embeddedStudio').get('debug.server', 'auto') || 'auto';
+    // auto: J-Link probunda J-Link GDB sunucusu da olur ama OpenOCD her üç prob türünde çalışır
+    if (server === 'auto') server = 'openocd';
+    const elf = path.join(p.root, cm.elfRel(p.design));
+    const rel = opts.relative ? (f) => '${workspaceFolder}/' + path.relative(p.root, f).replace(/\\/g, '/') : (f) => f;
     return {
-      name: `Embedded Studio: ${p.design.project.name}`,
-      type: 'cortex-debug',
-      request: 'launch',
-      servertype: 'openocd',
-      cwd: p.root,
-      executable: path.join(p.root, cm.elfRel(p.design)),
-      // Algılanan probun arayüzü (J-Link, CMSIS-DAP); bilinmiyorsa ST-Link
-      configFiles: [((this.state.probes || []).find((x) => x.interfaceCfg) || {}).interfaceCfg || 'interface/stlink.cfg', mcu.device.openocdTarget],
-      runToEntryPoint: 'main',
-      ...(fs.existsSync(svd) ? { svdFile: svd } : {}),
-      armToolchainPath: p.design.build.toolchain.gccPath || undefined
+      project: p.design.project.name, server, cwd: opts.relative ? '${workspaceFolder}' : p.root, elf: rel(elf),
+      mcuName: mcu.name, targetCfg: mcu.device.openocdTarget, interfaceCfg: probe?.interfaceCfg,
+      serial: multiple ? probe.serial : undefined, svd: fs.existsSync(svd) ? rel(svd) : undefined,
+      toolchainPath: p.design.build.toolchain?.gccPath || undefined, rtos: !!p.design.rtos,
+      speedKHz: flashSettings().speedKHz || undefined
     };
+  }
+
+  /** F5 ile başlatılan Cortex-Debug yapılandırması (launch.json'a gerek yok) */
+  debugConfig(p) {
+    return cortexConfig({ ...this.debugInputs(p), name: `Embedded Studio: ${p.design.project.name}` });
+  }
+
+  /** Cortex-Debug kurulu mu; değilse kurmayı önerir */
+  async ensureCortexDebug() {
+    if (vscode.extensions.getExtension(CORTEX_DEBUG)) return true;
+    const install = t('Cortex-Debug\'u kur');
+    const c = await vscode.window.showWarningMessage(t('Debug için Cortex-Debug eklentisi gerekli (OpenOCD + GDB ile çalışır).'), install);
+    if (c === install) await vscode.commands.executeCommand('workbench.extensions.installExtension', CORTEX_DEBUG);
+    return false;
   }
 
   async debug() {
     const p = this.project();
     if (!p || this.state.running) return false;
-    if (!vscode.extensions.getExtension(CORTEX_DEBUG)) {
-      const install = t('Cortex-Debug\'u kur');
-      const c = await vscode.window.showWarningMessage(t('Debug için Cortex-Debug eklentisi gerekli (OpenOCD + GDB ile çalışır).'), install);
-      if (c === install) await vscode.commands.executeCommand('workbench.extensions.installExtension', CORTEX_DEBUG);
+    if (!(await this.ensureCortexDebug())) return false;
+    if (!(await this.build({ quiet: true }))) return false;
+    // Tasarımcının Debug sekmesindeki OpenOCD oturumu probu tutuyorsa önce kapat (iki OpenOCD aynı probu açamaz)
+    await this.hooks.releaseProbe?.();
+    return vscode.debug.startDebugging(vscode.workspace.workspaceFolders?.[0], this.debugConfig(p));
+  }
+
+  /**
+   * ES-204: .vscode/launch.json (Debug, reset'te dur, attach) ve tasks.json (preLaunchTask derleme görevi) üretir.
+   * Kullanıcının kendi yapılandırmaları korunur; aynı adlı olanlar güncellenir.
+   */
+  async writeLaunchJson(server) {
+    const p = this.project();
+    if (!p) return false;
+    // VS Code launch.json'u çalışma alanı klasöründen okur; proje kökü o klasörse yollar ${workspaceFolder} ile yazılır
+    const ws = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+    const same = !!ws && path.resolve(ws) === path.resolve(p.root);
+    const dir = path.join(ws || p.root, '.vscode');
+    const type = cm.normalizeBuild(p.design.build).type;
+    const taskLabel = buildTaskLabel(type);
+    const inputs = this.debugInputs(p, { server, relative: same });
+    const files = [
+      ['launch.json', 'configurations', launchConfigs({ ...inputs, preLaunchTask: taskLabel }), '0.2.0', {}],
+      // Kod üreticinin yazdığı aynı adlı derleme görevi varsa korunur
+      ['tasks.json', 'tasks', [buildTask(taskLabel, cm.buildCommand(type), same ? undefined : p.root)], '2.0.0', { keep: true }]
+    ];
+    const out = [];
+    for (const [name, key, items, version, opt] of files) {
+      const f = path.join(dir, name);
+      const cur = fs.existsSync(f) ? fs.readFileSync(f, 'utf8') : '';
+      const merged = mergeJsonList(cur, key, items, version, opt);
+      if (!merged) {
+        this.info('error', t('{0} okunamadı (JSON hatası). Dosyayı düzeltin ya da silin; üzerine yazılmadı.', path.join('.vscode', name)));
+        return false;
+      }
+      out.push([f, merged]);
+    }
+    fs.mkdirSync(dir, { recursive: true });
+    for (const [f, m] of out) fs.writeFileSync(f, m.text);
+    const doc = await vscode.workspace.openTextDocument(out[0][0]);
+    await vscode.window.showTextDocument(doc);
+    this.info('info', t('launch.json hazır: {0} yapılandırma ({1}). Çalıştır ve Debug görünümünden seçip F5 ile başlatın.', 3, SERVERS[inputs.server].label));
+    await this.ensureCortexDebug();
+    return true;
+  }
+
+  /** Breakpoint sayısı donanım sınırını aşarsa bir kez uyar (VS Code breakpoint'leri değişince çağrılır) */
+  checkBreakpoints(bps) {
+    const p = this.getProject();
+    if (!p) return null;
+    const mcu = p.lib.mcus[p.design.mcuId];
+    const core = familyOf(mcu).core;
+    const u = breakpointUsage(bps, core);
+    const key = u.level === 'ok' ? '' : `${u.level}:${u.used}`;
+    if (key && key !== this.lastBpWarning) {
+      this.info('warn', u.level === 'over'
+        ? t('{0} etkin breakpoint var, {1} çekirdeğinde sadece {2} donanım breakpoint\'i bulunur. Flash\'taki koda fazlası konamaz; bazı breakpoint\'leri kapatın.', u.used, core, u.limit)
+        : t('Donanım breakpoint\'lerinin hepsi kullanımda ({0}/{1}). Adım adım çalıştırma ve "Run to Cursor" geçici olarak bir tane daha ister; birini kapatın.', u.used, u.limit));
+    }
+    this.lastBpWarning = key;
+    return u;
+  }
+
+  /** Debug oturumunda hedefi resetle. Cortex-Debug: "reset'te dur" yapılandırmasında Reset_Handler'da, değilse main'de durur. */
+  async debugReset() {
+    const s = vscode.debug.activeDebugSession;
+    if (!s || s.type !== 'cortex-debug') {
+      this.info('warn', t('Etkin bir Cortex-Debug oturumu yok. Önce Debug (F5) ile başlatın.'));
       return false;
     }
-    if (!(await this.build({ quiet: true }))) return false;
-    return vscode.debug.startDebugging(vscode.workspace.workspaceFolders?.[0], this.debugConfig(p));
+    await s.customRequest('reset-device', 'reset');
+    return true;
+  }
+
+  /** ES-204: kaynakla karışık disassembly listesi (arm-none-eabi-objdump -d -S), build/<tip>/<ad>.lst */
+  async disassembly() {
+    const p = this.project();
+    if (!p) return null;
+    const elf = path.join(p.root, cm.elfRel(p.design));
+    if (!fs.existsSync(elf) && !(await this.build({ quiet: true }))) return null;
+    const lst = elf.replace(/\.elf$/, '.lst');
+    const objdump = cm.gccTool(p.design.build, 'objdump');
+    const text = await new Promise((resolve) => {
+      let o = '', e = '';
+      const proc = spawn(objdump, disassemblyArgs(elf), { cwd: p.root, windowsHide: true });
+      proc.stdout.on('data', (d) => (o += d));
+      proc.stderr.on('data', (d) => (e += d));
+      proc.on('error', (x) => resolve({ error: x.message }));
+      proc.on('exit', (code) => resolve(code === 0 ? { text: o } : { error: e.trim() || String(code) }));
+    });
+    if (text.error) {
+      this.info('error', t('{0} çalıştırılamadı: {1}', path.basename(objdump), text.error));
+      return null;
+    }
+    fs.writeFileSync(lst, text.text);
+    const doc = await vscode.workspace.openTextDocument(lst);
+    await vscode.window.showTextDocument(doc, { preview: false });
+    return lst;
   }
 
   /** USB'deki problar (sorgu yapmadan; tak/çıkar izleyicisi çağırır) */
