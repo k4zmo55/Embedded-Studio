@@ -1,5 +1,17 @@
 # Değişiklik günlüğü
 
+## 0.5.5 (önizleme)
+
+- **SVD tabanlı çevre birimi ağacı:** çevre birimleri SVD gruplarına göre (TIM, USART, GPIO…) açılır-kapanır ağaçta; arama ad ve grupta. Projede kullanılanlar üstte.
+- **SVD ayrıştırıcı genişletildi:** bit alanı enum değerleri, erişim türü (salt okunur / salt yazılır / bir kez yazılır; alan > register > çevre birimi kalıtımı), reset değeri, register boyutu, register `derivedFrom`, `dim` dizileri ve cluster'lar. İndirilebilen 15 SVD'nin hepsi ayrıştırılarak denendi.
+- **Değerler:** alanlarda enum adı ve açıklaması; değişen bit alanları da vurgulanıyor; salt yazılır register'lar okunmuyor.
+- **Register ve bit alanı yazma:** değere çift tıklayınca yazılır (`0x`, `0b`, ondalık). Bit alanları onay kutusu, enum listesi ya da değerle, okuyup değiştirip yazarak güncellenir; salt okunurlar düzenlenemez; değer alana sığmazsa hata. OpenOCD'de `write_memory` (8/16/32 bit); simülasyonda modele işlenir.
+- **Çekirdek register'ları:** R0–R15, xPSR (istisna/IRQ numarası) yanında MSP/PSP (etkin olan işaretli), PRIMASK, BASEPRI, FAULTMASK (M0/M0+'da yok), CONTROL çözümlü (ayrıcalık, SP seçimi, FPCA); FPU'lu işlemcilerde s0–s31 (float değeriyle) ve FPSCR.
+- **Sabitlenenler (favori register'lar):** ☆ ile farklı çevre birimlerinden register'lar tek görünümde; `.embedded-studio/debug.json` dosyasında işlemciye göre saklanır.
+- Büyük SVD'ler (U575'te 7 MB tanım) webview'a tek seferde gönderilmiyor: liste önce, register tanımları seçilince.
+- Debug paneli prob seçimi "OpenOCD (bağlı prob)" oldu (ST-Link'e özel değil).
+- Testler: birim 63 (sentetik SVD'de dizi/cluster/kalıtım/enum, alan ekleme, FPU ayrıştırma, simülasyonda yazma), arayüz 35 (ağaç, register ve alan yazma, favori, MSP/CONTROL/FPU). Gerçek kartta register yazma henüz denenmedi.
+
 ## 0.5.4 (önizleme)
 
 - **launch.json üretimi:** "Debug Yapılandırması Oluştur" komutu GDB sunucusunu sorar (OpenOCD, ST-LINK GDB server, pyOCD, J-Link) ve üç Cortex-Debug yapılandırması yazar: *Debug* (`main`'de durur), *reset'te dur* (Reset_Handler'da), *attach* (resetlemeden bağlanır). Algılanan prob, birden fazla probda seri numarası, SVD, FreeRTOS farkındalığı (`rtos`) ve SWD hızı eklenir. Derleme görevi `preLaunchTask` olarak bağlanır. Mevcut launch.json/tasks.json yorumlarıyla okunur; kullanıcının yapılandırmaları korunur, bozuk dosyanın üzerine yazılmaz. Kod Üret'in ilk launch.json'u da aynı üç yapılandırma.

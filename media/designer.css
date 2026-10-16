@@ -452,6 +452,19 @@ table.regs tr.reg { cursor: pointer; }
 table.regs tr.reg:hover { background: var(--hover); }
 table.regs tr.reg.changed .val { color: var(--warn); font-weight: 600; }
 table.regs tr.field-row td { background: color-mix(in srgb, var(--fg) 3%, transparent); font-size: 11px; }
+table.regs tr.field-row.changed td:nth-child(3) { color: var(--warn); font-weight: 600; }
+table.regs td.editable { cursor: text; }
+table.regs td.editable:hover { outline: 1px dashed var(--border); outline-offset: -2px; }
+table.regs input.tiny, table.regs select.tiny { width: 120px; padding: 1px 4px; font-size: 11px; }
+table.regs .check { display: inline-flex; align-items: center; gap: 4px; }
+.acc { font-size: 9px; margin-left: 5px; padding: 0 3px; border-radius: 3px; border: 1px solid var(--border); color: var(--muted); vertical-align: middle; }
+.star { background: none; border: 0; padding: 0 3px 0 0; color: var(--muted); cursor: pointer; font-size: 12px; line-height: 1; opacity: 0.35; }
+tr.reg:hover .star, .star.on { opacity: 1; }
+.star.on { color: var(--warn); }
+.p-group.tree { display: flex; align-items: center; gap: 4px; cursor: pointer; padding: 5px 6px 2px; }
+.p-group.tree:hover { color: var(--fg); }
+.p-group.tree .hint { margin-left: auto; text-transform: none; }
+.p-item.fav { color: var(--warn); }
 table.regs td.desc { max-width: 280px; }
 table.regs .val { white-space: nowrap; }
 table.regs.core td:first-child { width: 44px; }

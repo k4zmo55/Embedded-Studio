@@ -642,18 +642,47 @@ async function until(fn, ms = 8000, what = 'koşul') {
     await cdp.shot('15-monitor-son');
     await cdp.click('#mon-toggle');
   });
-  await step('Debug (simülasyon): register, bit alanları, durdur, core, bellek, ELF değişkeni', async () => {
+  await step('Debug (simülasyon): register, bit alanları, durdur, core, bellek, ELF değişkeni; SVD ağacı, yazma, favori, MSP/CONTROL/FPU (ES-205)', async () => {
     scene('debug');
     await cdp.click('#tab-debug');
     await cdp.click('#dbg-conn');
     await until(() => cdp.eval(`document.querySelector('#dbg-state').textContent === 'ÇALIŞIYOR'`), 5000, 'bağlantı');
     await until(() => cdp.eval(`document.querySelectorAll('table.regs tr.reg').length > 3 && [...document.querySelectorAll('table.regs tr.reg .val')].some((e) => e.textContent.startsWith('0x'))`), 5000, 'register değerleri');
+    // ES-205: SVD grupları ağaç; GPIOB projede kullanılmıyorsa GPIO grubu açılır
+    await cdp.eval(`(() => { if (![...document.querySelectorAll('.p-item')].some((e) => e.textContent.startsWith('GPIOB'))) [...document.querySelectorAll('.p-group.tree')].find((e) => e.textContent.startsWith('▸GPIO')).click(); })()`);
     await cdp.click(`([...document.querySelectorAll('.p-item')].find((e) => e.textContent.startsWith('GPIOB')))`);
     await sleep(800);
     await cdp.click(`([...document.querySelectorAll('tr.reg')].find((e) => e.textContent.includes('MODER')))`);
     await until(() => cdp.eval(`document.querySelectorAll('tr.field-row').length === 16`), 3000, 'bit alanları');
     await cdp.click('#dbg-halt');
-    await until(() => cdp.eval(`document.querySelector('#dbg-state').textContent === 'DURDU' && document.querySelectorAll('table.regs.core tr').length === 17`), 4000, 'core register');
+    await until(() => cdp.eval(`document.querySelector('#dbg-state').textContent === 'DURDU' && document.querySelector('table.regs.core').rows.length === 17`), 4000, 'core register');
+    // Çekirdek: MSP/PSP, PRIMASK…, CONTROL; F411'de FPU (s0–s31)
+    await until(() => cdp.eval(`(() => { const t = [...document.querySelectorAll('table.regs.core')][1]; return !!t && /MSP0x2001FFB0/.test(t.textContent) && /CONTROL0x00000000/.test(t.textContent) && /BASEPRI/.test(t.textContent); })()`), 3000, 'özel register\'lar');
+    await cdp.click(`([...document.querySelectorAll('#dbg-core .p-group.tree')].find((e) => e.textContent.includes('FPU')))`);
+    await until(() => cdp.eval(`/s31/.test(document.querySelector('#dbg-core').textContent) && /1\\.5/.test(document.querySelector('#dbg-core').textContent)`), 2000, 'FPU register\'ları');
+    // Register yazma: ODR'ye çift tıkla, değer gir
+    const odrVal = `[...document.querySelectorAll('tr.reg')].find((e) => /^[☆★]?.?ODR/.test(e.querySelector('td').textContent.replace(/[▸▾]/g, ''))).querySelector('td.val')`;
+    await cdp.eval(`${odrVal}.dispatchEvent(new MouseEvent('dblclick', { bubbles: true }))`);
+    await until(() => cdp.eval(`!!document.querySelector('#dbg-regs input.tiny')`), 2000, 'düzenleyici');
+    await cdp.eval(`(() => { const i = document.querySelector('#dbg-regs input.tiny'); i.value = '0x1234'; i.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true })); })()`);
+    await until(() => cdp.eval(`${odrVal}.textContent === '0x00001234'`), 3000, 'yazılan ODR değeri');
+    // Bit alanı: ODR satırını aç, ODR0 kutusunu işaretle → 0x1235
+    await cdp.eval(`${odrVal}.parentElement.click()`);
+    await until(() => cdp.eval(`[...document.querySelectorAll('tr.field-row')].some((r) => r.textContent.startsWith('ODR0') && r.querySelector('input[type=checkbox]'))`), 2000, 'alan onay kutusu');
+    await cdp.eval(`[...document.querySelectorAll('tr.field-row')].find((r) => r.textContent.startsWith('ODR0')).querySelector('input[type=checkbox]').click()`);
+    await until(() => cdp.eval(`${odrVal}.textContent === '0x00001235'`), 3000, 'alan yazma (oku-değiştir-yaz)');
+    // Salt okunur IDR düzenlenemez, RO etiketi var
+    assert.ok(await cdp.eval(`(() => { const r = [...document.querySelectorAll('tr.reg')].find((e) => e.textContent.includes('IDR')); return !r.querySelector('td.val').classList.contains('editable') && !!r.querySelector('.acc'); })()`), 'IDR salt okunur');
+    // Favori: ODR'yi sabitle → "Sabitlenenler" görünümü, .embedded-studio/debug.json
+    await cdp.eval(`${odrVal}.parentElement.querySelector('.star').click()`);
+    await until(() => cdp.eval(`!!document.querySelector('.p-item.fav')`), 3000, 'sabitlenenler');
+    await cdp.click('.p-item.fav');
+    await until(() => cdp.eval(`[...document.querySelectorAll('tr.reg')].some((e) => e.textContent.includes('GPIOB.ODR')) && /0x00001235/.test(document.querySelector('#dbg-regs').textContent)`), 3000, 'favori görünümünde değer');
+    const favFile = JSON.parse(fs.readFileSync(path.join(PROJECT, '.embedded-studio', 'debug.json'), 'utf8'));
+    assert.deepStrictEqual(Object.values(favFile.favorites)[0], ['GPIOB.ODR']);
+    await cdp.shot('16b-debug-yazma-favori');
+    await cdp.eval(`document.querySelector('#dbg-regs tr.reg .star').click()`);
+    await until(() => cdp.eval(`!document.querySelector('.p-item.fav')`), 3000, 'favori kaldırıldı');
     await cdp.click(`([...document.querySelectorAll('.pane-head button')].find((b) => b.textContent.includes('ELF')))`);
     await sleep(800);
     await cdp.click('#dbg-sym');
@@ -672,7 +701,7 @@ async function until(fn, ms = 8000, what = 'koşul') {
     await cdp.click('#dbg-conn');
     await until(() => cdp.eval(`document.querySelector('#dbg-msg').classList.contains('error')`), 20000, 'hata mesajı');
     const msg = await cdp.eval(`document.querySelector('#dbg-msg').textContent`);
-    assert.ok(/ST-Link|openocd/i.test(msg), msg);
+    assert.ok(/Prob bulunamadı|openocd/i.test(msg), msg);
     await cdp.shot('17-debug-openocd-hata');
   });
   await step('Dar pencere: sekmeler ve debug bellek paneli görünür', async () => {

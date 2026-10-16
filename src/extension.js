@@ -30,7 +30,7 @@ let libCache = null;
 const packs = require('./codegen/packs');
 const { parseLine, Simulator } = require('./monitor/telemetry');
 const { OpenOcdTarget, SimTarget, simModel, elfSymbols } = require('./debug/session');
-const { builtinStm32f4, parseSvd } = require('./debug/registers');
+const { builtinStm32f4, parseSvd, summary, parseValue, insertField, mask } = require('./debug/registers');
 const i18n = require('./i18n');
 const { t } = i18n;
 
@@ -501,6 +501,15 @@ class Studio {
       case 'debug.svd':
         await this.loadSvd(true);
         break;
+      case 'debug.periph':
+        this.postPeripheral(m.name);
+        break;
+      case 'debug.write':
+        await this.debugWrite(m);
+        break;
+      case 'debug.fav':
+        this.setFavorite(m.key, m.on);
+        break;
       case 'build':
         await actions.build();
         break;
@@ -855,7 +864,8 @@ class Studio {
   postRegs() {
     const used = Object.keys(this.compute().result.peripherals);
     const ports = new Set(this.compute().result.connections.map((c) => 'GPIO' + c.mcuPin[1]));
-    this.post({ type: 'debug.regs', peripherals: this.peripheralDefs, used: [...used, ...ports, 'RCC'], source: this.svdName || (this.peripheralDefs.length ? t('Yerleşik STM32F411 tanımları') : t('{0} için register tanımı yok: SVD indirilemedi.', this.lib.mcus[this.design.mcuId].name)) });
+    this.post({ type: 'debug.regs', peripherals: summary(this.peripheralDefs), cpu: this.cpuInfo(), used: [...used, ...ports, 'RCC'], source: this.svdName || (this.peripheralDefs.length ? t('Yerleşik STM32F411 tanımları') : t('{0} için register tanımı yok: SVD indirilemedi.', this.lib.mcus[this.design.mcuId].name)) });
+    this.postFavorites();
   }
 
   async connectDebug(mode) {
@@ -938,8 +948,81 @@ class Studio {
       }
     }
     const state = await this.target.state().catch(() => 'unknown');
-    if (m.core && state === 'halted') core = await this.target.coreRegisters().catch((e) => ({ error: e.message }));
+    if (m.core && state === 'halted') core = await this.target.coreRegisters(this.cpuInfo()).catch((e) => ({ error: e.message }));
     this.post({ type: 'debug.data', seq: m.seq, values, errors, core, state });
+  }
+
+  /** Çekirdek: ARMv6-M mi (BASEPRI/FAULTMASK yok), FPU var mı */
+  cpuInfo() {
+    const fam = familyOf(this.lib.mcus[this.design.mcuId]);
+    return { v6m: /cortex-m0/.test(fam.core), fpu: !!fam.fpu };
+  }
+
+  /** ES-205: çevre birimi register'ına ya da bit alanına yazma (alan için oku-değiştir-yaz) */
+  async debugWrite(m) {
+    if (!this.target) return;
+    const p = this.peripheralDefs.find((x) => x.name === m.periph);
+    const r = p && p.registers.find((x) => x.name === m.reg);
+    if (!r) return this.toast('error', t('Register bulunamadı: {0}.{1}', m.periph, m.reg));
+    const f = m.field && r.fields.find((x) => x.name === m.field);
+    try {
+      const access = (f && f.access) || r.access || 'rw';
+      if (access === 'ro') throw new Error(t('{0} salt okunur.', f ? `${r.name}.${f.name}` : r.name));
+      const value = typeof m.value === 'number' ? m.value >>> 0 : parseValue(m.value);
+      const width = r.size || 32;
+      let word = value;
+      if (f) {
+        // Salt yazılır register okunamaz: diğer alanlar 0 (ya da reset değeri) kabul edilir
+        const cur = r.access === 'wo' ? (r.reset || 0) : (await this.target.readMemory(p.base + r.offset, 1))[0];
+        word = insertField(cur, f.lsb, f.width, value);
+      } else if (width < 32 && value > mask(width)) throw new Error(t('Değer alana sığmıyor: 0…{0}', mask(width)));
+      await this.target.writeMemory(p.base + r.offset, width, word);
+      this.post({ type: 'debug.written', periph: p.name, reg: r.name, value: word });
+    } catch (e) {
+      this.toast('error', e.message);
+    }
+  }
+
+  /** Favori register'lar ("GPIOA.ODR"), işlemciye göre .embedded-studio/debug.json'da */
+  favorites() {
+    try {
+      const d = JSON.parse(fs.readFileSync(path.join(this.root, STATE_DIR, 'debug.json'), 'utf8'));
+      return (d.favorites && d.favorites[this.lib.mcus[this.design.mcuId].name]) || [];
+    } catch {
+      return [];
+    }
+  }
+
+  setFavorite(key, on) {
+    if (!this.root) return;
+    const file = path.join(this.root, STATE_DIR, 'debug.json');
+    let d = {};
+    try { d = JSON.parse(fs.readFileSync(file, 'utf8')); } catch { /* yok */ }
+    const mcuName = this.lib.mcus[this.design.mcuId].name;
+    d.favorites = d.favorites || {};
+    const list = (d.favorites[mcuName] || []).filter((x) => x !== key);
+    if (on) list.push(key);
+    d.favorites[mcuName] = list;
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, JSON.stringify(d, null, 2) + '\n');
+    this.postFavorites();
+  }
+
+  /** Favorilerin tanımları (farklı çevre birimlerinden; webview okuma listesine ekler) */
+  postFavorites() {
+    const favs = this.favorites().map((key) => {
+      const [pn, rn] = key.split('.');
+      const p = this.peripheralDefs.find((x) => x.name === pn);
+      const r = p && p.registers.find((x) => x.name === rn);
+      return r ? { key, periph: pn, base: p.base, reg: r } : null;
+    }).filter(Boolean);
+    this.post({ type: 'debug.favorites', favorites: favs });
+  }
+
+  /** Bir çevre biriminin register tanımları (webview seçince ister) */
+  postPeripheral(name) {
+    const p = this.peripheralDefs.find((x) => x.name === name);
+    if (p) this.post({ type: 'debug.periph', name: p.name, base: p.base, registers: p.registers });
   }
 
   async debugSymbols() {

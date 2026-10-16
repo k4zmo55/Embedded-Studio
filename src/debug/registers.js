@@ -17,7 +17,7 @@ const GPIO_REGS = () => [
   { name: 'OTYPER', offset: 0x04, desc: t('Çıkış tipi: 0 push-pull, 1 open-drain'), fields: range('OT', 16, 1) },
   { name: 'OSPEEDR', offset: 0x08, desc: t('Çıkış hızı'), fields: range('OSPEEDR', 16, 2) },
   { name: 'PUPDR', offset: 0x0C, desc: t('Pull: 00 yok, 01 up, 10 down'), fields: range('PUPDR', 16, 2) },
-  { name: 'IDR', offset: 0x10, desc: t('Giriş verisi (pin seviyeleri)'), fields: range('IDR', 16, 1) },
+  { name: 'IDR', offset: 0x10, access: 'ro', desc: t('Giriş verisi (pin seviyeleri)'), fields: range('IDR', 16, 1) },
   { name: 'ODR', offset: 0x14, desc: t('Çıkış verisi'), fields: range('ODR', 16, 1) },
   { name: 'AFRL', offset: 0x20, desc: t('Alternatif fonksiyon, pin 0-7'), fields: range('AFSEL', 8, 4) },
   { name: 'AFRH', offset: 0x24, desc: t('Alternatif fonksiyon, pin 8-15'), fields: range('AFSEL', 8, 4).map((x, i) => ({ ...x, name: `AFSEL${i + 8}` })) }
@@ -142,46 +142,131 @@ const txt = (el, tag) => {
 };
 const num = (s) => (s === undefined ? undefined : s.toLowerCase().startsWith('0x') ? parseInt(s, 16) : s.startsWith('#') ? parseInt(s.slice(1), 2) : parseInt(s, 10));
 
-/** CMSIS-SVD dosyasını register tanımlarına çevirir. */
+/** SVD erişim türü → kısa biçim: rw | ro | wo | w1 (writeOnce) */
+const ACCESS = { 'read-write': 'rw', 'read-only': 'ro', 'write-only': 'wo', writeOnce: 'w1', 'read-writeOnce': 'rw' };
+
+/**
+ * dim/dimIncrement/dimIndex: "CCR%s" + dim=4 → CCR0..CCR3 (ya da dimIndex listesi), "BUF[%s]" → BUF0..
+ * @returns {{ name: string, step: number }[]}
+ */
+function expandDim(el, name) {
+  const dim = num(txt(el, 'dim'));
+  if (!dim || !name.includes('%s')) return [{ name, step: 0 }];
+  const inc = num(txt(el, 'dimIncrement')) || 4;
+  const idx = txt(el, 'dimIndex');
+  let names;
+  if (idx && /^\d+-\d+$/.test(idx)) { const [a] = idx.split('-').map(Number); names = Array.from({ length: dim }, (_, i) => String(a + i)); }
+  else if (idx) names = idx.split(',').map((s) => s.trim());
+  else names = Array.from({ length: dim }, (_, i) => String(i));
+  return names.slice(0, dim).map((n, i) => ({ name: name.replace('[%s]', n).replace('%s', n), step: i * inc }));
+}
+
+/**
+ * CMSIS-SVD dosyasını register tanımlarına çevirir.
+ * Peripheral/register derivedFrom, dim dizileri, cluster'lar (önekli düz liste), erişim türü (alan > register > peripheral
+ * kalıtımı), reset değeri, register boyutu ve alan enum değerleri desteklenir.
+ * @returns {{ device: string, cpu: { name?: string, fpu?: boolean }, peripherals: any[] }}
+ */
 function parseSvd(text) {
   const doc = parseXml(text);
   const device = child(doc, 'device');
   if (!device) throw new Error(t('Geçerli bir SVD dosyası değil (<device> yok).'));
   const raw = kids(child(device, 'peripherals'), 'peripheral');
   const byName = new Map(raw.map((p) => [txt(p, 'name'), p]));
-  const regsOf = (p) => {
-    let regs = kids(child(p, 'registers'), 'register');
-    if (!regs.length && p.attrs.derivedFrom && byName.has(p.attrs.derivedFrom)) regs = kids(child(byName.get(p.attrs.derivedFrom), 'registers'), 'register');
-    return regs.map((r) => ({
-      name: txt(r, 'name'),
-      offset: num(txt(r, 'addressOffset')) || 0,
-      desc: txt(r, 'description') || '',
-      fields: kids(child(r, 'fields'), 'field').map((fl) => {
-        let lsb = num(txt(fl, 'bitOffset')), width = num(txt(fl, 'bitWidth'));
-        const br = txt(fl, 'bitRange');
-        if (lsb === undefined && br) {
-          const [msb, l] = br.replace(/[[\]]/g, '').split(':').map(Number);
-          lsb = l;
-          width = msb - l + 1;
-        }
-        if (lsb === undefined && txt(fl, 'lsb') !== undefined) {
-          lsb = num(txt(fl, 'lsb'));
-          width = num(txt(fl, 'msb')) - lsb + 1;
-        }
-        return { name: txt(fl, 'name'), lsb: lsb || 0, width: width || 1, desc: txt(fl, 'description') || '' };
-      }).sort((a, b) => a.lsb - b.lsb)
-    })).sort((a, b) => a.offset - b.offset);
+  const devAccess = txt(device, 'access'), devSize = num(txt(device, 'size')), devReset = num(txt(device, 'resetValue'));
+
+  const fieldsOf = (r, access) => kids(child(r, 'fields'), 'field').flatMap((fl) => {
+    let lsb = num(txt(fl, 'bitOffset')), width = num(txt(fl, 'bitWidth'));
+    const br = txt(fl, 'bitRange');
+    if (lsb === undefined && br) {
+      const [msb, l] = br.replace(/[[\]]/g, '').split(':').map(Number);
+      lsb = l;
+      width = msb - l + 1;
+    }
+    if (lsb === undefined && txt(fl, 'lsb') !== undefined) {
+      lsb = num(txt(fl, 'lsb'));
+      width = num(txt(fl, 'msb')) - lsb + 1;
+    }
+    const enums = kids(child(fl, 'enumeratedValues'), 'enumeratedValue')
+      .map((e) => ({ name: txt(e, 'name'), value: num(txt(e, 'value')), desc: txt(e, 'description') || '' }))
+      .filter((e) => e.value !== undefined && !Number.isNaN(e.value));
+    const fa = ACCESS[txt(fl, 'access') || ''] || access;
+    return expandDim(fl, txt(fl, 'name')).map((d, i) => {
+      const o = { name: d.name, lsb: (lsb || 0) + (d.step ? i * (num(txt(fl, 'dimIncrement')) || width || 1) : 0), width: width || 1, desc: txt(fl, 'description') || '' };
+      if (fa !== 'rw') o.access = fa;
+      if (enums.length) o.enums = enums;
+      return o;
+    });
+  }).sort((a, b) => a.lsb - b.lsb);
+
+  /** <registers> içeriği (register + cluster), offset ve ad önekiyle düz liste */
+  const regsIn = (container, pAccess, pSize, pReset, base = 0, prefix = '') => {
+    if (!container) return [];
+    const regMap = new Map(kids(container, 'register').map((r) => [txt(r, 'name'), r]));
+    const out = [];
+    for (const r of container.children) {
+      if (r.tag === 'cluster') {
+        const off = num(txt(r, 'addressOffset')) || 0;
+        for (const d of expandDim(r, txt(r, 'name') || '')) out.push(...regsIn(r, pAccess, pSize, pReset, base + off + d.step, `${prefix}${d.name}_`));
+        continue;
+      }
+      if (r.tag !== 'register') continue;
+      const src = r.attrs.derivedFrom && regMap.get(r.attrs.derivedFrom);
+      const get = (k) => txt(r, k) ?? (src ? txt(src, k) : undefined);
+      const access = ACCESS[get('access') || ''] || pAccess;
+      const size = num(get('size')) || pSize || 32;
+      const reset = num(get('resetValue')) ?? pReset;
+      const fields = fieldsOf(child(r, 'fields') ? r : src || r, access);
+      for (const d of expandDim(r, txt(r, 'name'))) {
+        const o = { name: prefix + d.name, offset: base + (num(txt(r, 'addressOffset')) || 0) + d.step, desc: get('description') || '', fields };
+        if (access !== 'rw') o.access = access;
+        if (size !== 32) o.size = size;
+        if (reset !== undefined && !Number.isNaN(reset)) o.reset = reset >>> 0;
+        out.push(o);
+      }
+    }
+    return out;
   };
+
   const peripherals = raw.map((p) => {
-    const base = byName.get(p.attrs.derivedFrom);
-    return {
+    const from = p.attrs.derivedFrom && byName.get(p.attrs.derivedFrom);
+    const get = (k) => txt(p, k) ?? (from ? txt(from, k) : undefined);
+    const pAccess = ACCESS[get('access') || devAccess || ''] || 'rw';
+    const regsEl = child(p, 'registers') || (from && child(from, 'registers'));
+    const desc = get('description') || '';
+    const o = {
       name: txt(p, 'name'),
       base: num(txt(p, 'baseAddress')),
-      group: txt(p, 'groupName') || (base && txt(base, 'groupName')) || t('Diğer'),
-      registers: regsOf(p)
+      group: get('groupName') || t('Diğer'),
+      registers: regsIn(regsEl, pAccess, num(get('size')) || devSize, num(get('resetValue')) ?? devReset).sort((a, b) => a.offset - b.offset)
     };
+    if (desc) o.desc = desc;
+    return o;
   }).filter((p) => p.registers.length);
-  return { device: txt(device, 'name'), peripherals };
+  const cpu = child(device, 'cpu');
+  return { device: txt(device, 'name'), cpu: { name: txt(cpu, 'name'), fpu: /^(1|true)$/i.test(txt(cpu, 'fpuPresent') || '') }, peripherals };
 }
 
-module.exports = { builtinStm32f4, parseSvd, parseXml };
+// ------------------------------------------------------------------ webview için yardımcılar
+/** Çevre birimi listesi (register'sız): webview'a önce bu gider, register'lar seçilince (SVD'ler 5 MB'ı aşabiliyor) */
+const summary = (peripherals) => peripherals.map((p) => ({ name: p.name, base: p.base, group: p.group, desc: p.desc || '', count: p.registers.length }));
+
+const mask = (width) => (width >= 32 ? 0xffffffff : ((1 << width) - 1) >>> 0);
+/** Bir alanın değeri */
+const fieldValue = (word, lsb, width) => ((word >>> lsb) & mask(width)) >>> 0;
+/** Alanı değiştirilmiş register değeri (oku-değiştir-yaz). Değer alana sığmazsa hata. */
+function insertField(word, lsb, width, value) {
+  const m = mask(width);
+  if (!Number.isInteger(value) || value < 0 || value > m) throw new Error(t('Değer alana sığmıyor: 0…{0}', m));
+  return ((word & ~((m << lsb) >>> 0)) | ((value << lsb) >>> 0)) >>> 0;
+}
+
+/** Kullanıcının yazdığı değer: 0x.., 0b.., ondalık */
+function parseValue(s) {
+  const v = String(s).trim().replace(/_/g, '');
+  const n = /^0x[0-9a-f]+$/i.test(v) ? parseInt(v.slice(2), 16) : /^0b[01]+$/i.test(v) ? parseInt(v.slice(2), 2) : /^\d+$/.test(v) ? parseInt(v, 10) : NaN;
+  if (Number.isNaN(n) || n > 0xffffffff) throw new Error(t('Geçersiz değer: {0} (ör. 0x1F, 0b101, 42)', s));
+  return n >>> 0;
+}
+
+module.exports = { builtinStm32f4, parseSvd, parseXml, summary, fieldValue, insertField, parseValue, mask };

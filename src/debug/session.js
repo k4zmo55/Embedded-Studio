@@ -169,13 +169,37 @@ class OpenOcdTarget {
     return vals;
   }
 
-  async coreRegisters() {
+  /** Bellek yazma (çevre birimi register'ı). width: 8 | 16 | 32 */
+  async writeMemory(addr, width, value) {
+    const r = await this.tcl.send(`[target current] write_memory 0x${addr.toString(16)} ${width} {0x${(value >>> 0).toString(16)}}`);
+    if (/error|failed|invalid/i.test(r)) throw new Error(t('Yazılamadı @0x{0}: {1}', addr.toString(16), r.trim().slice(0, 120)));
+  }
+
+  /**
+   * Çekirdek register'ları. Özel register'lar (MSP/PSP, PRIMASK…, CONTROL) ve FPU (d0–d15 → s0–s31, FPSCR) ayrı okunur:
+   * çekirdekte olmayan register adı tüm get_reg komutunu bozar.
+   * @param {{ v6m?: boolean, fpu?: boolean }} [cpu]
+   */
+  async coreRegisters(cpu = {}) {
     const out = {};
-    const r = await this.tcl.send(`[target current] get_reg {${CORE_REGS.join(' ')}}`);
-    // get_reg çıktısı: "r0 0x00000000 r1 0x..." (Tcl dict)
-    const parts = r.trim().split(/\s+/);
-    for (let i = 0; i + 1 < parts.length; i += 2) out[parts[i]] = parseInt(parts[i + 1], 16);
-    if (!Object.keys(out).length) throw new Error(t('Register okunamadı (hedef durdurulmuş olmalı): {0}', r.trim().slice(0, 120)));
+    const read = async (names) => {
+      const r = await this.tcl.send(`[target current] get_reg {${names.join(' ')}}`);
+      // get_reg çıktısı: "r0 0x00000000 r1 0x..." (Tcl dict)
+      const parts = r.trim().split(/\s+/);
+      const got = {};
+      for (let i = 0; i + 1 < parts.length; i += 2) if (/^0x[0-9a-f]+$/i.test(parts[i + 1])) got[parts[i]] = parts[i + 1];
+      if (!Object.keys(got).length) throw new Error(t('Register okunamadı (hedef durdurulmuş olmalı): {0}', r.trim().slice(0, 120)));
+      return got;
+    };
+    for (const [k, v] of Object.entries(await read(CORE_REGS))) out[k] = parseInt(v, 16);
+    try {
+      for (const [k, v] of Object.entries(await read(specialRegs(cpu)))) out[k] = parseInt(v, 16);
+    } catch { /* eski OpenOCD: özel register adı yok */ }
+    if (cpu.fpu) {
+      try {
+        Object.assign(out, splitFpu(await read([...Array(16)].map((_, i) => `d${i}`).concat('fpscr'))));
+      } catch { /* FPU kapalı ya da desteklenmiyor */ }
+    }
     return out;
   }
 
@@ -191,6 +215,23 @@ function explainOpenOcd(log) {
   if (/couldn't bind|Address already in use/i.test(log)) return t('TCL portu kullanımda: başka bir openocd açık olabilir.');
   if (/Can't find interface|Can't find target/i.test(log)) return t('OpenOCD yapılandırma dosyası bulunamadı: {0}', (log.match(/Can't find [^\n]+/) || [''])[0]);
   return explainFlashError(log) || '';
+}
+
+/** Çekirdeğe göre özel register'lar: ARMv6-M'de (M0/M0+) BASEPRI ve FAULTMASK yok */
+const specialRegs = (cpu = {}) => (cpu.v6m ? ['msp', 'psp', 'primask', 'control'] : ['msp', 'psp', 'primask', 'basepri', 'faultmask', 'control']);
+
+/** OpenOCD d0–d15 (64 bit, "0x" + 16 hane) → s0–s31; fpscr */
+function splitFpu(regs) {
+  const out = {};
+  for (const [k, v] of Object.entries(regs)) {
+    const m = /^d(\d+)$/.exec(k);
+    if (m) {
+      const h = v.slice(2).padStart(16, '0');
+      out[`s${2 * Number(m[1])}`] = parseInt(h.slice(8), 16);
+      out[`s${2 * Number(m[1]) + 1}`] = parseInt(h.slice(0, 8), 16);
+    } else out[k] = parseInt(v, 16);
+  }
+  return out;
 }
 
 /** Boş bir TCP portu */
@@ -239,12 +280,28 @@ class SimTarget {
     return out;
   }
 
-  async coreRegisters() {
+  async coreRegisters(cpu = {}) {
     if (!this.halted) throw new Error(t('Core register\'ları okumak için hedefi durdurun.'));
     const r = {};
     CORE_REGS.forEach((n, i) => (r[n] = (0x1000 * i + 0x24) >>> 0));
     r.sp = 0x2001ffb0; r.lr = 0x08000a3d; r.pc = this.pc; r.xPSR = 0x61000000;
+    for (const n of specialRegs(cpu)) r[n] = 0;
+    r.msp = r.sp; r.psp = 0x20001f00;
+    if (cpu.fpu) {
+      for (let i = 0; i < 32; i++) r[`s${i}`] = 0;
+      r.s0 = 0x3fc00000; // 1.5f
+      r.fpscr = 0;
+    }
     return r;
+  }
+
+  /** Simülasyonda yazılan değer modele işlenir (sonraki okumalarda görünür) */
+  async writeMemory(addr, width, value) {
+    const a = addr & ~3, sh = (addr & 3) * 8;
+    const m = width >= 32 ? 0xffffffff : (((1 << width) - 1) << sh) >>> 0;
+    const cur = this.model.expected.get(a) || 0;
+    this.model.expected.set(a, ((cur & ~m) | ((value << sh) & m)) >>> 0);
+    this.model.dynamic.delete(a);
   }
 }
 
@@ -363,4 +420,4 @@ function elfSymbols(elfPath, nm = 'arm-none-eabi-nm') {
   });
 }
 
-module.exports = { OpenOcdTarget, SimTarget, TclClient, simModel, elfSymbols, explainOpenOcd, freePort, CORE_REGS };
+module.exports = { OpenOcdTarget, SimTarget, TclClient, simModel, elfSymbols, explainOpenOcd, freePort, specialRegs, splitFpu, CORE_REGS };

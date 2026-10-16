@@ -749,8 +749,84 @@ test('donanım breakpoint sınırı: çekirdeğe göre, devre dışı ve veri br
   const { FAMILIES } = require('../src/codegen/families');
   if (FAMILIES) for (const f of Object.values(FAMILIES)) assert.ok(L.HW_BREAKPOINTS[f.core], f.core);
 });
+test('SVD (ES-205): dim dizisi, cluster, register/peripheral kalıtımı, erişim, reset, boyut, enum', () => {
+  const { parseSvd, summary } = require('../src/debug/registers');
+  const svd = `<?xml version="1.0"?><device><name>TEST</name><cpu><name>CM4</name><fpuPresent>true</fpuPresent></cpu><access>read-write</access><size>32</size>
+  <peripherals>
+    <peripheral><name>TIM1</name><description>Gelişmiş zamanlayıcı</description><groupName>TIM</groupName><baseAddress>0x40010000</baseAddress><registers>
+      <register><name>CR1</name><addressOffset>0x0</addressOffset><resetValue>0x0</resetValue><fields>
+        <field><name>CEN</name><bitOffset>0</bitOffset><bitWidth>1</bitWidth><enumeratedValues>
+          <enumeratedValue><name>Disabled</name><description>Sayaç kapalı</description><value>0</value></enumeratedValue>
+          <enumeratedValue><name>Enabled</name><value>1</value></enumeratedValue></enumeratedValues></field>
+        <field><name>CKD</name><bitRange>[9:8]</bitRange><access>read-only</access></field></fields></register>
+      <register><name>SR</name><addressOffset>0x10</addressOffset><size>16</size><access>read-only</access><resetValue>0x1234</resetValue></register>
+      <register derivedFrom="CR1"><name>CR1_COPY</name><addressOffset>0x20</addressOffset></register>
+      <register><name>CCR%s</name><dim>4</dim><dimIncrement>4</dimIncrement><dimIndex>1-4</dimIndex><addressOffset>0x34</addressOffset></register>
+      <cluster><name>CH[%s]</name><dim>2</dim><dimIncrement>0x10</dimIncrement><addressOffset>0x100</addressOffset>
+        <register><name>CFG</name><addressOffset>0x4</addressOffset><access>write-only</access></register></cluster>
+    </registers></peripheral>
+    <peripheral derivedFrom="TIM1"><name>TIM8</name><baseAddress>0x40010400</baseAddress></peripheral>
+  </peripherals></device>`;
+  const r = parseSvd(svd);
+  assert.deepStrictEqual(r.cpu, { name: 'CM4', fpu: true });
+  const tim = r.peripherals[0];
+  assert.strictEqual(tim.desc, 'Gelişmiş zamanlayıcı');
+  const reg = (n) => tim.registers.find((x) => x.name === n);
+  assert.deepStrictEqual(reg('CR1').fields[0].enums, [{ name: 'Disabled', value: 0, desc: 'Sayaç kapalı' }, { name: 'Enabled', value: 1, desc: '' }]);
+  assert.deepStrictEqual([reg('CR1').fields[1].lsb, reg('CR1').fields[1].width, reg('CR1').fields[1].access], [8, 2, 'ro']);
+  assert.ok(reg('CR1').access === undefined && reg('CR1').fields[0].access === undefined, 'rw yazılmaz');
+  assert.deepStrictEqual([reg('SR').access, reg('SR').size, reg('SR').reset], ['ro', 16, 0x1234]);
+  assert.strictEqual(reg('CR1_COPY').fields.length, 2, 'register derivedFrom alanları alır');
+  assert.deepStrictEqual(['CCR1', 'CCR2', 'CCR3', 'CCR4'].map((n) => reg(n).offset), [0x34, 0x38, 0x3c, 0x40]);
+  assert.deepStrictEqual([reg('CH0_CFG').offset, reg('CH1_CFG').offset, reg('CH1_CFG').access], [0x104, 0x114, 'wo']);
+  const tim8 = r.peripherals.find((p) => p.name === 'TIM8');
+  assert.deepStrictEqual([tim8.group, tim8.registers.length, tim8.base], ['TIM', tim.registers.length, 0x40010400]);
+  assert.deepStrictEqual(summary(r.peripherals)[0], { name: 'TIM1', base: 0x40010000, group: 'TIM', desc: 'Gelişmiş zamanlayıcı', count: tim.registers.length });
+  // İndirilmiş gerçek SVD'ler varsa (CI'da yok): hepsi ayrışır, G071'de enum, F411'de salt okunur IDR
+  const dir = path.join(os.tmpdir(), 'es-svd');
+  if (fs.existsSync(dir)) {
+    for (const f of fs.readdirSync(dir).filter((x) => x.endsWith('.svd'))) {
+      const s = parseSvd(fs.readFileSync(path.join(dir, f), 'utf8'));
+      assert.ok(s.peripherals.length > 20 && s.peripherals.every((p) => Number.isFinite(p.base) && p.registers.every((x) => Number.isFinite(x.offset))), f);
+    }
+    const g0 = parseSvd(fs.readFileSync(path.join(dir, 'STM32G071.svd'), 'utf8'));
+    assert.ok(g0.peripherals.some((p) => p.registers.some((x) => x.fields.some((fl) => fl.enums && fl.enums.length))), 'G071: enum değerleri');
+    const f4 = parseSvd(fs.readFileSync(path.join(dir, 'STM32F411.svd'), 'utf8'));
+    assert.strictEqual(f4.peripherals.find((p) => p.name === 'GPIOA').registers.find((x) => x.name === 'IDR').access, 'ro');
+  }
+});
+test('register yazma: alan ekleme, değer ayrıştırma; FPU ve özel register adları', () => {
+  const R = require('../src/debug/registers');
+  assert.strictEqual(R.insertField(0xffffffff, 8, 2, 0), 0xfffffcff);
+  assert.strictEqual(R.insertField(0, 31, 1, 1), 0x80000000);
+  assert.strictEqual(R.insertField(0x12345678, 0, 32, 0xdeadbeef), 0xdeadbeef);
+  assert.throws(() => R.insertField(0, 4, 3, 8), /sığmıyor/);
+  assert.strictEqual(R.fieldValue(0x00000300, 8, 2), 3);
+  assert.deepStrictEqual(['0x1F', '0b101', '42', '0xFFFF_FFFF'].map(R.parseValue), [31, 5, 42, 0xffffffff]);
+  assert.throws(() => R.parseValue('abc'), /Geçersiz/);
+  assert.throws(() => R.parseValue('0x100000000'), /Geçersiz/);
+  const S = require('../src/debug/session');
+  assert.deepStrictEqual(S.specialRegs({ v6m: true }), ['msp', 'psp', 'primask', 'control']);
+  assert.ok(S.specialRegs({}).includes('basepri') && S.specialRegs({}).includes('faultmask'));
+  assert.deepStrictEqual(S.splitFpu({ d0: '0x400000003fc00000', d15: '0x0', fpscr: '0x03000000' }), { s0: 0x3fc00000, s1: 0x40000000, s30: 0, s31: 0, fpscr: 0x03000000 });
+});
+
 (async () => {
   // Asenkron testler
+  {
+    const { SimTarget } = require('../src/debug/session');
+    const sim = new SimTarget({ peripherals: [], expected: new Map([[0x40020014, 0x5]]), dynamic: new Map([[0x40020014, () => 1]]) });
+    await sim.writeMemory(0x40020014, 32, 0xa0);
+    assert.deepStrictEqual(await sim.readMemory(0x40020014, 1), [0xa0], 'yazılan değer okunur, canlı model devre dışı');
+    await sim.writeMemory(0x40020016, 16, 0xbeef);
+    assert.deepStrictEqual(await sim.readMemory(0x40020014, 1), [0xbeef00a0], '16 bit yazma');
+    await sim.halt();
+    const core = await sim.coreRegisters({ fpu: true });
+    assert.ok(core.msp !== undefined && core.control === 0 && core.s0 === 0x3fc00000 && core.fpscr === 0 && core.basepri === 0);
+    assert.ok(!('basepri' in await sim.coreRegisters({ v6m: true })), 'M0: BASEPRI yok');
+    passed++;
+    console.log('  ✓ simülasyonda register yazma ve genişletilmiş çekirdek register\'ları');
+  }
   const { OpenOcdTarget, freePort } = require('../src/debug/session');
   const port = await freePort();
   assert.ok(port > 0 && port !== 6666, String(port));

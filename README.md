@@ -228,6 +228,14 @@ Simülasyon ya da **OpenOCD** (algılanan prob: ST-Link, J-Link, CMSIS-DAP): dur
 Okuması bayrak temizleyen register'lar (ör. `USART->DR`) sadece hedef durduğunda okunur; çalışan firmware'den veri çalınmaz.
 VS Code debug oturumu başlarken panelin OpenOCD bağlantısı probu kendiliğinden bırakır.
 
+**Çevre birimi register'ları (SVD):** işlemcinin CMSIS-SVD dosyasından (SVD indir) gruplu çevre birimi ağacı (TIM, USART, GPIO…),
+bit alanları adları, açıklamaları ve enum anlamlarıyla (ör. `CEN = 1 · Enabled`); salt okunur / salt yazılır etiketleri ve
+reset değerleri. Değişen register'lar ve bit alanları vurgulanır. Değere çift tıklayınca yazılır (`0x1F`, `0b101`, `42`);
+bit alanları onay kutusu, enum listesi ya da değerle oku-değiştir-yaz yöntemiyle değiştirilir. ☆ ile sık bakılan register'lar
+farklı çevre birimlerinden **Sabitlenenler** görünümünde toplanır (`.embedded-studio/debug.json`, işlemciye göre).
+Çekirdek: R0–R15, xPSR (istisna/IRQ numarası), MSP/PSP (etkin olan), PRIMASK/BASEPRI/FAULTMASK, CONTROL çözümlü; FPU'lu
+işlemcilerde s0–s31 (float değeriyle) ve FPSCR. Büyük SVD'lerde (U575: 200 çevre birimi) register tanımları seçilince yüklenir.
+
 **VS Code'un kendi debug arayüzü** (Cortex-Debug ile): breakpoint, koşullu breakpoint, hit count, logpoint; step over / into / out,
 Run to Cursor; call stack, değişkenler, watch; **Open Disassembly View** ile kaynakla karışık disassembly ve komut komut adımlama.
 

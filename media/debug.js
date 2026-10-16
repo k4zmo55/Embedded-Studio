@@ -4,7 +4,8 @@
   const { t, h, $, post, state, ui, icon, hex, toast } = ES;
   const dbg = {
     connected: false, connecting: false, mode: 'sim', state: '', error: '',
-    defs: [], used: [], source: '',
+    // defs: çevre birimi listesi (register'sız); register tanımları seçilince istenir ve regs'te saklanır (ES-205)
+    defs: [], used: [], source: '', regs: {}, favs: [], cpu: {}, groups: new Set(), edit: null, fpuOpen: false,
     periph: null, open: new Set(), filter: '',
     values: {}, prev: {}, core: null, coreErr: '',
     memAddr: 0x20000000, mem: null,
@@ -24,7 +25,7 @@
       h('div', { class: 'dbg-bar' },
         h('select', { id: 'dbg-mode', 'aria-label': t('Bağlantı türü'), onchange: (e) => (dbg.mode = e.target.value) },
           h('option', { value: 'sim', text: t('Simülasyon (kart yok)') }),
-          h('option', { value: 'openocd', text: 'OpenOCD · ST-Link' })),
+          h('option', { value: 'openocd', text: t('OpenOCD (bağlı prob)') })),
         h('button', { id: 'dbg-conn', onclick: () => (dbg.connected ? post({ type: 'debug.disconnect' }) : connect()) }, t('Bağlan')),
         h('span', { id: 'dbg-state', class: 'badge' }),
         h('span', { class: 'sep' }),
@@ -99,10 +100,40 @@
     dbg.defs = m.peripherals;
     dbg.used = m.used;
     dbg.source = m.source;
-    if (!dbg.periph || !dbg.defs.find((p) => p.name === dbg.periph)) dbg.periph = dbg.defs.find((p) => dbg.used.includes(p.name))?.name || dbg.defs[0]?.name;
+    dbg.cpu = m.cpu || {};
+    dbg.regs = {};
+    if (dbg.periph !== FAV && (!dbg.periph || !dbg.defs.find((p) => p.name === dbg.periph))) dbg.periph = dbg.defs.find((p) => dbg.used.includes(p.name))?.name || dbg.defs[0]?.name;
+    select(dbg.periph);
+  });
+  ES.on('debug.periph', (m) => {
+    dbg.regs[m.name] = { base: m.base, registers: m.registers };
+    if (m.name === dbg.periph) { renderRegs(); poll(); }
+  });
+  ES.on('debug.favorites', (m) => {
+    dbg.favs = m.favorites;
+    if (dbg.periph === FAV && !dbg.favs.length) dbg.periph = dbg.defs[0]?.name;
     renderPeriphList();
     renderRegs();
   });
+  ES.on('debug.written', () => poll());
+
+  const FAV = '★';
+  /** Çevre birimini seç; register tanımı yoksa iste */
+  function select(name) {
+    dbg.periph = name;
+    dbg.open.clear();
+    dbg.edit = null;
+    if (name && name !== FAV && !dbg.regs[name]) post({ type: 'debug.periph', name });
+    renderPeriphList();
+    renderRegs();
+    poll();
+  }
+  /** Görünen register'lar: [{ periph, base, reg }] (seçili çevre birimi ya da favoriler) */
+  function shown() {
+    if (dbg.periph === FAV) return dbg.favs.map((f) => ({ periph: f.periph, base: f.base, reg: f.reg }));
+    const d = dbg.regs[dbg.periph];
+    return d ? d.registers.map((reg) => ({ periph: dbg.periph, base: d.base, reg })) : [];
+  }
   ES.on('debug.symbols', (m) => {
     dbg.symbols = m.symbols;
     dbg.symSource = m.source || '';
@@ -120,7 +151,7 @@
     const errs = Object.values(m.errors || {});
     if (errs.length) dbg.error = errs[0];
     renderBar();
-    renderRegs();
+    if (!dbg.edit) renderRegs(); // düzenlerken yeniden çizme (yazılan kaybolmasın)
     renderCore();
     renderMem();
     renderWatch();
@@ -135,15 +166,13 @@
   function readsFor() {
     const reads = [];
     const halted = dbg.state === 'halted';
-    const p = dbg.defs.find((x) => x.name === dbg.periph);
-    if (p) {
-      // Ardışık register'ları tek okumada birleştir; yan etkili olanları çalışırken atla.
-      const regs = p.registers.filter((r) => halted || !sideEffect(p, r)).sort((a, b) => a.offset - b.offset);
-      let run = null;
-      for (const r of regs) {
-        if (run && r.offset === run.end && run.words < 64) { run.words++; run.end += 4; }
-        else { run = { key: `p:${p.name}:${r.offset}`, addr: p.base + r.offset, words: 1, end: r.offset + 4 }; reads.push(run); }
-      }
+    // Ardışık register'ları tek okumada birleştir; yan etkili ve salt yazılır olanları atla (çalışırken yan etkili olanlar okunmaz).
+    const items = shown().filter((x) => x.reg.access !== 'wo' && (halted || !sideEffect({ name: x.periph }, x.reg)))
+      .sort((a, b) => (a.periph === b.periph ? a.reg.offset - b.reg.offset : a.periph < b.periph ? -1 : 1));
+    let run = null;
+    for (const { periph, base, reg } of items) {
+      if (run && run.periph === periph && reg.offset === run.end && run.words < 64) { run.words++; run.end += 4; }
+      else if (!(run && run.periph === periph && reg.offset < run.end)) { run = { periph, key: `p:${periph}:${reg.offset}`, addr: base + reg.offset, words: 1, end: reg.offset + 4 }; reads.push(run); }
     }
     reads.push({ key: 'mem', addr: dbg.memAddr, words: 64 });
     for (const w of dbg.watch) reads.push({ key: `w:${w.name}`, addr: w.addr & ~3, words: Math.min(4, Math.ceil(((w.addr & 3) + Math.max(1, w.size)) / 4)) });
@@ -161,7 +190,7 @@
   /** Bir adresin son okunan 32-bit değeri (birleştirilmiş okumalardan). */
   function wordAt(periph, offset, src = dbg.values) {
     for (const [k, vals] of Object.entries(src)) {
-      if (!k.startsWith(`p:${periph.name}:`)) continue;
+      if (!k.startsWith(`p:${periph}:`)) continue;
       const start = Number(k.split(':')[2]);
       const i = (offset - start) / 4;
       if (i >= 0 && i < vals.length && Number.isInteger(i)) return vals[i];
@@ -185,21 +214,52 @@
     msg.className = `dbg-msg${dbg.error ? ' error' : ''}`;
     msg.textContent = dbg.error || (dbg.connected
       ? (dbg.mode === 'sim' ? t('Simülasyon: register değerleri tasarımınızdan (pinler, saat ağacı, çevre birimleri) hesaplanır; Board_Init sonrası beklenen durumu gösterir.') : t('Kart bağlı. Register\'lar çalışırken okunur; DR/SR2 gibi okunması bayrak temizleyen register\'lar sadece hedef durduğunda okunur.'))
-      : t('Kart yoksa "Simülasyon" ile deneyin. Gerçek kart için ST-Link\'i takın ve "OpenOCD · ST-Link" seçin.'));
+      : t('Kart yoksa "Simülasyon" ile deneyin. Gerçek kart için probu (ST-Link, J-Link, CMSIS-DAP) takın ve "OpenOCD" seçin.'));
   }
 
   function renderPeriphList() {
     const list = $('dbg-plist');
     if (!list) return;
-    const match = (p) => !dbg.filter || p.name.includes(dbg.filter);
+    const match = (p) => !dbg.filter || p.name.includes(dbg.filter) || String(p.group).toUpperCase().includes(dbg.filter);
     const used = dbg.defs.filter((p) => dbg.used.includes(p.name) && match(p));
-    const rest = dbg.defs.filter((p) => !dbg.used.includes(p.name) && match(p));
-    const item = (p) => h('div', { class: `p-item${p.name === dbg.periph ? ' active' : ''}`, onclick: () => { dbg.periph = p.name; dbg.open.clear(); renderPeriphList(); renderRegs(); poll(); } },
+    const item = (p) => h('div', { class: `p-item${p.name === dbg.periph ? ' active' : ''}`, title: p.desc || '', onclick: () => select(p.name) },
       dbg.used.includes(p.name) ? h('span', { class: 'dot' }) : null, h('span', { text: p.name }), h('span', { class: 'hint', text: hex(p.base) }));
+    // SVD grupları (groupName): aramada hepsi açık, değilse tıklayınca açılır
+    const groups = new Map();
+    for (const p of dbg.defs) if (match(p)) (groups.get(p.group) || groups.set(p.group, []).get(p.group)).push(p);
+    const tree = [];
+    for (const [g, ps] of [...groups].sort((a, b) => String(a[0]).localeCompare(String(b[0])))) {
+      const open = !!dbg.filter || dbg.groups.has(g) || ps.some((p) => p.name === dbg.periph);
+      tree.push(h('div', { class: 'p-group tree', onclick: () => { dbg.groups.has(g) ? dbg.groups.delete(g) : dbg.groups.add(g); renderPeriphList(); } },
+        h('span', { class: 'tw', text: open ? '▾' : '▸' }), h('span', { text: g }), h('span', { class: 'hint', text: String(ps.length) })));
+      if (open) tree.push(...ps.map(item));
+    }
     list.replaceChildren(...[
+      dbg.favs.length ? h('div', { class: `p-item fav${dbg.periph === FAV ? ' active' : ''}`, onclick: () => select(FAV) }, h('span', { text: `★ ${t('Sabitlenenler')}` }), h('span', { class: 'hint', text: String(dbg.favs.length) })) : null,
       used.length ? h('div', { class: 'p-group', text: t('Projede kullanılan') }) : null, ...used.map(item),
-      rest.length ? h('div', { class: 'p-group', text: t('Diğer') }) : null, ...rest.map(item)].filter(Boolean));
+      ...tree].filter(Boolean));
     $('dbg-src').textContent = dbg.source;
+  }
+
+  const ACCESS_LABEL = () => ({ ro: t('salt okunur'), wo: t('salt yazılır'), w1: t('bir kez yazılır') });
+  const canWrite = (reg, f) => dbg.connected && ((f && f.access) || reg.access || 'rw') !== 'ro';
+
+  /** Değer düzenleyici (satır içi). Enter: yaz, Esc: vazgeç */
+  function editor(cur, onSave, f) {
+    const done = (v) => { if (!dbg.edit) return; dbg.edit = null; if (v !== undefined) onSave(v); renderRegs(); };
+    if (f && f.enums && f.enums.length) {
+      return h('select', { class: 'tiny mono', autofocus: true, onchange: (e) => done(Number(e.target.value)), onblur: () => done(), onkeydown: (e) => { if (e.key === 'Escape') done(); } },
+        ...(f.enums.some((x) => x.value === cur) ? [] : [h('option', { value: cur, selected: true, text: String(cur) })]),
+        ...f.enums.map((x) => h('option', { value: x.value, selected: x.value === cur, text: `${x.value} · ${x.name}` })));
+    }
+    return h('input', { type: 'text', class: 'tiny mono', value: '0x' + (cur >>> 0).toString(16).toUpperCase(), autofocus: true, 'aria-label': t('Yeni değer'),
+      onkeydown: (e) => { if (e.key === 'Enter') done(e.target.value); if (e.key === 'Escape') done(); }, onblur: () => done() });
+  }
+  function write(periph, reg, field, value) {
+    post({ type: 'debug.write', periph, reg: reg.name, field: field ? field.name : undefined, value });
+  }
+  function focusEditor() {
+    requestAnimationFrame(() => { const el = document.querySelector('#dbg-regs input.tiny, #dbg-regs select.tiny[autofocus]'); if (el) { el.focus(); if (el.select) el.select(); } });
   }
 
   function bitsText(v, f) {
@@ -210,36 +270,74 @@
   function renderRegs() {
     const box = $('dbg-regs');
     if (!box) return;
-    const p = dbg.defs.find((x) => x.name === dbg.periph);
-    if (!p) { box.replaceChildren(h('div', { class: 'hint pad', text: t('Bağlanınca register tanımları yüklenir.') })); return; }
+    const fav = dbg.periph === FAV;
+    const sum = dbg.defs.find((x) => x.name === dbg.periph);
+    if (!fav && !sum) { box.replaceChildren(h('div', { class: 'hint pad', text: t('Bağlanınca register tanımları yüklenir.') })); return; }
+    if (!fav && !dbg.regs[dbg.periph]) { box.replaceChildren(h('div', { class: 'hint pad', text: t('Yükleniyor…') })); return; }
     if (!dbg.connected) dbg.values = {};
     const halted = dbg.state === 'halted';
+    const favKeys = new Set(dbg.favs.map((f) => f.key));
+    const AL = ACCESS_LABEL();
     const rows = [];
-    for (const r of p.registers) {
-      const v = wordAt(p, r.offset);
-      const pv = wordAt(p, r.offset, dbg.prev);
+    for (const { periph, reg: r } of shown()) {
+      const id = `${periph}.${r.name}`;
+      const v = wordAt(periph, r.offset);
+      const pv = wordAt(periph, r.offset, dbg.prev);
       const changed = v !== undefined && pv !== undefined && v !== pv;
-      const skipped = !halted && sideEffect(p, r);
-      const open = dbg.open.has(r.name);
-      rows.push(h('tr', { class: `reg${changed ? ' changed' : ''}${open ? ' open' : ''}`, onclick: () => { open ? dbg.open.delete(r.name) : dbg.open.add(r.name); renderRegs(); } },
-        h('td', { class: 'mono' }, h('span', { class: 'tw', text: r.fields.length ? (open ? '▾' : '▸') : '' }), r.name),
+      const skipped = !halted && sideEffect({ name: periph }, r);
+      const open = dbg.open.has(id);
+      const editing = dbg.edit === id;
+      const starred = favKeys.has(id);
+      const valCell = editing ? editor(v ?? r.reset ?? 0, (x) => write(periph, r, null, x))
+        : r.access === 'wo' ? h('span', { class: 'hint', text: t('(salt yazılır)') })
+          : skipped ? t('(durdurunca)') : v === undefined ? '—' : hex(v);
+      rows.push(h('tr', { class: `reg${changed ? ' changed' : ''}${open ? ' open' : ''}`, onclick: () => { open ? dbg.open.delete(id) : dbg.open.add(id); renderRegs(); } },
+        h('td', { class: 'mono' },
+          h('button', { class: `star${starred ? ' on' : ''}`, title: starred ? t('Sabitlemeyi kaldır') : t('Sabitle (favori)'), 'aria-label': t('Sabitle (favori)'), onclick: (e) => { e.stopPropagation(); post({ type: 'debug.fav', key: id, on: !starred }); } }, starred ? '★' : '☆'),
+          h('span', { class: 'tw', text: r.fields.length ? (open ? '▾' : '▸') : '' }), fav ? `${periph}.${r.name}` : r.name,
+          r.access && r.access !== 'rw' ? h('span', { class: 'acc', text: r.access.toUpperCase(), title: AL[r.access] }) : null),
         h('td', { class: 'mono hint', text: `+0x${r.offset.toString(16).toUpperCase().padStart(2, '0')}` }),
-        h('td', { class: 'mono val', title: skipped ? t('Okuması bayrak temizler; hedef durunca okunur.') : '', text: skipped ? '(durdurunca)' : v === undefined ? '—' : hex(v) }),
+        h('td', {
+          class: `mono val${canWrite(r) ? ' editable' : ''}`,
+          title: skipped ? t('Okuması bayrak temizler; hedef durunca okunur.') : canWrite(r) ? t('Değiştirmek için çift tıklayın') + (r.reset !== undefined ? ` · reset ${hex(r.reset)}` : '') : r.reset !== undefined ? `reset ${hex(r.reset)}` : '',
+          onclick: (e) => { if (editing) e.stopPropagation(); },
+          ondblclick: (e) => { e.stopPropagation(); if (!canWrite(r)) return; dbg.edit = id; renderRegs(); focusEditor(); }
+        }, valCell),
         h('td', { class: 'hint desc', text: r.desc || '' })));
-      if (open && v !== undefined && !skipped) {
+      if (open && (v !== undefined || r.access === 'wo') && !skipped) {
+        const word = v ?? r.reset ?? 0;
+        const pword = pv;
         for (const f of r.fields) {
-          const set = ((v >>> f.lsb) & ((1 << Math.min(f.width, 31)) - 1)) !== 0;
-          rows.push(h('tr', { class: 'field-row' },
-            h('td', { class: 'mono' }, h('span', { class: `bit${f.width === 1 && set ? ' on' : ''}` }), f.name),
+          const fv = fieldValue(word, f);
+          const fchanged = pword !== undefined && v !== undefined && fieldValue(pword, f) !== fv;
+          const en = f.enums && f.enums.find((x) => x.value === fv);
+          const fid = `${id}.${f.name}`;
+          const fedit = dbg.edit === fid;
+          const writable = canWrite(r, f) && r.access !== 'ro';
+          let cell;
+          if (fedit) cell = editor(fv, (x) => write(periph, r, f, x), f);
+          else if (f.width === 1 && writable && !(f.enums && f.enums.length > 2)) {
+            cell = h('label', { class: 'check', onclick: (e) => e.stopPropagation() }, h('input', { type: 'checkbox', checked: fv === 1, onchange: (e) => write(periph, r, f, e.target.checked ? 1 : 0) }), h('span', { text: String(fv) + (en ? ` · ${en.name}` : '') }));
+          } else cell = bitsText(word, f) + (en ? ` · ${en.name}` : '');
+          rows.push(h('tr', { class: `field-row${fchanged ? ' changed' : ''}` },
+            h('td', { class: 'mono' }, h('span', { class: `bit${f.width === 1 && fv ? ' on' : ''}` }), f.name,
+              f.access && f.access !== r.access && f.access !== 'rw' ? h('span', { class: 'acc', text: f.access.toUpperCase(), title: AL[f.access] }) : null),
             h('td', { class: 'mono hint', text: f.width === 1 ? `[${f.lsb}]` : `[${f.lsb + f.width - 1}:${f.lsb}]` }),
-            h('td', { class: 'mono', text: bitsText(v, f) }),
-            h('td', { class: 'hint desc', text: f.desc || '' })));
+            h('td', {
+              class: `mono${writable && f.width > 1 ? ' editable' : ''}`, title: writable && f.width > 1 ? t('Değiştirmek için çift tıklayın') : '',
+              ondblclick: () => { if (!writable || f.width === 1 && !(f.enums && f.enums.length > 2)) return; dbg.edit = fid; renderRegs(); focusEditor(); }
+            }, cell),
+            h('td', { class: 'hint desc', text: en && en.desc ? `${en.desc}${f.desc ? ' — ' + f.desc : ''}` : f.desc || '' })));
         }
       }
     }
-    box.replaceChildren(h('div', { class: 'regs-head' }, h('strong', { text: p.name }), h('span', { class: 'hint mono', text: hex(p.base) }), h('span', { class: 'hint', text: t('Satıra tıklayınca bit alanları açılır. Değişen değerler vurgulanır.') })),
-      h('table', { class: 'regs' }, h('tr', {}, ...['Register', 'Offset', t('Değer'), t('Açıklama')].map((x) => h('th', { text: x }))), ...rows));
+    const title = fav ? `★ ${t('Sabitlenenler')}` : sum.name;
+    box.replaceChildren(h('div', { class: 'regs-head' }, h('strong', { text: title }), fav ? null : h('span', { class: 'hint mono', text: hex(sum.base) }),
+      h('span', { class: 'hint', text: fav ? t('Farklı çevre birimlerinden sabitlenen register\'lar.') : (sum.desc ? sum.desc + ' · ' : '') + t('Satıra tıklayınca bit alanları açılır; değere çift tıklayınca yazılır. Değişen değerler vurgulanır.') })),
+    rows.length ? h('table', { class: 'regs' }, h('tr', {}, ...['Register', 'Offset', t('Değer'), t('Açıklama')].map((x) => h('th', { text: x }))), ...rows)
+      : h('div', { class: 'hint pad', text: t('Sabitlenen register yok. Register satırındaki ☆ ile ekleyin.') }));
   }
+  const fieldValue = (w, f) => ((w >>> f.lsb) & (f.width >= 32 ? 0xffffffff : (1 << f.width) - 1)) >>> 0;
 
   const CORE = ['r0', 'r1', 'r2', 'r3', 'r4', 'r5', 'r6', 'r7', 'r8', 'r9', 'r10', 'r11', 'r12', 'sp', 'lr', 'pc', 'xPSR'];
   function renderCore() {
@@ -250,13 +348,33 @@
       box.replaceChildren(h('div', { class: 'hint pad' }, dbg.coreErr || t('Hedef çalışıyor. Core register\'ları görmek için '), h('button', { class: 'small', onclick: () => cmd('halt') }, t('Durdur@@debug'))));
       return;
     }
-    const x = dbg.core.xPSR >>> 0;
+    const c = dbg.core;
+    const x = c.xPSR >>> 0;
     const flags = ['N', 'Z', 'C', 'V'].map((f, i) => h('span', { class: `flag${x & (1 << (31 - i)) ? ' on' : ''}`, text: f }));
-    box.replaceChildren(h('table', { class: 'regs core' }, ...CORE.map((n) => h('tr', {},
-      h('td', { class: 'mono', text: n }),
-      h('td', { class: 'mono val', text: dbg.core[n] === undefined ? '—' : hex(dbg.core[n]) }),
-      h('td', { class: 'mono hint', text: n === 'xPSR' ? '' : dbg.core[n] === undefined ? '' : String(dbg.core[n] | 0) })))),
-    h('div', { class: 'flags' }, h('span', { class: 'hint', text: t('xPSR bayrakları') }), ...flags, h('span', { class: 'hint mono', text: `ISR ${x & 0x1ff}` })));
+    const row = (n, note = '', label = n) => h('tr', {},
+      h('td', { class: 'mono', text: label }),
+      h('td', { class: 'mono val', text: c[n] === undefined ? '—' : hex(c[n]) }),
+      h('td', { class: 'mono hint', text: note }));
+    const isr = x & 0x1ff;
+    // Özel register'lar (ES-205): yığın işaretçileri, kesme maskeleri, CONTROL
+    const special = ['msp', 'psp', 'primask', 'basepri', 'faultmask', 'control'].filter((n) => c[n] !== undefined);
+    const ctl = c.control >>> 0;
+    const notes = {
+      msp: c.sp === c.msp ? t('etkin SP') : '', psp: c.sp === c.psp && c.sp !== c.msp ? t('etkin SP') : '',
+      primask: c.primask & 1 ? t('kesmeler kapalı') : '', faultmask: c.faultmask & 1 ? t('fault dışı her şey kapalı') : '',
+      basepri: c.basepri ? t('öncelik ≥ {0} maskeli', c.basepri) : '',
+      control: [ctl & 1 ? 'nPRIV' : t('ayrıcalıklı'), ctl & 2 ? 'PSP' : 'MSP', ctl & 4 ? 'FPCA' : ''].filter(Boolean).join(' · ')
+    };
+    const fpu = Object.keys(c).filter((n) => /^s\d+$/.test(n)).sort((a, b) => a.slice(1) - b.slice(1));
+    const f32 = (u) => { const dv = new DataView(new ArrayBuffer(4)); dv.setUint32(0, u >>> 0); const f = dv.getFloat32(0); return Number.isFinite(f) ? String(Number(f.toPrecision(7))) : String(f); };
+    box.replaceChildren(
+      h('table', { class: 'regs core' }, ...CORE.map((n) => row(n, n === 'xPSR' ? (isr ? `${t('istisna')} ${isr}${isr >= 16 ? ` (IRQ ${isr - 16})` : ''}` : 'Thread') : c[n] === undefined ? '' : String(c[n] | 0)))),
+      h('div', { class: 'flags' }, h('span', { class: 'hint', text: t('xPSR bayrakları') }), ...flags, h('span', { class: 'hint mono', text: `ISR ${isr}` })),
+      special.length ? h('table', { class: 'regs core' }, ...special.map((n) => row(n, notes[n], n.toUpperCase()))) : null,
+      fpu.length ? h('div', { class: 'p-group tree', onclick: () => { dbg.fpuOpen = !dbg.fpuOpen; renderCore(); } },
+        h('span', { class: 'tw', text: dbg.fpuOpen ? '▾' : '▸' }), h('span', { text: 'FPU' }), h('span', { class: 'hint mono', text: c.fpscr !== undefined ? `FPSCR ${hex(c.fpscr)}` : '' })) : null,
+      fpu.length && dbg.fpuOpen ? h('table', { class: 'regs core' }, ...fpu.map((n) => h('tr', {},
+        h('td', { class: 'mono', text: n }), h('td', { class: 'mono val', text: hex(c[n]) }), h('td', { class: 'mono hint', text: f32(c[n]) })))) : null);
   }
 
   function renderSymbols() {
