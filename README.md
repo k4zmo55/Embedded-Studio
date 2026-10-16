@@ -181,6 +181,22 @@ Her sensör için uygun görünüm: **3B IMU** (uçak modeli ve kırmızı/yeşi
 ve grafik. Widget'ların türünü ve boyutunu değiştirin, sürükleyip sıralayın. FreeRTOS task'larının durumu, boş stack'i ve CPU payı
 sağdaki tabloda.
 
+### Durum çubuğu: Build · Flash · Debug · Run
+
+Embedded Studio projesi açıkken VS Code'un alt durum çubuğunda (tasarımcı kapalıyken de):
+
+| Buton | Kısayol | Ne yapar |
+|---|---|---|
+| **Build** | F7 | Derler; bitince hata/uyarı sayısı ve flash/RAM kullanımı |
+| **Flash** | Shift+F7 | Derler, OpenOCD ile yükler ve doğrular; hedef durdurulmuş kalır |
+| **Debug** | F5 | Derler ve Cortex-Debug ile başlatır, `main`'de durur (eklenti yoksa kurmayı önerir) |
+| **Run** | Ctrl+F5 | Derler, yükler ve debugger olmadan çalıştırır |
+| **Terminal** | — | Monitör sekmesini açar (seri port terminali ileride) |
+| Prob | — | Tıklayınca bağlı ST-Link, hedef voltajı ve çekirdek; projedeki işlemciyle uyuşmazsa uyarır |
+
+Kısayollar sadece Embedded Studio projesinde ve debug oturumu dışında geçerlidir. Yüklemeden önce onay için
+`embeddedStudio.flash.confirm` ayarını açın.
+
 ### Debug
 
 <p align="center"><img src="docs/images/debug.png" width="900" alt="Debug sekmesi"></p>

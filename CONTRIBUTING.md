@@ -50,7 +50,7 @@ VS Code'da **F5** tuşuna bas. Eklentinin yüklü olduğu yeni bir pencere açı
 |---|---|---|
 | `node test/smoke.js` | Pin atama, saat ağacı, kod üretimi, kullanıcı kodu birleştirme, komponent doğrulama | Node 22+ |
 | `node test/build.js <önbellek> <çıktı> [filtre]` | HAL/CMSIS/FreeRTOS'u indirir, 15 işlemci için HAL ve bare-metal projeleri ve örnek sürücüleri (54 varyant) gerçekten derler. Filtre düzenli ifadedir, ör. `stm32g0` | git, cmake, ninja, arm-none-eabi-gcc |
-| `node test/ui-e2e.js <çalışma> <önbellek>` | Gerçek arayüzü headless tarayıcıda açar, 34 adımlık kullanıcı senaryosunu çalıştırır. `ES_THEME=light`, `ES_SIZE=1100x700` ve `ES_SLOW=6` (işlemciyi yavaşlatır) ile açık tema, dar pencere ve zamanlama hataları da denenebilir | Edge veya Chrome + yukarıdakiler |
+| `node test/ui-e2e.js <çalışma> <önbellek>` | Gerçek arayüzü headless tarayıcıda açar, 35 adımlık kullanıcı senaryosunu çalıştırır. `ES_THEME=light`, `ES_SIZE=1100x700` ve `ES_SLOW=6` (işlemciyi yavaşlatır) ile açık tema, dar pencere ve zamanlama hataları da denenebilir | Edge veya Chrome + yukarıdakiler |
 
 PR açmadan önce en azından `node test/smoke.js` çalıştır. Kod üretimini değiştirdiysen `test/build.js` de geçmeli.
 GitHub Actions her push'ta bu testleri otomatik çalıştırır.

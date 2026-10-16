@@ -1,5 +1,18 @@
 # Değişiklik günlüğü
 
+## 0.5.1 (önizleme)
+
+- **Durum çubuğunda Build / Flash / Debug / Run / Terminal butonları** ve prob bilgisi. Sadece Embedded Studio projesi açıkken görünür; tasarımcı paneli kapalıyken de çalışır.
+  - **Build** (F7): derleme sırasında dönen gösterge, bitince gcc hata/uyarı sayısı (başarısızsa kırmızı) ve boyut özeti.
+  - **Flash** (Shift+F7): derle, yükle, doğrula; hedef durdurulmuş kalır. **Run** (Ctrl+F5): derle, yükle, çalıştır.
+  - **Debug** (F5): derle ve Cortex-Debug ile başlat, `main`'de dur; launch.json gerekmez, SVD dosyası varsa eklenir. Cortex-Debug yoksa kurulum önerilir.
+  - **Terminal**: Monitör sekmesini açar (seri port terminali ES-211'de).
+  - **Prob**: tıklayınca OpenOCD ile bir kez bağlanır; ST-Link sürümü, hedef voltajı ve çekirdek gösterilir, projedeki işlemciyle uyuşmazsa uyarı. Sürekli algılama ES-202'de.
+- Komut paleti girdileri (Derle, Yükle, Debug, Çalıştır, Monitörü Aç, Prob ve Kart Bilgisi) ve kısayollar; kısayollar sadece projede ve debug dışında.
+- Yükleme onayı ayarı: `embeddedStudio.flash.confirm` (varsayılan kapalı).
+- Derleme/yükleme kodu tek yerde (`src/actions.js`); tasarımcıdaki Derle/Yükle düğmeleri de bunu kullanır.
+- Testler: birim 51, arayüz 35 adım (durum çubuğu eylemleri, görev bitişi, Debug yapılandırması, kart yokken prob uyarısı).
+
 ## 0.5.0 (önizleme)
 
 M1 (temel profesyonel kullanım) tamamlandı: çalışma modları, proje yapıları, kullanıcının yönettiği CMake, 15 STM32 ve örnek register sürücüleri.

@@ -32,7 +32,8 @@ const THEMES = {
 // ------------------------------------------------------------------ sahte vscode API
 const sse = [];
 const backlog = [];
-const recorded = { external: [], tasks: [], info: [], warn: [], errors: [], openFolder: [] };
+const recorded = { external: [], tasks: [], executions: [], info: [], warn: [], errors: [], openFolder: [], debug: [], context: {} };
+const statusItems = []; // durum çubuğu öğeleri (ES-201)
 let toWebview = (m) => { const line = `data: ${JSON.stringify(m)}\n\n`; if (!sse.length) backlog.push(line); sse.forEach((r) => r.write(line)); };
 let onWebviewMessage = null;
 const dialogQueue = [];
@@ -45,14 +46,14 @@ const vscodeFake = {
   ViewColumn: { One: 1, Beside: 2 }, StatusBarAlignment: { Left: 1 }, ProgressLocation: { Notification: 15 }, TaskScope: { Workspace: 2 },
   Task: class { constructor(def, scope, name, source, exec) { Object.assign(this, { def, definition: def, scope, name, source, exec }); } },
   ShellExecution: class { constructor(cmd, opts) { Object.assign(this, { cmd, opts }); } },
-  commands: { registerCommand: () => ({ dispose() {} }), executeCommand: async (...a) => recorded.openFolder.push(a) },
+  commands: { registerCommand: () => ({ dispose() {} }), executeCommand: async (...a) => { if (a[0] === 'setContext') recorded.context[a[1]] = a[2]; else recorded.openFolder.push(a); } },
   workspace: {
     workspaceFolders: [{ uri: uriOf(PROJECT) }], openTextDocument: async () => ({}),
     getConfiguration: () => ({ get: (k, d) => (k in settings ? settings[k] : d) }),
     onDidChangeConfiguration: (fn) => { configListeners.push(fn); return { dispose() {} }; }
   },
   window: {
-    createStatusBarItem: () => ({ show() {}, dispose() {} }),
+    createStatusBarItem: () => { const i = { visible: false, show() { this.visible = true; }, hide() { this.visible = false; }, dispose() {} }; statusItems.push(i); return i; },
     createOutputChannel: () => ({ append() {}, appendLine() {} }),
     createWebviewPanel: () => ({
       webview: {
@@ -71,7 +72,16 @@ const vscodeFake = {
     showTextDocument: async () => {},
     withProgress: async (o, fn) => fn({ report() {} })
   },
-  tasks: { executeTask: async (t) => recorded.tasks.push(t), onDidEndTaskProcess: (fn) => { taskEndListeners.push(fn); return { dispose() {} }; } },
+  tasks: {
+    executeTask: async (t) => { const ex = { task: t }; recorded.tasks.push(t); recorded.executions.push(ex); return ex; },
+    onDidEndTaskProcess: (fn) => { taskEndListeners.push(fn); return { dispose() {} }; }
+  },
+  TaskRevealKind: { Always: 1 },
+  DiagnosticSeverity: { Error: 0, Warning: 1 },
+  ThemeColor: class { constructor(id) { this.id = id; } },
+  languages: { getDiagnostics: () => [] },
+  extensions: { getExtension: () => ({ id: 'marus25.cortex-debug' }) },
+  debug: { startDebugging: async (folder, cfg) => { recorded.debug.push(cfg); return true; } },
   env: { language: 'tr', openExternal: async (u) => recorded.external.push(String(u.toString ? u.toString() : u)) }
 };
 const origResolve = Module._resolveFilename;
@@ -744,7 +754,7 @@ async function until(fn, ms = 8000, what = 'koşul') {
     if (process.platform === 'win32') assert.strictEqual(task.exec.opts.executable, 'cmd.exe');
     execSync(task.exec.cmd, { cwd: PROJECT, stdio: 'pipe', shell: process.platform === 'win32' ? 'cmd.exe' : undefined });
     for (const x of ['elf', 'hex', 'bin', 'map']) assert.ok(fs.existsSync(P(`build/release/demo_proje.${x}`)), x);
-    taskEndListeners.forEach((fn) => fn({ execution: { task }, exitCode: 0 }));
+    taskEndListeners.forEach((fn) => fn({ execution: recorded.executions[recorded.executions.length - 1], exitCode: 0 }));
     await until(() => recorded.info.some((m) => m.startsWith('Derlendi (Release): Flash')), 8000, 'boyut özeti bildirimi');
     await cdp.click('#tab-settings');
     await until(() => cdp.eval(`!!document.querySelector('#set-size .bar > div')`), 3000, 'ayarlarda boyut çubukları');
@@ -879,6 +889,64 @@ async function until(fn, ms = 8000, what = 'koşul') {
     await until(() => design().framework === 'hal', 4000, 'HAL');
     await cdp.click('#generate');
     await until(() => fs.existsSync(P('Core/Src/app.c')), 20000, 'HAL dosyaları');
+    await cdp.click('#tab-design');
+  });
+  await step('Durum çubuğu (ES-201): Build/Flash/Debug/Run/Terminal/prob; görev bitişi, Debug yapılandırması, prob yokken uyarı', async () => {
+    assert.strictEqual(recorded.context['embeddedStudio.projectOpen'], true, 'bağlam anahtarı');
+    const texts = () => statusItems.filter((i) => i.visible).map((i) => i.text);
+    for (const w of ['Build', 'Flash', 'Debug', 'Run', 'Terminal']) assert.ok(texts().some((x) => x.includes(w)), `${w} görünür: ${texts()}`);
+    // Görev bitişini taklit et: en son başlatılan görev çıkış koduyla biter
+    const finishLast = async (code) => {
+      const n = recorded.executions.length;
+      await until(() => recorded.executions.length >= n, 3000, 'görev');
+      taskEndListeners.forEach((fn) => fn({ execution: recorded.executions[recorded.executions.length - 1], exitCode: code }));
+    };
+    const waitNew = async (n, what) => until(() => recorded.executions.length > n, 5000, what);
+    // Build: başarısız → durum çubuğunda hata
+    let n = recorded.executions.length;
+    const b = cmds['embeddedStudio.build']();
+    await waitNew(n, 'derleme görevi');
+    await until(() => texts().some((x) => x.includes('$(sync~spin) Build')), 2000, 'derleniyor göstergesi');
+    await finishLast(1);
+    assert.strictEqual(await b, false);
+    assert.ok(texts().some((x) => /Build \$\(error\) 0 \$\(warning\) 0/.test(x)), texts().join(' | '));
+    assert.ok(recorded.errors.some((m) => m.startsWith('Derleme başarısız')), 'hata bildirimi');
+    // Debug: derle → Cortex-Debug yapılandırması
+    n = recorded.executions.length;
+    const d = cmds['embeddedStudio.debug']();
+    await waitNew(n, 'debug öncesi derleme');
+    await finishLast(0);
+    await d;
+    const cfg = recorded.debug[recorded.debug.length - 1];
+    assert.ok(cfg && cfg.type === 'cortex-debug' && cfg.runToEntryPoint === 'main' && /build[\\/]debug[\\/]demo_proje\.elf$/.test(cfg.executable), JSON.stringify(cfg));
+    assert.deepStrictEqual(cfg.configFiles, ['interface/stlink.cfg', 'target/stm32f4x.cfg']);
+    // Run: derle + yükle (reset ile çalıştır)
+    n = recorded.executions.length;
+    const r = cmds['embeddedStudio.run']();
+    await waitNew(n, 'run derleme');
+    await finishLast(0);
+    await waitNew(n + 1, 'yükleme görevi');
+    const flashTask = recorded.tasks[recorded.tasks.length - 1];
+    assert.ok(flashTask.exec.cmd.includes('program build/debug/demo_proje.elf verify reset exit'), flashTask.exec.cmd);
+    await finishLast(0);
+    assert.strictEqual(await r, true);
+    assert.ok(recorded.info.some((m) => m.startsWith('Yüklendi ve çalışıyor')), 'çalışıyor bildirimi');
+    // Flash: hedef durur (reset yok)
+    n = recorded.executions.length;
+    const f = cmds['embeddedStudio.flash']();
+    await waitNew(n, 'flash derleme');
+    await finishLast(0);
+    await waitNew(n + 1, 'flash görevi');
+    assert.ok(/verify exit"$/.test(recorded.tasks[recorded.tasks.length - 1].exec.cmd), recorded.tasks[recorded.tasks.length - 1].exec.cmd);
+    await finishLast(0);
+    await f;
+    // Terminal → Monitör sekmesi
+    await cmds['embeddedStudio.terminal']();
+    await until(() => cdp.eval(`document.querySelector('#monitor').classList.contains('active')`), 3000, 'monitör sekmesi');
+    // Prob: bu makinede kart yok → anlaşılır hata, durum çubuğunda "Prob yok"
+    const pr = await cmds['embeddedStudio.probe']();
+    assert.ok(pr && !pr.ok && pr.error, JSON.stringify(pr && { ok: pr.ok, error: pr.error }));
+    assert.ok(texts().some((x) => x.includes('Prob yok')), texts().join(' | '));
     await cdp.click('#tab-design');
   });
   await step('İngilizce arayüz: ayar değişince yeniden yüklenir, ekranda Türkçe metin kalmaz', async () => {
