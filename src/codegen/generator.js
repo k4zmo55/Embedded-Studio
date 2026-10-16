@@ -423,7 +423,7 @@ ${indent(userBlock('PostInit'))}
   add('CMakePresets.json', cm.cmakePresets(), userCmake ? 'once' : 'generated');
   add(join(P.linkerDir, `${mcu.name}_FLASH.ld`), linkerScript(mcu));
   add('.vscode/tasks.json', tasksJson(name, mcu), 'once');
-  add('.vscode/launch.json', launchJson(design, mcu), 'once');
+  add('.vscode/launch.json', launchJson(design, mcu, clock), 'once');
   add('.vscode/settings.json', JSON.stringify({ 'files.autoSave': 'afterDelay', 'files.autoSaveDelay': 1000, 'cmake.configureOnOpen': false }, null, 2) + '\n', 'once');
   add('.gitignore', 'build/\n.embedded-studio/removed/\n', 'once');
 
@@ -721,13 +721,17 @@ function tasksJson(name, mcu) {
   }, null, 2) + '\n';
 }
 
+/** SWO/RTT için çekirdek saati (HCLK = TRACECLKIN); Cortex-M0/M0+'ta ITM yok */
+const traceInputs = (mcu, clock) => (clock && clock.freq ? { cpuHz: Math.round(clock.freq.hclk * 1e6), swo: !/cortex-m0/.test(familyOf(mcu).core) } : {});
+
 /** Debug, reset'te dur ve attach yapılandırmaları (ES-204; "Debug Yapılandırması Oluştur" komutuyla aynı) */
-function launchJson(design, mcu) {
+function launchJson(design, mcu, clock) {
   return JSON.stringify({
     version: '0.2.0',
     configurations: launchConfigs({
       project: design.project.name, cwd: '${workspaceFolder}', elf: '${workspaceFolder}/' + cm.elfRel(design),
-      mcuName: mcu.name, targetCfg: mcu.device.openocdTarget, rtos: !!design.rtos, preLaunchTask: buildTaskLabel(cm.normalizeBuild(design.build).type)
+      mcuName: mcu.name, targetCfg: mcu.device.openocdTarget, rtos: !!design.rtos, preLaunchTask: buildTaskLabel(cm.normalizeBuild(design.build).type),
+      ...traceInputs(mcu, clock)
     })
   }, null, 2) + '\n';
 }

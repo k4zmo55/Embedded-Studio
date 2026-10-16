@@ -33,6 +33,7 @@ const { OpenOcdTarget, SimTarget, simModel, elfSymbols } = require('./debug/sess
 const { builtinStm32f4, parseSvd, summary, parseValue, insertField, mask } = require('./debug/registers');
 const { readRegion, toIntelHex, checkWrite, simSymbols, MAX_SAVE } = require('./debug/memory');
 const fault = require('./debug/fault');
+const trace = require('./debug/trace');
 const i18n = require('./i18n');
 const { t } = i18n;
 
@@ -280,6 +281,7 @@ class Studio {
     panel.webview.onDidReceiveMessage((m) => this.onMessage(m).catch((e) => this.toast('error', e.message)), null, context.subscriptions);
     panel.onDidDispose(() => {
       this.monitor?.stop();
+      this.dropTrace();
       this.target?.disconnect().catch(() => {});
       clearInterval(this.flushTimer);
       Studio.current = undefined;
@@ -487,6 +489,7 @@ class Studio {
         await this.connectDebug(m.mode);
         break;
       case 'debug.disconnect':
+        await this.dropTrace();
         await this.target?.disconnect().catch(() => {});
         this.target = null;
         this.post({ type: 'debug.status', connected: false });
@@ -526,6 +529,28 @@ class Studio {
         break;
       case 'debug.source':
         await this.openSource(m.file, m.line);
+        break;
+      // ES-208: SWO/ITM, RTT, semihosting
+      case 'debug.traceInfo':
+        this.postTraceInfo();
+        break;
+      case 'debug.swo':
+        await this.traceCall(() => (m.on ? this.startSwo(m) : this.trace.stopSwo()));
+        break;
+      case 'debug.rtt':
+        await this.traceCall(() => (m.on ? this.startRtt(m) : this.trace.stopRtt()));
+        break;
+      case 'debug.rttSend':
+        await this.traceCall(() => this.trace.rttSend(Number(m.ch) || 0, String(m.text), m.eol ?? '\n'));
+        break;
+      case 'debug.semi':
+        await this.traceCall(() => this.trace.semihosting(!!m.on));
+        break;
+      case 'debug.profileReset':
+        this.trace?.resetProfile();
+        break;
+      case 'debug.consoleSave':
+        await this.saveConsole(m.text, m.name);
         break;
       case 'build':
         await actions.build();
@@ -886,6 +911,7 @@ class Studio {
   }
 
   async connectDebug(mode) {
+    await this.dropTrace();
     await this.target?.disconnect().catch(() => {});
     this.target = null;
     const mcu = this.lib.mcus[this.design.mcuId];
@@ -911,6 +937,7 @@ class Studio {
         log: (s) => out && out.append(s),
         onExit: (why) => {
           if (this.target !== target) return;
+          this.dropTrace();
           this.target = null;
           this.post({ type: 'debug.status', connected: false, error: why });
         }
@@ -927,12 +954,15 @@ class Studio {
     // F411 dışındaki işlemcilerde register görünümü için SVD gerekir: yoksa indir
     if (!this.svdName) await this.loadSvd(this.design.mcuId !== 'stm32f411ceu6');
     else this.postRegs();
+    this.trace = new trace.TraceSession(this.target, (x) => this.post(x));
     this.post({ type: 'debug.status', connected: true, mode, state: await this.target.state() });
+    this.postTraceInfo();
   }
 
   /** VS Code debug oturumu başlamadan önce: panelin OpenOCD bağlantısı probu bırakır */
   async releaseProbe() {
     if (!this.target || this.target.mode !== 'openocd') return;
+    await this.dropTrace();
     await this.target.disconnect().catch(() => {});
     this.target = null;
     this.post({ type: 'debug.status', connected: false, error: t('Prob VS Code debug oturumuna devredildi; panel bağlantısı kapatıldı.') });
@@ -1119,6 +1149,80 @@ class Studio {
     }
   }
 
+  // ---------------------------------------------------------------- ES-208: SWO/ITM, RTT, semihosting
+  async dropTrace() {
+    const tr = this.trace;
+    this.trace = null;
+    if (tr) await tr.dispose().catch(() => {});
+  }
+
+  /** Hata webview'daki konsol durumuna yazılır (toast yerine: konsolun yanında görünsün) */
+  async traceCall(fn) {
+    if (!this.trace) return this.post({ type: 'debug.trace', error: t('Önce hedefe bağlanın.') });
+    try {
+      await fn();
+    } catch (e) {
+      this.trace?.status({ error: e.message });
+    }
+  }
+
+  /** Konsol varsayılanları: çekirdek saati (HCLK = TRACECLKIN), SWO desteği, kayıtlı ayarlar */
+  postTraceInfo() {
+    const mcu = this.lib.mcus[this.design.mcuId];
+    const fam = familyOf(mcu);
+    const { clock } = this.compute();
+    const v6m = /cortex-m0/.test(fam.core);
+    this.post({
+      type: 'debug.traceInfo', cpuHz: Math.round(clock.freq.hclk * 1e6), swo: !v6m, dataTrace: !v6m && fam.core !== 'cortex-m33',
+      core: fam.core, settings: this.debugState().trace || {}
+    });
+  }
+
+  /** @param {{ cpuHz: number, swoHz: number, ports: string, pc?: boolean, data?: string[] }} m */
+  async startSwo(m) {
+    const mcu = this.lib.mcus[this.design.mcuId];
+    if (/cortex-m0/.test(familyOf(mcu).core)) throw new Error(t('{0} (Cortex-M0/M0+) ITM/SWO içermez; RTT ya da semihosting kullanın.', mcu.name));
+    const ports = trace.parsePorts(m.ports);
+    if (!Number.isFinite(ports) || !ports) throw new Error(t('Geçersiz port listesi: {0} (ör. 0 ya da 0,1,5-7)', m.ports));
+    const elf = this.root ? path.join(this.root, cm.elfRel(this.design)) : '';
+    const nm = cm.gccTool(this.design.build, 'nm');
+    let funcs = m.pc ? await trace.functionSymbols(elf, nm) : [];
+    if (m.pc && !funcs.length && this.target.mode === 'sim') funcs = trace.SIM_FUNCS;
+    // Data trace: izleme listesindeki adlar → adres/boyut (ELF; simülasyonda örnek değişkenler)
+    let data = [];
+    if ((m.data || []).length) {
+      const syms = await elfSymbols(elf, nm).catch(() => (this.target.mode === 'sim' ? simSymbols(this.target.model, this.design.instances) : []));
+      data = m.data.slice(0, trace.DWT_COMPARATORS).map((name) => {
+        const s = syms.find((x) => x.name === name);
+        if (!s) throw new Error(t('Değişken bulunamadı: {0}', name));
+        return { name, addr: s.addr, size: s.size >= 4 ? 4 : s.size >= 2 ? 2 : 1, pc: !!m.dataPc };
+      });
+    }
+    this.saveDebugState({ trace: { ...(this.debugState().trace || {}), swoHz: m.swoHz, ports: m.ports, pc: !!m.pc, data: m.data || [] } });
+    await this.trace.startSwo({ cpuHz: Number(m.cpuHz), swoHz: Number(m.swoHz), ports, pc: !!m.pc, data, funcs });
+  }
+
+  /** RTT: ELF'te _SEGGER_RTT varsa doğrudan, yoksa RAM'de arama */
+  async startRtt(m) {
+    const mcu = this.lib.mcus[this.design.mcuId];
+    const elf = this.root ? path.join(this.root, cm.elfRel(this.design)) : '';
+    let addr = m.addr ? parseValue(m.addr) : await trace.symbolAddr(elf, '_SEGGER_RTT', cm.gccTool(this.design.build, 'nm'));
+    if (addr !== undefined && !Number.isFinite(addr)) addr = undefined;
+    this.saveDebugState({ trace: { ...(this.debugState().trace || {}), rttAddr: m.addr || '' } });
+    await this.trace.startRtt({ addr, ramStart: 0x20000000, ramSize: Math.min(512, mcu.ramKB || 64) * 1024 });
+  }
+
+  /** Konsol çıktısını dosyaya kaydet */
+  async saveConsole(text, name) {
+    const uri = await vscode.window.showSaveDialog({
+      defaultUri: vscode.Uri.file(path.join(this.root || require('os').homedir(), `${name || 'console'}.log`)),
+      filters: { [t('Günlük')]: ['log', 'txt'] }
+    });
+    if (!uri) return;
+    fs.writeFileSync(uri.fsPath, String(text || ''));
+    this.toast('info', t('Kaydedildi: {0}', path.basename(uri.fsPath)));
+  }
+
   /** Kaynak dosyada satıra git */
   async openSource(file, line) {
     try {
@@ -1165,7 +1269,7 @@ class Studio {
     const webview = this.panel.webview;
     const media = (f) => webview.asWebviewUri(vscode.Uri.joinPath(this.context.extensionUri, 'media', f));
     const nonce = [...Array(32)].map(() => Math.random().toString(36)[2]).join('');
-    const scripts = ['i18n.js', 'core.js', 'art.js', 'wizard.js', 'design.js', 'creator.js', 'clock.js', 'widgets.js', 'monitor.js', 'debug.js', 'settings.js', 'genpreview.js', 'main.js'];
+    const scripts = ['i18n.js', 'core.js', 'art.js', 'wizard.js', 'design.js', 'creator.js', 'clock.js', 'widgets.js', 'monitor.js', 'console.js', 'debug.js', 'settings.js', 'genpreview.js', 'main.js'];
     return `<!doctype html>
 <html lang="${i18n.getLanguage()}">
 <head>

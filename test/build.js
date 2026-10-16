@@ -19,6 +19,7 @@ function regDriverUsage(mcu, ids) {
   const tim = Object.keys(mcu.peripherals).find((p) => mcu.peripherals[p].type === 'pwm');
   const L = [];
   for (const id of has) L.push(`#include "es_${id}.h"`);
+  if (has.has('trace')) L.push('int _write(int fd, char *ptr, int len);');
   L.push('', '__attribute__((constructor)) static void es_usage(void)', '{');
   if (has.has('rcc')) L.push('  (void)es_clock_init();', '  (void)es_rcc_ahb_div();');
   if (has.has('gpio')) L.push('  es_gpio_clock_enable(GPIOA);', '  es_gpio_init(GPIOA, 5, ES_GPIO_OUTPUT, ES_GPIO_NOPULL, ES_GPIO_PUSHPULL, 0);', '  es_gpio_toggle(GPIOA, 5);', '  (void)es_gpio_read(GPIOA, 5);');
@@ -35,6 +36,7 @@ function regDriverUsage(mcu, ids) {
   if (has.has('wwdg')) L.push('  es_wwdg_start(0x7F, 0x5F, 3);', '  es_wwdg_refresh(0x7F);');
   if (has.has('crc')) L.push('  static const uint32_t w[2] = { 1, 2 };', '  es_crc_init();', '  (void)es_crc32(w, 2);');
   if (has.has('flash')) L.push('  static const uint8_t kayit[32] = { 1 };', '  es_flash_unlock();', '  (void)es_flash_erase(ES_FLASH_BASE + ES_FLASH_SIZE - 32U);', '  (void)es_flash_program(ES_FLASH_BASE + ES_FLASH_SIZE - 32U, kayit, sizeof kayit);', '  es_flash_lock();');
+  if (has.has('trace')) L.push('  es_trace_init();', '  es_itm_write(1, "x", 1);', '  (void)es_rtt_write("x", 1);', '  (void)es_rtt_getc();', '  (void)_write(1, (char *)"y", 1);');
   L.push('}', '');
   return L.join('\n');
 }

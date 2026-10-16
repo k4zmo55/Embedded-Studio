@@ -18,7 +18,8 @@ const CHAPTER = {
   spi: 'Serial peripheral interface (SPI)', i2c: 'Inter-integrated circuit (I2C) interface', tim: 'General-purpose timers (TIMx)',
   adc: 'Analog-to-digital converter (ADC)', dac: 'Digital-to-analog converter (DAC)', dma: 'Direct memory access controller (DMA)',
   dmamux: 'DMA request multiplexer (DMAMUX)', gpdma: 'General purpose direct memory access controller (GPDMA)', iwdg: 'Independent watchdog (IWDG)',
-  wwdg: 'System window watchdog (WWDG)', crc: 'Cyclic redundancy check calculation unit (CRC)', flash: 'Embedded flash memory (FLASH)'
+  wwdg: 'System window watchdog (WWDG)', crc: 'Cyclic redundancy check calculation unit (CRC)', flash: 'Embedded flash memory (FLASH)',
+  trace: 'Debug support (DBG)'
 };
 
 let SECTIONS = {};
@@ -43,7 +44,8 @@ const DRIVERS = [
   { id: 'iwdg', title: 'IWDG', desc: 'Bağımsız watchdog: milisaniye cinsinden zaman aşımı, besleme.' },
   { id: 'wwdg', title: 'WWDG', desc: 'Pencereli watchdog: sayaç ve pencere ayarı.' },
   { id: 'crc', title: 'CRC', desc: 'Donanım CRC-32 (polinom 0x04C11DB7).' },
-  { id: 'flash', title: 'FLASH', desc: 'Kilit açma, sayfa/sektör silme, programlama (bu işlemcinin flash düzeniyle).' }
+  { id: 'flash', title: 'FLASH', desc: 'Kilit açma, sayfa/sektör silme, programlama (bu işlemcinin flash düzeniyle).' },
+  { id: 'trace', title: 'Trace (ITM / RTT)', desc: 'printf\'i SWO/ITM ve SEGGER RTT\'ye yönlendirme; Debug > Konsol ile okunur.' }
 ];
 
 /** Seçilen sürücüler + bağımlılıkları, bu işlemcide olmayanlar hariç. */
@@ -326,7 +328,7 @@ ${irq}
 function regDriverFiles(mcu, ids, clock) {
   const io = require('./regdrivers-io');
   const sys = require('./regdrivers-sys');
-  const gen = { rcc, gpio, exti, uart: io.uart, spi: io.spi, i2c: io.i2c, tim: io.tim, adc: sys.adc, dac: sys.dac, dma: sys.dma, iwdg: sys.iwdg, wwdg: sys.wwdg, crc: sys.crc, flash: sys.flash };
+  const gen = { rcc, gpio, exti, uart: io.uart, spi: io.spi, i2c: io.i2c, tim: io.tim, adc: sys.adc, dac: sys.dac, dma: sys.dma, iwdg: sys.iwdg, wwdg: sys.wwdg, crc: sys.crc, flash: sys.flash, trace: sys.trace };
   const x = context(mcu, clock);
   const out = {};
   for (const id of resolveDrivers(mcu, ids)) Object.assign(out, gen[id](x));

@@ -22,6 +22,7 @@ const { classify, listUsb } = require('./debug/usb');
 const { readCommands, decodeTarget, matchesProject } = require('./debug/stm32id');
 const { cortexConfig, launchConfigs, mergeJsonList, buildTask, buildTaskLabel, breakpointUsage, disassemblyArgs, SERVERS } = require('./debug/launch');
 const { familyOf } = require('./codegen/families');
+const { computeClock } = require('./engine/clock');
 const { t } = require('./i18n');
 
 const SOURCE = 'Embedded Studio';
@@ -230,7 +231,8 @@ class ProjectActions {
       mcuName: mcu.name, targetCfg: mcu.device.openocdTarget, interfaceCfg: probe?.interfaceCfg,
       serial: multiple ? probe.serial : undefined, svd: fs.existsSync(svd) ? rel(svd) : undefined,
       toolchainPath: p.design.build.toolchain?.gccPath || undefined, rtos: !!p.design.rtos,
-      speedKHz: flashSettings().speedKHz || undefined
+      speedKHz: flashSettings().speedKHz || undefined,
+      cpuHz: Math.round(computeClock(mcu, p.design.clock).freq.hclk * 1e6), swo: !/cortex-m0/.test(familyOf(mcu).core)
     };
   }
 

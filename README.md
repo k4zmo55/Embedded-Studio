@@ -227,6 +227,8 @@ Simülasyon ya da **OpenOCD** (algılanan prob: ST-Link, J-Link, CMSIS-DAP): dur
 çevre birimi register'ları (yerleşik tanımlar ya da tam CMSIS-SVD); bellek görüntüleyici (adres ya da sembolle gitme, 8/16/32 bit, düzenleme, .bin/.hex kaydetme);
 Live Watch: ELF'teki global değişkenler hedef durdurulmadan okunur, zaman grafiğinde izlenir.
 HardFault analizörü: fault register'ları cümlelere çevrilir, PC/LR kaynak satıra çözülür, MSP/PSP (RTOS görevi) ayrılır, olası nedenler listelenir.
+Konsol: SWO/ITM `printf` (port seçimi, SWO frekansı), SEGGER RTT okuma/yazma, semihosting çıktısı; PC örneklemeyle fonksiyon bazında profil ve
+değişken erişimlerini durdurmadan izleyen SWV data trace. Bare-metal projelerde `es_trace` örnek sürücüsü `printf`'i ITM ve RTT'ye yönlendirir.
 Okuması bayrak temizleyen register'lar (ör. `USART->DR`) sadece hedef durduğunda okunur; çalışan firmware'den veri çalınmaz.
 VS Code debug oturumu başlarken panelin OpenOCD bağlantısı probu kendiliğinden bırakır.
 

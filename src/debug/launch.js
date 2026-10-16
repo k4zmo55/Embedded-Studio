@@ -27,7 +27,8 @@ const SERVERS = {
  * Bir Cortex-Debug yapılandırması.
  * @param {{ name: string, server?: string, request?: 'launch'|'attach', haltOnReset?: boolean, elf: string, cwd: string,
  *   mcuName: string, targetCfg: string, interfaceCfg?: string, serial?: string, svd?: string, toolchainPath?: string,
- *   rtos?: boolean, preLaunchTask?: string, speedKHz?: number }} o
+ *   rtos?: boolean, preLaunchTask?: string, speedKHz?: number, cpuHz?: number, swo?: boolean }} o
+ *   cpuHz: SWO/RTT bloklarını ekler (HCLK); swo false: çekirdekte ITM yok
  */
 function cortexConfig(o) {
   const server = o.server || 'openocd';
@@ -51,6 +52,12 @@ function cortexConfig(o) {
   if (o.svd) c.svdFile = o.svd;
   if (o.rtos) c.rtos = server === 'jlink' ? 'FreeRTOS' : server === 'openocd' ? 'auto' : undefined;
   if (o.toolchainPath) c.armToolchainPath = o.toolchainPath;
+  // ES-208: SWO ve RTT konsolu. Kapalı gelir: firmware ITM/RTT'ye yazıyorsa "enabled" true yapılır
+  // (Embedded Studio'nun Debug > Konsol paneli de aynı çıkışı okur; prob aynı anda tek oturuma bağlanır).
+  if (o.cpuHz && o.swo !== false && server !== 'pyocd') {
+    c.swoConfig = { enabled: false, cpuFrequency: o.cpuHz, swoFrequency: 2000000, source: 'probe', decoders: [{ type: 'console', label: 'ITM', port: 0 }] };
+  }
+  if (o.cpuHz) c.rttConfig = { enabled: false, address: 'auto', decoders: [{ label: 'RTT', port: 0, type: 'console' }] };
   if (o.preLaunchTask) c.preLaunchTask = o.preLaunchTask;
   for (const k of Object.keys(c)) if (c[k] === undefined) delete c[k];
   return c;

@@ -140,7 +140,8 @@
     ['iwdg', 'IWDG', t('Bağımsız watchdog: milisaniye cinsinden zaman aşımı.')],
     ['wwdg', 'WWDG', t('Pencereli watchdog: sayaç ve pencere ayarı.')],
     ['crc', 'CRC', t('Donanım CRC-32 (polinom 0x04C11DB7).')],
-    ['flash', 'FLASH', t('Kilit açma, sayfa/sektör silme, programlama (bu işlemcinin flash düzeniyle).')]
+    ['flash', 'FLASH', t('Kilit açma, sayfa/sektör silme, programlama (bu işlemcinin flash düzeniyle).')],
+    ['trace', 'Trace (ITM / RTT)', t('printf\'i SWO/ITM ve SEGGER RTT\'ye yönlendirme; Debug > Konsol ile okunur.')]
   ];
 
   /** src/codegen/regdrivers.js DRIVERS[].requires ile aynı */

@@ -1,5 +1,19 @@
 # Değişiklik günlüğü
 
+## 0.5.8 (önizleme)
+
+- **Debug konsolu:** Debug sekmesinin altında daraltılabilir panel; SWO / ITM, RTT, Semihosting, Profil ve Data trace sekmeleri. Akış olan sekmede yeşil işaret; çıktı temizlenebilir, `.log` olarak kaydedilebilir, satır başına geliş zamanı eklenebilir.
+- **SWO / ITM `printf`:** çekirdek saati projenin HCLK'sinden (TRACECLKIN) gelir, SWO frekansı ve stimulus portları (`0`, `0,1,5-7`) seçilir. OpenOCD 0.12+ TPIU nesnesi (`tpiu names` → `configure -protocol uart -output :port`), yoksa 0.11'in `tpiu config` komutu; ham ITM akışı TCP'den okunur. ITM/DWT register'ları (TER, TCR, TPR, DWT_CTRL, M7'de kilit açma) panel yazar. Paket çözücü senkron, taşma, yerel/genel zaman damgası, uzantı, yazılım ve donanım (DWT) paketlerini ayırır; parça parça gelen akışı birleştirir. Birden çok portta satır başına `[port]` öneki ve port süzgeci. Taşma olursa uyarı.
+- **Profil (PC örnekleme):** DWT PC örnekleme, SWO bant genişliğinin yarısını ve saniyede ~10 000 örneği geçmeyecek aralıkla açılır. Örnekler ELF'teki fonksiyonlara dağıtılır (yüzde, örnek sayısı, çubuk); WFI/WFE uykusu ayrı satır.
+- **Data trace:** izleme listesinden en fazla 4 değişken (DWT karşılaştırıcısı); her erişimde değer, yazma/okuma ve isteğe bağlı erişen komutun PC'si hedef durdurulmadan gelir (ARMv7-M: M3/M4/M7).
+- **SEGGER RTT:** kontrol bloğu ELF'teki `_SEGGER_RTT`'den ya da RAM'de "SEGGER RTT" kimliği aranarak bulunur (adres elle de verilebilir); up kanalları 100 ms'de bir okunur, down kanalına satır gönderilir (LF / CRLF / yok, ↑↓ ile geçmiş). Halka tampon sınırı ve dolu tampon doğru işlenir. Probdan bağımsızdır (OpenOCD bellek erişimi), simülasyonda da çalışır.
+- **Semihosting:** `arm semihosting enable`; çıktı OpenOCD'nin stdout'undan günlük satırları ayıklanarak alınır. `rdimon.specs` ve `initialise_monitor_handles()` hatırlatması.
+- **`es_trace` örnek sürücüsü (bare-metal):** `es_itm_putc/es_itm_write` (debugger portu açmadıysa sessizce atlar), SEGGER RTT ile aynı düzende `_SEGGER_RTT` bloğu (J-Link RTT Viewer ve OpenOCD de okur), `es_rtt_write/read/getc` (kesme güvenli, hedef asla beklemez) ve `printf`'i ITM ve/veya RTT'ye yönlendiren `_write` (`ES_TRACE_STDOUT`). Cortex-M0/M0+'ta ITM kısmı boş. 15 işlemcide `-Werror` ile derlendi.
+- **Cortex-Debug:** üretilen ve "Debug Yapılandırması Oluştur"la yazılan `launch.json`'a `swoConfig` (doğru `cpuFrequency`) ve `rttConfig` blokları kapalı olarak eklenir; `enabled: true` yapmak yeterli.
+- Simülasyonda SWO (port 0 `printf`, port 1 günlük, gerçek ITM paketleriyle PC örnekleri ve data trace), RTT (saniyede bir satır, gönderileni yankılar) ve semihosting çıktısı; hepsi ITM/DWT register'larında açılanlara uyar.
+- Düzeltme: simülasyonda 0x80000000 üstü adreslere (ör. ITM/DWT, SCB) yazmalar yanlış anahtara kaydediliyordu.
+- Testler: birim 66 (paket çözücü, ITM/DWT ayarı, PC profili, RTT halka sınırı ve dolu tampon, uçtan uca simülasyon, es_trace, launch.json), derleme 15 varyant, arayüz 38 (SWO iki port ve süzgeç, profil, data trace, RTT yankı, semihosting, kaydetme). Gerçek kartta henüz denenmedi.
+
 ## 0.5.7 (önizleme)
 
 - **HardFault analizörü:** debug panelinde "Fault analizi". SHCSR, CFSR, HFSR, MMFAR ve BFAR okunur; set olan her bit anlamlı bir cümleye çevrilir (ör. "Geçersiz adrese veri erişimi", "Hizasız bellek erişimi", "Sıfıra bölme", "Thumb biti 0 olan adrese dallanıldı"). Yükseltilmiş (FORCED) fault'larda asıl tür (MemManage / BusFault / UsageFault) özette; hatalı adres (BFAR / MMFAR) geçerliyse gösterilir. Cortex-M0/M0+'ta bu register'lar olmadığı belirtilir.

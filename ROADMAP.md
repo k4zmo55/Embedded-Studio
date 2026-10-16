@@ -192,10 +192,10 @@ STM32CubeIDE'deki *Fault Analyzer* eşdeğeri.
 ### ES-208 · SWO/ITM, RTT ve semihosting konsolu
 `etiketler: tip:özellik, alan:debug, öncelik:orta, seviye:profesyonel`
 
-- [ ] SWV/ITM üzerinden `printf` (port seçimi, SWO frekansı)
-- [ ] SEGGER RTT kanalı okuma/yazma
-- [ ] Semihosting çıktısı
-- [ ] SWV veri izleme (data trace) ve istatistiksel profil (PC örnekleme), mümkün olan çekirdeklerde
+- [x] SWV/ITM üzerinden `printf` (port seçimi, SWO frekansı)
+- [x] SEGGER RTT kanalı okuma/yazma
+- [x] Semihosting çıktısı
+- [x] SWV veri izleme (data trace) ve istatistiksel profil (PC örnekleme), mümkün olan çekirdeklerde
 
 ### ES-209 · FreeRTOS farkındalıklı debug
 `etiketler: tip:özellik, alan:debug, öncelik:orta, seviye:profesyonel`

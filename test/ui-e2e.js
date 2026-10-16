@@ -851,6 +851,66 @@ async function until(fn, ms = 8000, what = 'koşul') {
     }
     scene(null);
   });
+  await step('Konsol (ES-208): SWO/ITM iki port + süzgeç, PC profili, data trace, RTT okuma/yazma, semihosting, kaydetme', async () => {
+    scene('debug');
+    const out = () => cdp.eval(`document.querySelector('#con-out').textContent`);
+    await until(() => cdp.eval(`!!document.querySelector('#con-swo-go') && !document.querySelector('#con-swo-go').disabled`), 3000, 'SWO düğmesi');
+    // Çekirdek saati projenin HCLK'sinden gelir
+    assert.ok(Number(await cdp.eval(`document.querySelector('#con-cpu').value`)) > 0, 'çekirdek saati dolu');
+    await cdp.eval(`(() => { const p = document.querySelector('#con-ports'); p.value = '0,1'; p.dispatchEvent(new Event('input')); })()`);
+    await cdp.click('#con-pc');
+    await cdp.click('#con-swo-go');
+    await until(async () => /uwTick=/.test(await out()) && /heartbeat/.test(await out()), 6000, 'ITM çıktısı (port 0 ve 1)');
+    assert.ok(/\[0\] uwTick=/.test(await out()) && /\[1\] \[log\] heartbeat/.test(await out()), 'çok portta önek');
+    assert.ok(await cdp.eval(`document.querySelector('#con-tab-itm').classList.contains('streaming')`), 'sekmede canlı işareti');
+    await cdp.eval(`(() => { const s = document.querySelector('#con-port'); s.value = '1'; s.dispatchEvent(new Event('change')); })()`);
+    await sleep(200);
+    assert.ok(!/uwTick/.test(await out()) && /heartbeat/.test(await out()), 'port süzgeci');
+    await cdp.shot('16g-konsol-swo');
+    // Profil
+    await cdp.click('#con-tab-prof');
+    await until(() => cdp.eval(`document.querySelectorAll('#con-prof tr').length > 4`), 4000, 'profil tablosu');
+    assert.ok(await cdp.eval(`document.querySelector('#con-prof').textContent.includes('HAL_Delay')`), 'fonksiyon adları');
+    await cdp.shot('16h-konsol-profil');
+    // Data trace: SWO durdurulup değişken eklenir
+    await cdp.click('#con-tab-data');
+    await cdp.click('#con-swo-go');
+    await until(() => cdp.eval(`!!document.querySelector('#con-dvar') && !document.querySelector('#con-dvar').disabled`), 3000, 'SWO durdu');
+    await cdp.click('#con-dvar');
+    await cdp.type('adc_raw');
+    await cdp.click('#con-dadd');
+    assert.ok(await cdp.eval(`document.querySelector('.con-chips').textContent.includes('adc_raw')`), 'değişken eklendi');
+    await cdp.click('#con-swo-go');
+    await until(() => cdp.eval(`document.querySelectorAll('#con-dtrace tr').length > 3`), 5000, 'data trace satırları');
+    assert.ok(await cdp.eval(`document.querySelector('#con-dtrace').textContent.includes('adc_raw')`));
+    await cdp.click('#con-swo-go'); // durdur
+    // RTT: kontrol bloğu RAM'de bulunur, satır gönderilir ve yankısı gelir
+    await cdp.click('#con-tab-rtt');
+    await cdp.click('#con-rtt-go');
+    await until(() => cdp.eval(`(document.querySelector('#con-rtt-info') || {}).textContent?.includes('Terminal')`), 5000, 'RTT kanalları');
+    await until(async () => /rtt: uwTick=/.test(await out()), 4000, 'RTT çıktısı');
+    await cdp.click('#con-send');
+    await cdp.type('merhaba');
+    await cdp.key('Enter', 'Enter', 13);
+    await until(async () => (await out()).includes('> echo: merhaba'), 4000, 'RTT yankısı');
+    await cdp.shot('16i-konsol-rtt');
+    // Kaydet
+    const file = path.join(WORK, 'rtt.log');
+    fs.rmSync(file, { force: true });
+    dialogQueue.push(vscodeFake.Uri.file(file));
+    await cdp.click('#con-save');
+    await until(() => fs.existsSync(file), 3000, 'günlük dosyası');
+    assert.ok(fs.readFileSync(file, 'utf8').includes('> echo: merhaba'));
+    await cdp.click('#con-rtt-go');
+    // Semihosting
+    await cdp.click('#con-tab-semi');
+    await cdp.click('#con-semi-go');
+    await until(async () => /semihosting: printf #1/.test(await out()), 4000, 'semihosting çıktısı');
+    await cdp.click('#con-semi-go');
+    await until(() => cdp.eval(`!document.querySelector('#con-tab-semi').classList.contains('streaming')`), 2000, 'semihosting kapandı');
+    await cdp.click('#con-tab-itm');
+    scene(null);
+  });
   await step('Debug: OpenOCD kart yokken anlaşılır hata', async () => {
     await cdp.click('#dbg-conn');
     await sleep(500);

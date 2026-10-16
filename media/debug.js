@@ -16,6 +16,7 @@
     fault: null, faultDlg: null, faultBody: null, faultBusy: false, faultDismissed: false, faultSim: '',
     auto: true, interval: 500, seq: 0, inflight: false, timer: 0
   };
+  ES.dbg = dbg; // alt konsol (console.js) bağlantı durumunu ve sembolleri buradan okur
 
   // Okunması yan etki yaratan register'lar (bayrak temizler / veri tüketir): sadece hedef durunca okunur.
   const sideEffect = (periph, reg) => {
@@ -82,7 +83,10 @@
             h('button', { class: 'ghost small', onclick: () => { dbg.memMark = null; setMem(0x08000000); } }, 'Flash'),
             h('button', { class: 'ghost small', id: 'mem-save', title: t('Bölgeyi dosyaya kaydet (.bin / .hex)'), onclick: saveMem }, t('Kaydet…'))),
           h('div', { id: 'mem-info', class: 'hint mem-info' }),
-          h('div', { id: 'dbg-mem', class: 'mem' })))));
+          h('div', { id: 'dbg-mem', class: 'mem' }))),
+      // SWO/ITM, RTT, semihosting, profil (ES-208)
+      h('section', { id: 'dbg-console', class: 'dbg-console' })));
+    ES.traceConsole?.mount($('dbg-console'));
   }
 
   // ---------------------------------------------------------------- bağlantı
@@ -794,7 +798,7 @@
 
   ES.tabs.debug = {
     mount,
-    render() { renderBar(); renderPeriphList(); renderRegs(); renderCore(); renderMem(); renderWatch(); },
+    render() { renderBar(); renderPeriphList(); renderRegs(); renderCore(); renderMem(); renderWatch(); ES.traceConsole?.render(); },
     onShow() { this.render(); if (dbg.connected) poll(); }
   };
 })();

@@ -735,4 +735,159 @@ ${impl}
   return { 'es_flash.h': core.banner(x, 'es_flash.h', 'flash silme ve programlama', ['flash']) + h, 'es_flash.c': c };
 }
 
-module.exports = { dma, adc, dac, iwdg, wwdg, crc, flash, DMA_MAP, DMA_KIND };
+// ================================================================== TRACE (ES-208)
+/** printf yönlendirme: ITM stimulus portu (SWO) ve SEGGER RTT uyumlu up/down tamponu. Debug > Konsol bunları okur. */
+function trace(x) {
+  const itm = !/cortex-m0/.test(x.fam.core);
+  const h = core.header(x, 'trace', `/* Çıkışlar:
+ *  - ITM (SWO): Debug > Konsol > SWO / ITM ile okunur. Debugger ITM'i açmadıysa yazmalar sessizce atlanır.${itm ? '' : '\n *    Bu çekirdekte (Cortex-M0/M0+) ITM yoktur: es_itm_* hiçbir şey yapmaz.'}
+ *  - RTT: _SEGGER_RTT kontrol bloğu (SEGGER RTT ile aynı düzen; J-Link RTT Viewer, OpenOCD ve Debug > Konsol > RTT okur).
+ *    SEGGER'in kendi RTT kütüphanesiyle birlikte kullanmayın (aynı sembol).
+ * printf yönlendirmesi (_write): ES_TRACE_STDOUT 0 kapalı, 1 ITM port 0, 2 RTT kanal 0, 3 ikisi. */
+#ifndef ES_TRACE_STDOUT
+#define ES_TRACE_STDOUT 3
+#endif
+#ifndef ES_RTT_UP_SIZE
+#define ES_RTT_UP_SIZE 1024U /* hedef → bilgisayar */
+#endif
+#ifndef ES_RTT_DOWN_SIZE
+#define ES_RTT_DOWN_SIZE 64U /* bilgisayar → hedef */
+#endif
+
+void es_trace_init(void);
+/* ITM: port 0..31. Debugger o portu açmadıysa -1 */
+int es_itm_putc(uint8_t port, char c);
+void es_itm_write(uint8_t port, const char *s, uint32_t len);
+/* RTT up kanal 0: yazılan bayt sayısı; tampon doluysa tamamı atlanır (0) — hedef asla beklemez */
+uint32_t es_rtt_write(const void *data, uint32_t len);
+/* RTT down kanal 0: okunan bayt sayısı; es_rtt_getc veri yoksa -1 */
+uint32_t es_rtt_read(void *buf, uint32_t size);
+int es_rtt_getc(void);
+`);
+  const c = `${core.banner(x, 'es_trace.c', 'ITM (SWO) ve RTT çıkışı, printf yönlendirme', ['trace'], 'es_trace_init();\nprintf("merhaba %d\\n", 42); /* ITM port 0 ve RTT kanal 0 */\nes_itm_write(1, "log\\n", 4);\nint c = es_rtt_getc();')}#include "es_trace.h"
+
+/* ---------------------------------------------------------------- ITM */
+int es_itm_putc(uint8_t port, char c)
+{
+${itm ? `  if (port > 31U) return -1;
+  /* DEMCR.TRCENA, ITM_TCR.ITMENA ve ilgili TER biti: debugger açmadıysa yazma */
+#if defined(DCB_DEMCR_TRCENA_Msk) /* ARMv8-M / CMSIS 6 */
+  if ((DCB->DEMCR & DCB_DEMCR_TRCENA_Msk) == 0U) return -1;
+#else
+  if ((CoreDebug->DEMCR & CoreDebug_DEMCR_TRCENA_Msk) == 0U) return -1;
+#endif
+  if ((ITM->TCR & ITM_TCR_ITMENA_Msk) == 0U || (ITM->TER & (1UL << port)) == 0U) return -1;
+  uint32_t n = ES_TIMEOUT;
+  while (ITM->PORT[port].u32 == 0UL) { /* FIFO dolu: SWO hızında boşalır */
+    if (--n == 0U) return -1;
+  }
+  ITM->PORT[port].u8 = (uint8_t)c;
+  return 0;` : `  (void)port; (void)c;
+  return -1; /* ITM yok */`}
+}
+
+void es_itm_write(uint8_t port, const char *s, uint32_t len)
+{
+  for (uint32_t i = 0; i < len; i++) {
+    if (es_itm_putc(port, s[i]) != 0) return;
+  }
+}
+
+/* ---------------------------------------------------------------- RTT */
+typedef struct {
+  const char *sName;
+  char *pBuffer;
+  uint32_t SizeOfBuffer;
+  volatile uint32_t WrOff;
+  volatile uint32_t RdOff;
+  uint32_t Flags; /* 0: NO_BLOCK_SKIP */
+} es_rtt_buf_t;
+
+typedef struct {
+  char acID[16];
+  int32_t MaxNumUpBuffers;
+  int32_t MaxNumDownBuffers;
+  es_rtt_buf_t up[1];
+  es_rtt_buf_t down[1];
+} es_rtt_cb_t;
+
+/* Debugger bloğu bu adla (ELF) ya da RAM'de "SEGGER RTT" kimliğini arayarak bulur */
+es_rtt_cb_t _SEGGER_RTT;
+static char rtt_up[ES_RTT_UP_SIZE];
+static char rtt_down[ES_RTT_DOWN_SIZE];
+
+void es_trace_init(void)
+{
+  /* Kimlik flash'ta kalsın, RAM'e son yazılsın: debugger yarım kurulmuş bloğu bulmaz */
+  static const char id[] = "SEGGER RTT";
+  es_rtt_cb_t *cb = &_SEGGER_RTT;
+  for (uint32_t i = 0; i < sizeof cb->acID; i++) cb->acID[i] = 0;
+  cb->MaxNumUpBuffers = 1;
+  cb->MaxNumDownBuffers = 1;
+  cb->up[0] = (es_rtt_buf_t){ "Terminal", rtt_up, sizeof rtt_up, 0U, 0U, 0U };
+  cb->down[0] = (es_rtt_buf_t){ "Terminal", rtt_down, sizeof rtt_down, 0U, 0U, 0U };
+  __DMB();
+  for (uint32_t i = sizeof id - 1U; i > 0U; i--) cb->acID[i - 1U] = id[i - 1U];
+  __DMB();
+}
+
+uint32_t es_rtt_write(const void *data, uint32_t len)
+{
+  es_rtt_buf_t *b = &_SEGGER_RTT.up[0];
+  if (b->pBuffer == 0) return 0; /* es_trace_init çağrılmadı */
+  uint32_t primask = __get_PRIMASK();
+  __disable_irq(); /* görevler ve kesmeler aynı anda yazabilir */
+  uint32_t wr = b->WrOff, rd = b->RdOff;
+  uint32_t avail = rd > wr ? rd - wr - 1U : b->SizeOfBuffer - wr + rd - 1U;
+  if (len > avail) { __set_PRIMASK(primask); return 0; }
+  const uint8_t *p = (const uint8_t *)data;
+  for (uint32_t i = 0; i < len; i++) {
+    b->pBuffer[wr] = (char)p[i];
+    if (++wr == b->SizeOfBuffer) wr = 0;
+  }
+  __DMB(); /* veri, WrOff'tan önce belleğe ulaşsın */
+  b->WrOff = wr;
+  __set_PRIMASK(primask);
+  return len;
+}
+
+uint32_t es_rtt_read(void *buf, uint32_t size)
+{
+  es_rtt_buf_t *b = &_SEGGER_RTT.down[0];
+  if (b->pBuffer == 0) return 0;
+  uint32_t rd = b->RdOff, wr = b->WrOff, n = 0;
+  uint8_t *p = (uint8_t *)buf;
+  while (rd != wr && n < size) {
+    p[n++] = (uint8_t)b->pBuffer[rd];
+    if (++rd == b->SizeOfBuffer) rd = 0;
+  }
+  b->RdOff = rd;
+  return n;
+}
+
+int es_rtt_getc(void)
+{
+  uint8_t c;
+  return es_rtt_read(&c, 1) ? (int)c : -1;
+}
+
+/* ---------------------------------------------------------------- printf → ITM / RTT */
+#if ES_TRACE_STDOUT
+/* newlib: printf/puts stdout'u buraya yazar (nosys.specs'teki boş _write yerine) */
+int _write(int fd, char *ptr, int len)
+{
+  if (fd != 1 && fd != 2) return -1;
+#if ES_TRACE_STDOUT & 1
+  es_itm_write(0, ptr, (uint32_t)len);
+#endif
+#if ES_TRACE_STDOUT & 2
+  es_rtt_write(ptr, (uint32_t)len);
+#endif
+  return len;
+}
+#endif
+`;
+  return { 'es_trace.h': core.banner(x, 'es_trace.h', 'ITM (SWO) ve RTT çıkışı', ['trace']) + h, 'es_trace.c': c };
+}
+
+module.exports = { dma, adc, dac, iwdg, wwdg, crc, flash, trace, DMA_MAP, DMA_KIND };

@@ -440,7 +440,7 @@ const regFiles = (id, ids, extra = {}) => {
 test('bağımlılıklar çözülür; işlemcide olmayan sürücü (DAC) atlanır', () => {
   assert.deepStrictEqual(rd.resolveDrivers(lib.mcus.stm32f411ceu6, ['uart', 'dac']), ['uart', 'dma'], 'F411: DAC yok, UART DMA ister');
   assert.deepStrictEqual(rd.resolveDrivers(lib.mcus.stm32g474ret6, ['exti', 'dac']), ['gpio', 'exti', 'dac']);
-  assert.strictEqual(rd.resolveDrivers(lib.mcus.stm32h743zit6, rd.DRIVERS.map((d) => d.id)).length, 14);
+  assert.strictEqual(rd.resolveDrivers(lib.mcus.stm32h743zit6, rd.DRIVERS.map((d) => d.id)).length, 15);
 });
 test('sadece bare-metal\'de, bir kez (once) üretilir; her dosya kaynak RM ve kullanım örneği taşır, iç içe yorum yok', () => {
   assert.strictEqual(regFiles('stm32f411ceu6', ['gpio'], { framework: 'hal' }).length, 0, 'HAL projesinde üretilmez');
@@ -934,6 +934,116 @@ test('register yazma: alan ekleme, değer ayrıştırma; FPU ve özel register a
     assert.deepStrictEqual(await F.addr2line('olmayan.elf', [1]), [null]);
     passed++;
     console.log('  ✓ HardFault analizörü (ES-207): CFSR/HFSR çözümü, EXC_RETURN, çerçeve arama, senaryolar, RTOS görevi, addr2line');
+  }
+  {
+    // ES-208: ITM paket çözücü, ITM/DWT ayarı, PC profili, RTT, simülasyonda uçtan uca konsol
+    const T = require('../src/debug/trace');
+    const { SimTarget, SIM_RTT, explainSwo } = require('../src/debug/session');
+    const dec = new T.ItmDecoder();
+    // senkron, port 0 'A', port 5 16 bit, kısa ts, taşma, PC örneği, uyku, data trace (karşılaştırıcı 1, yazma, 2 bayt), istisna girişi
+    const stream = [0, 0, 0, 0, 0, 0x80, 0x01, 0x41, 0x2a, 0x34, 0x12, 0x30, 0x70, 0x17, 0x44, 0x04, 0x00, 0x08, 0x15, 0x00, 0x9e, 0xcd, 0xab, 0x0e, 0x0f, 0x10];
+    // parça parça gelse de aynı sonuç
+    const ev = [...dec.push(stream.slice(0, 9)), ...dec.push(stream.slice(9, 15)), ...dec.push(stream.slice(15))];
+    assert.deepStrictEqual(ev.map((e) => e.type), ['sync', 'sw', 'sw', 'ts', 'overflow', 'pc', 'pc', 'data', 'exception']);
+    assert.strictEqual(ev[1].port, 0); assert.strictEqual(ev[1].value, 0x41);
+    assert.strictEqual(ev[2].port, 5); assert.strictEqual(ev[2].value, 0x1234); assert.strictEqual(ev[2].size, 2);
+    assert.strictEqual(ev[3].ts, 3);
+    assert.strictEqual(ev[5].pc, 0x08000444); assert.ok(ev[6].sleep);
+    assert.deepStrictEqual([ev[7].cmp, ev[7].write, ev[7].value, ev[7].size], [1, true, 0xabcd, 2]);
+    assert.deepStrictEqual([ev[8].exc, ev[8].fn], [15, 'enter']);
+    assert.strictEqual(dec.overflows, 1);
+    // uzun zaman damgası ve devam baytları; yarım paket beklenir
+    const d2 = new T.ItmDecoder();
+    assert.deepStrictEqual(d2.push([0xc0, 0x81]), []);
+    assert.strictEqual(d2.push([0x01])[0].ts, 129);
+    assert.deepStrictEqual(T.itmTs(129), [0xc0, 0x81, 0x01]);
+    assert.strictEqual(T.parsePorts('0,1,5-7'), 0xe3);
+    assert.strictEqual(T.parsePorts('0x10'), 0x10);
+    assert.ok(Number.isNaN(T.parsePorts('32')) && Number.isNaN(T.parsePorts('a')));
+    // PC örnekleme: SWO bant genişliğinin yarısını ve 10 kHz'i geçmez
+    const pc = T.pcSampleConfig(100e6, 2e6);
+    assert.ok(pc.rate <= 10000 && pc.rate > 5000, JSON.stringify(pc));
+    assert.ok(T.pcSampleConfig(16e6, 500e3).rate <= 5000);
+    assert.deepStrictEqual(T.swoPrescaler(84e6, 2e6), { acpr: 41, actualHz: 2000000 });
+    const w = T.itmSetup({ ports: 3, ts: false, pc, data: [{ addr: 0x20000084, size: 2, pc: true }] });
+    const last = (a) => w.filter((x) => x[0] === a).pop()[2];
+    assert.strictEqual(last(T.REG.ITM_TER), 3);
+    assert.strictEqual(last(T.REG.ITM_TCR), 1 | 4 | 8 | (1 << 16), 'ITMENA | SYNCENA | DWTENA | ATB ID 1');
+    assert.ok(last(T.REG.DWT_CTRL) & (1 << 12) && last(T.REG.DWT_CTRL) & 1, 'PCSAMPLENA + CYCCNTENA');
+    assert.strictEqual(last(T.REG.DWT_COMP), 0x20000084);
+    assert.strictEqual(last(T.REG.DWT_COMP + 8), 3 | (1 << 10), 'PC + veri değeri, yarım word');
+    assert.strictEqual(last(T.REG.DWT_LAR), 0xc5acce55);
+    // nm çıktısı ve PC → fonksiyon
+    const funcs = T.parseFunctions('08000400 00000040 T main\r\n08000441 00000010 t helper\n20000000 00000004 B uwTick\n');
+    assert.deepStrictEqual(funcs.map((f) => [f.name, f.addr]), [['main', 0x08000400], ['helper', 0x08000440]]);
+    const prof = new T.PcProfile(funcs);
+    [0x08000402, 0x0800043e, 0x08000444, 0x09000000].forEach((a) => prof.add(a));
+    prof.addSleep();
+    const top = prof.top();
+    assert.deepStrictEqual(top.map((r) => [r.name, r.count]), [['main', 2], ['helper', 1], ['0x09000000', 1], ['(uyku: WFI/WFE)', 1]]);
+    assert.strictEqual(top[0].pct, 40);
+    assert.ok(/0.11/.test(explainSwo('invalid command name "tpiu"')));
+    // RTT: simülasyondaki kontrol bloğu RAM taramasıyla bulunur, okunur, down kanalına yazılanı firmware yankılar
+    const model = { peripherals: [], expected: new Map(), dynamic: new Map() };
+    const sim = new SimTarget(model);
+    const rtt = new T.RttClient(sim);
+    const found = await rtt.find({ ramStart: 0x20000000, ramSize: 0x4000 });
+    assert.strictEqual(found.addr, SIM_RTT.cb);
+    assert.deepStrictEqual(found.channels.map((c) => [c.dir, c.index, c.name, c.size]), [['up', 0, 'Terminal', 512], ['down', 0, 'Terminal', 64]]);
+    await assert.rejects(() => new T.RttClient(sim).find({ ramStart: 0x20002000, ramSize: 0x1000 }), /bulunamadı/);
+    const text = async () => Buffer.concat((await rtt.poll()).map((x) => Buffer.from(x.bytes))).toString();
+    assert.ok(/uwTick=0 /.test(await text()), 'ilk satır');
+    assert.strictEqual(await text(), '', 'okunan tekrar gelmez (RdOff ilerledi)');
+    assert.strictEqual(await rtt.write(0, Buffer.from('ping\n')), 5);
+    assert.ok((await text()).includes('> echo: ping'), 'down → firmware → up');
+    assert.strictEqual(await rtt.write(0, Buffer.alloc(100, 0x41)), 63, 'dolu tampon taşmaz (boyut - 1)');
+    // halka sınırında okuma
+    const up = SIM_RTT.cb + 24;
+    model.expected.set(up + 16, 510); model.expected.set(up + 12, 2);
+    [0x61, 0x62].forEach((b, k) => sim.setByte(SIM_RTT.upBuf + 510 + k, b));
+    [0x63, 0x64].forEach((b, k) => sim.setByte(SIM_RTT.upBuf + k, b));
+    sim.halted = true; // firmware yeni satır yazmasın
+    assert.strictEqual(await text(), 'abcd');
+    sim.halted = false;
+    // Uçtan uca: SWO (port 0/1, profil, data trace), RTT, semihosting → webview mesajları
+    const msgs = [];
+    const sim2 = new SimTarget({ peripherals: [], expected: new Map(), dynamic: new Map([[0x20000084, (ms) => Math.floor(ms / 40)]]) });
+    const ts = new T.TraceSession(sim2, (m) => msgs.push(m));
+    await assert.rejects(() => ts.startSwo({ cpuHz: 1e6, swoHz: 2e6, ports: 1 }), /büyük olamaz/);
+    await ts.startSwo({ cpuHz: 100e6, swoHz: 2e6, ports: 0x3, pc: true, data: [{ name: 'adc_raw', addr: 0x20000084, size: 2 }], funcs: T.SIM_FUNCS });
+    await ts.startRtt({ ramStart: 0x20000000, ramSize: 0x2000, intervalMs: 20 });
+    await ts.semihosting(true);
+    await new Promise((r) => setTimeout(r, 1700));
+    await ts.rttSend(0, 'hi');
+    await new Promise((r) => setTimeout(r, 250));
+    ts.postProfile();
+    await ts.dispose();
+    const out = {};
+    for (const it of msgs.filter((m) => m.type === 'debug.console').flatMap((m) => m.items)) out[it.src + it.ch] = (out[it.src + it.ch] || '') + it.text;
+    assert.ok(/^uwTick=0 adc_raw=2048/.test(out.itm0) && out.itm0.split('\n').length >= 4, out.itm0);
+    assert.ok(/heartbeat #1/.test(out.itm1), 'port 1');
+    assert.ok(/> echo: hi/.test(out.rtt0) && /semihosting: printf #1/.test(out.semi0), JSON.stringify(out));
+    const prof2 = msgs.filter((m) => m.type === 'debug.profile').pop();
+    assert.ok(prof2.total > 1000 && prof2.rows.some((r) => r.name === 'HAL_Delay') && prof2.rows.every((r) => !/^0x/.test(r.name)), JSON.stringify(prof2.rows.slice(0, 3)));
+    const dt = msgs.filter((m) => m.type === 'debug.dtrace').flatMap((m) => m.items);
+    assert.ok(dt.length >= 10 && dt.every((x) => x.name === 'adc_raw' && x.write) && dt[dt.length - 1].value > dt[0].value, JSON.stringify(dt.slice(0, 2)));
+    const st = msgs.filter((m) => m.type === 'debug.trace').pop();
+    assert.deepStrictEqual([st.swo, st.rtt, st.semi], [false, null, false], 'dispose her şeyi kapatır');
+    assert.strictEqual(sim2.model.expected.get(T.REG.DWT_CTRL), 0, 'PC örnekleme kapatıldı');
+    // es_trace sürücüsü: RTT bloğu, _write, M0'da ITM yok; Cortex-Debug SWO/RTT blokları
+    const rd = require('../src/codegen/regdrivers');
+    const tf = rd.regDriverFiles(lib.mcus.stm32f411ceu6, ['trace'], computeClock(lib.mcus.stm32f411ceu6, lib.mcus.stm32f411ceu6.clock.default));
+    assert.ok(tf['es_trace.c'].includes('es_rtt_cb_t _SEGGER_RTT;') && tf['es_trace.c'].includes('int _write(int fd') && tf['es_trace.c'].includes('ITM->PORT[port].u8'));
+    const tm0 = rd.regDriverFiles(lib.mcus.stm32f030c8t6, ['trace'], computeClock(lib.mcus.stm32f030c8t6, lib.mcus.stm32f030c8t6.clock.default));
+    assert.ok(!tm0['es_trace.c'].includes('ITM->') && tm0['es_trace.c'].includes('ITM yok'));
+    const L = require('../src/debug/launch');
+    const base = { name: 'x', elf: 'a.elf', cwd: '.', mcuName: 'STM32F411CEU6', targetCfg: 'target/stm32f4x.cfg' };
+    const lc = L.cortexConfig({ ...base, cpuHz: 100e6 });
+    assert.deepStrictEqual([lc.swoConfig.enabled, lc.swoConfig.cpuFrequency, lc.rttConfig.address], [false, 100e6, 'auto']);
+    assert.ok(!L.cortexConfig({ ...base, cpuHz: 48e6, swo: false }).swoConfig, 'M0: SWO yok');
+    assert.ok(!L.cortexConfig(base).rttConfig, 'cpuHz yoksa eklenmez');
+    passed++;
+    console.log('  ✓ SWO/ITM, RTT, semihosting (ES-208): paket çözücü, ITM/DWT ayarı, PC profili, RTT halkası, uçtan uca simülasyon, es_trace');
   }
   const { OpenOcdTarget, freePort } = require('../src/debug/session');
   const port = await freePort();

@@ -14,6 +14,7 @@ const { spawn, execFile } = require('child_process');
 const { t } = require('../i18n');
 const { familyOf, kernelClock } = require('../codegen/families');
 const { explainFlashError } = require('./flashcmd');
+const trace = require('./trace');
 
 const CORE_REGS = ['r0', 'r1', 'r2', 'r3', 'r4', 'r5', 'r6', 'r7', 'r8', 'r9', 'r10', 'r11', 'r12', 'sp', 'lr', 'pc', 'xPSR'];
 
@@ -99,6 +100,8 @@ class OpenOcdTarget {
     this.proc = null;
     this.tcl = new TclClient();
     this.mode = 'openocd';
+    this.swo = null;
+    this.semiSink = null;
   }
 
   async connect() {
@@ -122,7 +125,8 @@ class OpenOcdTarget {
           const hata = !ready && explainOpenOcd(log);
           if (hata) reject(new Error(hata));
         };
-        p.stdout.on('data', onText);
+        // OpenOCD günlüğü stderr'e, semihosting çıktısı (SYS_WRITE) stdout'a yazılır
+        p.stdout.on('data', (d) => { onText(d); this.onStdout(String(d)); });
         p.stderr.on('data', onText);
         p.on('error', (e) => reject(new Error(t('openocd başlatılamadı ({0}). OpenOCD kurulu ve PATH\'te mi?', e.message))));
         p.on('exit', (code) => {
@@ -147,6 +151,7 @@ class OpenOcdTarget {
   }
 
   async disconnect() {
+    await this.stopSwo().catch(() => {});
     const p = this.proc;
     this.proc = null; // onExit tetiklenmesin: kapatan biziz
     if (p) try { await this.tcl.send('resume', 1000); } catch { /* zaten çalışıyor olabilir */ }
@@ -208,6 +213,83 @@ class OpenOcdTarget {
     if (/error|failed/i.test(r)) throw new Error(r.trim());
     return r;
   }
+
+  /** Bayt dizisi yazma (RTT down kanalı): tek write_memory komutunda en fazla 256 bayt */
+  async writeBytes(addr, bytes) {
+    for (let k = 0; k < bytes.length; k += 256) {
+      const part = [...bytes.subarray(k, k + 256)].map((b) => '0x' + b.toString(16)).join(' ');
+      const r = await this.tcl.send(`[target current] write_memory 0x${(addr + k).toString(16)} 8 {${part}}`);
+      if (/error|failed|invalid/i.test(r)) throw new Error(t('Yazılamadı @0x{0}: {1}', (addr + k).toString(16), r.trim().slice(0, 120)));
+    }
+  }
+
+  /** Tcl komutu; hata yanıtını ayırt etmek için catch ile: { ok, out } */
+  async tryCmd(cmd, timeoutMs) {
+    const rc = (await this.tcl.send(`catch {${cmd}} __es_r`, timeoutMs)).trim();
+    const out = (await this.tcl.send('set __es_r')).trim();
+    return { ok: rc === '0', out };
+  }
+
+  /**
+   * ES-208: SWO yakalama. OpenOCD 0.12+ TPIU nesnesi (`tpiu names`), yoksa 0.11'in `tpiu config` komutu.
+   * Ham ITM akışı OpenOCD'nin açtığı TCP portundan okunur.
+   * @param {{ cpuHz: number, swoHz: number }} cfg @param {(b: Buffer) => void} onData
+   */
+  async startSwo(cfg, onData) {
+    await this.stopSwo();
+    const port = await freePort();
+    const names = await this.tryCmd('tpiu names');
+    let tpiu = '';
+    if (names.ok && names.out) {
+      tpiu = names.out.split(/\s+/)[0];
+      await this.tryCmd(`${tpiu} disable`);
+      const c = await this.tryCmd(`${tpiu} configure -protocol uart -output :${port} -traceclk ${Math.round(cfg.cpuHz)} -pin-freq ${Math.round(cfg.swoHz)}`);
+      const e = c.ok ? await this.tryCmd(`${tpiu} enable`) : c;
+      if (!e.ok) throw new Error(explainSwo(e.out));
+    } else {
+      const c = await this.tryCmd(`tpiu config internal :${port} uart off ${Math.round(cfg.cpuHz)} ${Math.round(cfg.swoHz)}`);
+      if (!c.ok) throw new Error(explainSwo(c.out || names.out));
+    }
+    const sock = await new Promise((resolve, reject) => {
+      const s = net.createConnection({ port, host: '127.0.0.1' }, () => resolve(s));
+      s.on('error', (e) => reject(new Error(t('SWO veri portuna bağlanılamadı: {0}', e.message))));
+    });
+    sock.on('data', (d) => onData(d));
+    sock.on('error', () => {});
+    this.swo = { sock, tpiu };
+  }
+
+  async stopSwo() {
+    const s = this.swo;
+    if (!s) return;
+    this.swo = null;
+    s.sock.destroy();
+    if (this.proc) await this.tryCmd(s.tpiu ? `${s.tpiu} disable` : 'tpiu config disable').catch(() => {});
+  }
+
+  /**
+   * Semihosting: OpenOCD BKPT 0xAB'de durunca isteği karşılar ve devam ettirir. Çıktı openocd'nin stdout'una gelir.
+   * @param {boolean} on @param {(s: string) => void} [onText]
+   */
+  async semihosting(on, onText) {
+    const r = await this.tryCmd(`arm semihosting ${on ? 'enable' : 'disable'}`);
+    if (!r.ok) throw new Error(t('Semihosting açılamadı: {0}', r.out.slice(0, 160)));
+    this.semiSink = on ? onText : null;
+  }
+
+  /** stdout'tan gelen satırlar: günlük satırları ayıklanır, kalanı semihosting çıktısıdır */
+  onStdout(s) {
+    if (!this.semiSink) return;
+    const text = s.split(/(?<=\n)/).filter((l) => !/^(Info|Warn|Error|Debug|User)\s*:/.test(l)).join('');
+    if (text) this.semiSink(text);
+  }
+}
+
+/** SWO açılamadığında anlaşılır açıklama */
+function explainSwo(out) {
+  if (/invalid command name|unknown command/i.test(out)) return t('Bu OpenOCD sürümü SWO yakalamayı desteklemiyor (0.11 ya da daha yenisi gerekir).');
+  if (/not supported|unsupported|does not support/i.test(out)) return t('Prob SWO yakalamayı desteklemiyor ya da bu frekansı veremiyor: {0}', out.slice(0, 160));
+  return t('SWO başlatılamadı: {0}', out.slice(0, 200) || '?');
 }
 
 /** Sık görülen openocd hatalarını anlaşılır mesaja çevirir (yüklemeyle aynı açıklamalar; sadece ST-Link'e özel değil). */
@@ -248,6 +330,9 @@ function freePort() {
 }
 
 // ------------------------------------------------------------------ Simülasyon
+/** Simülasyondaki RTT kontrol bloğu ve tamponları (örnek değişkenlerin 0x20000080–0x2000013F aralığından sonra) */
+const SIM_RTT = { cb: 0x20000400, name: 0x20000500, upBuf: 0x20000600, upSize: 512, downBuf: 0x20000800, downSize: 64, end: 0x20000840 };
+
 class SimTarget {
   /** @param {{ peripherals: any[], expected: Map<number, number> }} model */
   constructor(model) {
@@ -256,9 +341,13 @@ class SimTarget {
     this.halted = false;
     this.t0 = Date.now();
     this.pc = 0x08000420;
+    this.rttInit();
   }
   async connect() {}
-  async disconnect() {}
+  async disconnect() {
+    await this.stopSwo();
+    await this.semihosting(false);
+  }
   async state() { return this.halted ? 'halted' : 'running'; }
   // Durunca simülasyon zamanı da durur (Live Watch değerleri donar)
   async halt() { if (!this.halted) this.haltMs = Date.now() - this.t0; this.halted = true; }
@@ -268,6 +357,123 @@ class SimTarget {
     this.t0 = Date.now(); this.pc = 0x08000420; this.halted = false;
     if (this.faultCore) for (const a of [0xe000ed24, 0xe000ed28, 0xe000ed2c, 0xe000ed34, 0xe000ed38]) this.model.expected.delete(a);
     this.faultCore = null;
+    this.rttInit(); // firmware yeniden başlarken RTT bloğunu baştan kurar
+    if (this.swoState) Object.assign(this.swoState, { next0: 0, next1: 0, lastMs: 0 });
+  }
+
+  // ---------------------------------------------------------------- ES-208: RTT, SWO, semihosting benzetimi
+  now() { return this.halted ? this.haltMs || 0 : Date.now() - this.t0; }
+  setByte(a, b) {
+    const w = (a & ~3) >>> 0, sh = (a & 3) * 8;
+    const cur = this.model.expected.get(w) || 0;
+    this.model.expected.set(w, ((cur & ~(0xff << sh)) | ((b & 0xff) << sh)) >>> 0);
+  }
+  getByte(a) { return ((this.model.expected.get((a & ~3) >>> 0) || 0) >>> ((a & 3) * 8)) & 0xff; }
+  async writeBytes(addr, bytes) { bytes.forEach((b, k) => this.setByte(addr + k, b)); }
+
+  /** SEGGER_RTT_Init() benzeri: 1 up ("Terminal", 512 B) + 1 down ("Terminal", 64 B) */
+  rttInit() {
+    const R = SIM_RTT, set = (a, v) => this.model.expected.set(a, v >>> 0);
+    for (let a = R.cb; a < R.end; a += 4) set(a, 0);
+    [...Buffer.from('SEGGER RTT', 'latin1')].forEach((b, k) => this.setByte(R.cb + k, b));
+    [...Buffer.from('Terminal\0', 'latin1')].forEach((b, k) => this.setByte(R.name + k, b));
+    set(R.cb + 16, 1); set(R.cb + 20, 1);
+    const up = R.cb + 24, down = up + 24;
+    set(up, R.name); set(up + 4, R.upBuf); set(up + 8, R.upSize);
+    set(down, R.name); set(down + 4, R.downBuf); set(down + 8, R.downSize);
+    this.rttNext = 0;
+    this.rttLine = '';
+  }
+
+  /** Benzetilen firmware: saniyede bir satır yazar, down kanalından gelen satırı yankılar */
+  rttTick() {
+    if (this.halted) return;
+    const R = SIM_RTT, ms = this.now();
+    const get = (a) => this.model.expected.get(a) || 0, set = (a, v) => this.model.expected.set(a, v >>> 0);
+    const up = R.cb + 24, down = up + 24;
+    let out = '';
+    let wr = get(down + 12), rd = get(down + 16);
+    while (rd !== wr && rd < R.downSize) {
+      const c = String.fromCharCode(this.getByte(R.downBuf + rd));
+      rd = (rd + 1) % R.downSize;
+      if (c === '\n') { out += `> echo: ${this.rttLine.replace(/\r$/, '')}\n`; this.rttLine = ''; } else this.rttLine += c;
+    }
+    set(down + 16, rd);
+    if (ms - this.rttNext > 10000) this.rttNext = ms - (ms % 1000);
+    for (; this.rttNext <= ms; this.rttNext += 1000) {
+      out += `[${(this.rttNext / 1000).toFixed(1)} s] rtt: uwTick=${this.rttNext} adc_raw=${Math.round(2048 + 1500 * Math.sin(this.rttNext / 1500))}\n`;
+    }
+    // NO_BLOCK_SKIP: sığmayan satır atlanır
+    wr = get(up + 12); rd = get(up + 16);
+    const free = rd > wr ? rd - wr - 1 : R.upSize - wr + rd - 1;
+    const bytes = Buffer.from(out, 'utf8');
+    if (!bytes.length || bytes.length > free) return;
+    for (const b of bytes) { this.setByte(R.upBuf + wr, b); wr = (wr + 1) % R.upSize; }
+    set(up + 12, wr);
+  }
+
+  /** SWO: ITM/DWT register'larında açılanlara göre gerçek paket akışı üretir (çözücü de böylece denenir) */
+  async startSwo(cfg, onData) {
+    await this.stopSwo();
+    this.swoState = { next0: 0, next1: 0, lastMs: this.now(), prev: new Map(), n: 0, cfg };
+    onData(Buffer.from([0, 0, 0, 0, 0, 0x80]));
+    this.swoTimer = setInterval(() => { if (!this.halted) this.swoTick(onData).catch(() => {}); }, 50);
+  }
+  async stopSwo() { clearInterval(this.swoTimer); this.swoTimer = null; }
+
+  async swoTick(onData) {
+    const st = this.swoState, ms = this.now();
+    const get = (a) => this.model.expected.get(a) || 0;
+    const tcr = get(trace.REG.ITM_TCR), ter = get(trace.REG.ITM_TER), ctrl = get(trace.REG.DWT_CTRL);
+    if (!(tcr & 1)) return;
+    const out = [];
+    let lastTs = st.lastMs;
+    const line = (port, text, at) => {
+      if (!(ter & (1 << port))) return;
+      if (tcr & 2) { out.push(...trace.itmTs(Math.max(1, (at - lastTs) * 1000))); lastTs = at; }
+      for (const b of Buffer.from(text, 'utf8')) out.push(...trace.itmByte(port, b));
+    };
+    if (ms - st.next0 > 5000) st.next0 = ms;
+    for (; st.next0 <= ms; st.next0 += 500) {
+      line(0, `uwTick=${st.next0} adc_raw=${Math.round(2048 + 1500 * Math.sin(st.next0 / 1500))} temp=${(24 + 3 * Math.sin(st.next0 / 4000)).toFixed(2)}\n`, st.next0);
+    }
+    if (ms - st.next1 > 5000) st.next1 = ms;
+    for (; st.next1 <= ms; st.next1 += 2000) line(1, `[log] heartbeat #${++st.n}\n`, st.next1);
+    // PC örnekleme (DWT_CTRL.PCSAMPLENA)
+    if (ctrl & (1 << 12)) {
+      const rate = (st.cfg.pcCfg && st.cfg.pcCfg.rate) || 1000;
+      const count = Math.min(600, Math.round((rate * (ms - st.lastMs)) / 1000));
+      const W = trace.SIM_FUNCS.reduce((s, f) => s + f.w, 0) + trace.SIM_SLEEP_W;
+      for (let k = 0; k < count; k++) {
+        let r = Math.random() * W;
+        const f = trace.SIM_FUNCS.find((x) => (r -= x.w) < 0);
+        if (!f) out.push(...trace.dwtPacket(2, 1, 0));
+        else out.push(...trace.dwtPacket(2, 4, f.addr + 2 * Math.floor((Math.random() * f.size) / 2)));
+      }
+    }
+    // Data trace: FUNCTION 2/3 olan karşılaştırıcılar; değer değişince yazma paketi
+    for (let n = 0; n < trace.DWT_COMPARATORS; n++) {
+      const base = trace.REG.DWT_COMP + n * 16, fn = get(base + 8);
+      if ((fn & 0xf) !== 2 && (fn & 0xf) !== 3) continue;
+      const addr = get(base), size = [1, 2, 4][(fn >> 10) & 3] || 4;
+      const [w0, w1] = await this.readMemory(addr & ~3, 2);
+      const v = Number((((BigInt(w1) << 32n) | BigInt(w0)) >> BigInt((addr & 3) * 8)) & ((1n << BigInt(size * 8)) - 1n));
+      if (st.prev.get(n) === v) continue;
+      st.prev.set(n, v);
+      if ((fn & 0xf) === 3) out.push(...trace.dwtPacket(8 + 2 * n, 4, 0x08000650 + 0x1c));
+      out.push(...trace.dwtPacket(16 + 2 * n + 1, size, v));
+    }
+    st.lastMs = ms;
+    if (out.length) onData(Buffer.from(out));
+  }
+
+  /** Semihosting: çalışırken ara ara printf çıktısı */
+  async semihosting(on, onText) {
+    clearInterval(this.semiTimer);
+    this.semiTimer = null;
+    if (!on) return;
+    let n = 0;
+    this.semiTimer = setInterval(() => { if (!this.halted) onText(`semihosting: printf #${++n} from main() (uwTick=${this.now()})\n`); }, 1500);
   }
 
   /**
@@ -293,6 +499,7 @@ class SimTarget {
   async program() { return t('simülasyon: yükleme atlandı'); }
 
   async readMemory(addr, words) {
+    if (addr < SIM_RTT.end && addr + words * 4 > SIM_RTT.cb) this.rttTick();
     const ms = this.halted ? this.haltMs || 0 : Date.now() - this.t0;
     const out = [];
     for (let i = 0; i < words; i++) {
@@ -324,7 +531,7 @@ class SimTarget {
 
   /** Simülasyonda yazılan değer modele işlenir (sonraki okumalarda görünür) */
   async writeMemory(addr, width, value) {
-    const a = addr & ~3, sh = (addr & 3) * 8;
+    const a = (addr & ~3) >>> 0, sh = (addr & 3) * 8;
     const m = width >= 32 ? 0xffffffff : (((1 << width) - 1) << sh) >>> 0;
     const cur = this.model.expected.get(a) || 0;
     this.model.expected.set(a, ((cur & ~m) | ((value << sh) & m)) >>> 0);
@@ -447,4 +654,4 @@ function elfSymbols(elfPath, nm = 'arm-none-eabi-nm') {
   });
 }
 
-module.exports = { OpenOcdTarget, SimTarget, TclClient, simModel, elfSymbols, explainOpenOcd, freePort, specialRegs, splitFpu, CORE_REGS };
+module.exports = { OpenOcdTarget, SimTarget, SIM_RTT, explainSwo, TclClient, simModel, elfSymbols, explainOpenOcd, freePort, specialRegs, splitFpu, CORE_REGS };
