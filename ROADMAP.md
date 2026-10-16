@@ -529,3 +529,108 @@ Uluslararası katkı ve kullanım için arayüz metinlerinin çevrilebilir olmas
 - [ ] Firmware'e sürüm, git commit ve derleme tarihi gömülmesi
 - [ ] Aynı kaynaktan aynı ikili dosya (tekrarlanabilir derleme ayarları)
 - [ ] Yazılım malzeme listesi (SBOM): kullanılan HAL/CMSIS/FreeRTOS sürümleri
+
+---
+
+## M10 · Pinout ve Configuration (CubeMX tarzı)
+> STM32CubeMX / CubeIDE'deki "Pinout & Configuration" deneyimi: pin seçiminde alternatifler, pin etiketleri, işlemci paketinin pin pin çizildiği görünüm, çevre birimi ağacı ve ayar panelleri. Parça parça yapılır; her madde kendi başına kullanılabilir olmalı.
+
+> Kaynaklar (davranış CubeMX ile aynı olmalı): [STM32CubeMX kullanım kılavuzu UM1718](https://www.st.com/resource/en/user_manual/um1718-stm32cubemx.pdf) (bölüm 4.5.3 Pinout view, 4.5.4 Pinout menü ve kısayollar, 4.5.5 gelişmiş işlemler, 4.5.7 sinyal sabitleme ve etiketleme, 4.5.12 GPIO yapılandırma penceresi; numaralar sürüme göre kayabilir) · [STM32CubeMX2 Pinout kılavuzu](https://dev.st.com/stm32cube-docs/stm32cubemx2/1.1.0/en/docs/markup/CubeMX2_UserManual/CubeMX2_UserManual_Pinout.html) · [ST wiki: Blink LED (pin seçimi ve etiket ekran görüntüleriyle)](https://wiki.st.com/stm32mcu/wiki/STM32StepByStep%3AStep2_Blink_LED) · [Waveshare CubeMX eğitimi](https://www.waveshare.com/wiki/STM32CubeMX_Tutorial_Series:_Overview) · pin verisi: [STM32_open_pin_data](https://github.com/STMicroelectronics/STM32_open_pin_data) (BSD-3-Clause).
+
+### ES-1001 · Bağlantılar penceresinde alternatif pin seçiminin düzeltilmesi
+`etiketler: tip:hata, alan:pinout, öncelik:yüksek, seviye:hepsi`
+
+2026-10-16 tarihli inceleme (STM32F411, BME280 + SPI komponenti + LED). **Çalışan:** her sinyal için o sinyali verebilen bütün pinler listeleniyor (I2C SCL: PA8, PB6, PB8, PB10; SPI SCK: PA5, PB3, PB10, PB13; CS ve GPIO: boştaki her pin). Pin seçilince kilitleniyor ve atama ona göre yeniden çözülüyor (SCL = PB8 → I2C1, SDA = PB9). **Sorunlar:**
+
+1. Listede pinin hangi çevre birimini verdiği yazmıyor: PB10'u seçen kullanıcı I2C1 yerine I2C2'ye geçtiğini görmüyor (CubeMX'te seçenekler `PB10 · I2C2_SCL` biçiminde).
+2. Liste aynı bus grubunun çevre birimine göre süzülmüyor: SCL I2C1'deyken SDA listesinde I2C2'nin pini PB3 de var; seçilirse kilit **sessizce yok sayılıyor** ve sadece notlarda uyarı çıkıyor.
+3. Çevre birimi örneği (I2C1 / I2C2 / I2C3) doğrudan seçilemiyor; yalnızca pin seçerek dolaylı değişiyor.
+4. Başka bir komponentin kullandığı pin listede seçilebiliyor; seçilirse kilit yok sayılıp otomatik atanıyor. CubeMX'teki gibi çakışma açıkça gösterilmeli (kullanıcı ya diğer sinyali taşımalı ya da vazgeçmeli).
+5. Desteklenen sinyaller I2C, SPI, U(S)ART, ADC1 ve TIM PWM kanallarıyla sınırlı (CAN, USB, DAC, I2S, SDIO... yok).
+
+- [ ] Seçeneklerde sinyal ve çevre birimi adı (`PB10 · I2C2_SCL`), gruplu liste (I2C1 / I2C2 / I2C3)
+- [ ] Bus grubu için çevre birimi örneği seçimi; seçilen örneğe uymayan pinler devre dışı ve nedeni yazıyor
+- [ ] Dolu pinler işaretli; seçilince çakışma iletişim kutusu (diğer sinyali taşı / vazgeç), sessiz yok sayma yok
+- [ ] Kilitli pinler için "kilidi kaldır" ve tüm kilitleri listeleme (CubeMX'teki pinned pins listesi)
+- [ ] Birim testleri: grup süzme, çakışma, örnek seçimi; arayüz testi
+
+### ES-1002 · İşlemci verisi: paket, fiziksel pin konumları ve bütün sinyaller
+`etiketler: tip:iyileştirme, alan:mcu, öncelik:yüksek, seviye:hepsi`
+
+Pinout görünümü için işlemci tanımlarında paket ve bütün fiziksel pinler gerekiyor. Bugün `tools/mcu/gen-mcus.js` STM32_open_pin_data'daki `Position` bilgisini okuyup atıyor, sadece kartta çıkan GPIO pinlerini (ör. F411CEU6 için 34 pin) ve desteklenen sinyalleri saklıyor; pinin sağda mı solda mı olduğu yapay olarak bölünüyor.
+
+- [ ] Paket adı ve tipi (LQFP48/64/100/144, UFQFPN, WLCSP, BGA) ile pin sayısı
+- [ ] Her fiziksel pin: numara/konum (BGA'da satır-sütun), ad, tür (I/O, besleme, NRST, BOOT0, OSC), 5 V toleransı
+- [ ] Pinin bütün sinyalleri ve AF numaraları (CAN, USB, DAC, I2S, SDIO, SWD, OSC, EXTI, EVENTOUT dahil); pin atayıcının kullandığı alt küme ayrı alan olarak korunur
+- [ ] Kart verisi (hangi pin hangi konnektörde, kartta bağlı LED/buton) ayrı tutulur
+- [ ] 15 işlemcinin yeniden üretilmesi; mevcut testlerin geçmesi
+
+### ES-1003 · Pin etiketleri (User Label)
+`etiketler: tip:özellik, alan:pinout, öncelik:yüksek, seviye:hepsi`
+
+CubeMX'teki "Enter User Label" karşılığı: kullanıcı bir pine ad verir (ör. PA12 → `Pin_Led`), ad tasarımda her yerde görünür.
+
+- [ ] Tasarım dosyasında pin → etiket eşlemesi; geçerli C tanımlayıcısı ve benzersizlik denetimi
+- [ ] Design şemasında MCU pininde ve bağlantı tablolarında etiket (pin adı ipucunda kalır)
+- [ ] Şemada MCU pinine sağ tık → "Etiket gir / kaldır"
+- [ ] Kod üretimi: CubeMX ile aynı biçimde `Pin_Led_Pin` / `Pin_Led_GPIO_Port` tanımları (main.h); bare-metal'de ayrı başlık
+- [ ] İşlemci değişince etiketlerin taşınması ya da uyarı; birim ve arayüz testleri
+
+### ES-1004 · Pinout görünümü: işlemci paketinin çizimi
+`etiketler: tip:özellik, alan:pinout, öncelik:yüksek, seviye:hepsi`
+
+Ortada işlemci (kare), kenarlarında her fiziksel pin küçük bir kutu olarak, adı ve (varsa) atanmış sinyali ya da etiketiyle. ES-1002'deki veriye dayanır.
+
+- [ ] LQFP / QFN için dört kenarda pin numarası sırasıyla yerleşim; BGA için ızgara
+- [ ] Renkler CubeMX'teki gibi: atanmış ve çalışır (yeşil), mod eksik ya da çakışmalı (turuncu/kırmızı), besleme ve özel pinler (sarı/haki), boş (gri); sabitlenmiş pinde raptiye işareti
+- [ ] Pinin yanında atanmış sinyal ya da kullanıcı etiketi
+- [ ] Üzerine gelince kart: pin no, ad, tür, bütün alternatif fonksiyonlar, şu anki kullanım
+- [ ] Yakınlaştır / sığdır / döndür; pin, sinyal ya da etiket arama (bulunan pinler yanıp söner)
+- [ ] Açık / koyu tema, dar pencere; arayüz testi ve ekran görüntüleri
+
+### ES-1005 · Pinout görünümü: pine tıklayarak sinyal atama ve sağ tık menüsü
+`etiketler: tip:özellik, alan:pinout, öncelik:yüksek, seviye:hepsi`
+
+- [ ] Sol tık: pinin fonksiyon listesi (Reset_State, GPIO_Input, GPIO_Output, GPIO_Analog, GPIO_EXTIn ve çevre birimi sinyalleri, çevre birimine göre gruplu); seçilen atanır
+- [ ] Sağ tık: "Etiket gir", "Sinyali sabitle / sabitlemeyi kaldır", "Sıfırla (Reset_State)", "Bu pine bağlanabilecek çevre birimleri"
+- [ ] Ctrl + tık: atanmış sinyalin alternatif pinleri vurgulanır, sürükleyerek ya da tıklayarak taşınır
+- [ ] Çakışma: dolu pine atamada uyarı ve seçenekler
+- [ ] Komponentlerin kullandığı pinler komponent adıyla görünür; buradan yapılan değişiklik Design'daki kilitlere yansır
+- [ ] Geri al / yinele; birim ve arayüz testleri
+
+### ES-1006 · Pinout & Configuration sekmesi: çevre birimi ağacı ve mod seçimi
+`etiketler: tip:özellik, alan:pinout, öncelik:orta, seviye:profesyonel`
+
+CubeMX'in sol panelindeki kategoriler: System Core (GPIO, NVIC, RCC, SYS), Analog, Timers, Connectivity, Middleware (FreeRTOS); A→Z listesi ve arama.
+
+- [ ] Kategorili ve alfabetik çevre birimi ağacı; durum simgeleri (etkin, uyarı, pin çakışması yüzünden kullanılamaz)
+- [ ] Çevre birimi seçilince "Mode" paneli (ör. I2C: Disable / I2C; USART: Asynchronous; SPI: Full-Duplex Master; TIM: kanal başına PWM Generation)
+- [ ] Mod etkinleşince sinyaller pinlere otomatik yerleşir ve Pinout görünümünde görünür; kapatınca pinler boşalır
+- [ ] RCC (HSE/LSE kaynağı) ve SYS (debug: Serial Wire, timebase) Clock sekmesiyle tutarlı
+- [ ] Komponentle eklenen çevre birimleri burada "komponent tarafından kullanılıyor" olarak görünür
+
+### ES-1007 · Configuration paneli: parametre, GPIO, NVIC ve DMA ayarları
+`etiketler: tip:özellik, alan:pinout, öncelik:orta, seviye:profesyonel`
+
+- [ ] Parameter Settings: çevre birimine göre (I2C hızı, UART baud / veri biti / parite, SPI modu ve bölücü, TIM PSC / ARR / darbe, ADC çözünürlük)
+- [ ] GPIO Settings tablosu: pin, sinyal, çıkış seviyesi, mod, pull-up/down, hız, kullanıcı etiketi
+- [ ] NVIC Settings (kesme açma ve öncelik), DMA Settings (akış/kanal, yön, öncelik)
+- [ ] Kod üretimi bu ayarları kullanır (HAL ve bare-metal); değişiklik önizlemesi
+- [ ] Birim testleri ve üretilen projenin derlenmesi
+
+### ES-1008 · Design sekmesinde "yalnızca işlemci" (Pinout) görünümü
+`etiketler: tip:özellik, alan:pinout, öncelik:orta, seviye:hepsi`
+
+Design sekmesinde şema ile Pinout görünümü arasında geçiş: kullanıcı komponent şemasını değil, yalnızca işlemciyi ve pinlerini görmek isteyebilir.
+
+- [ ] Design araç çubuğunda "Şema / Pinout" geçişi; seçim projede hatırlanır (Profesyonel modda varsayılan Pinout)
+- [ ] İki görünüm aynı tasarım verisini kullanır: komponent pinleri Pinout'ta komponent adı ya da etiketle, Pinout'ta atanan çıplak GPIO'lar şemada MCU pin etiketi olarak görünür
+- [ ] Etiket değişikliği (ör. PA12 → Pin_Led) iki görünümde de anında görünür
+- [ ] Arayüz testi: geçiş, senkronizasyon, geri al / yinele
+
+### ES-1009 · Pin listesi tablosu ve dışa aktarma
+`etiketler: tip:özellik, alan:pinout, öncelik:düşük, seviye:profesyonel`
+
+- [ ] Bütün pinlerin tablosu: no, ad, tür, sinyal, etiket, GPIO modu, sabitli mi; sıralama ve süzme
+- [ ] Tablodan düzenleme (grafik görünüme alternatif, CubeMX2'deki gibi)
+- [ ] CSV dışa aktarma (CubeMX "Export pinout" karşılığı) ve donanım ekibi için yazdırılabilir pin listesi
