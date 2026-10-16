@@ -199,6 +199,21 @@ kendiliğinden algılanır (yerel modül gerekmez; Windows'ta WMI olayları, Lin
 bağlı kart OpenOCD ile sorgulanır: `DBGMCU_IDCODE` ile cihaz ve revizyon, flash boyutu, 96 bit UID, okuma koruması (RDP)
 seviyesi, hedef voltajı. Projedeki işlemciden farklı bir kart bağlıysa durum çubuğu uyarır. Prob öğesine tıklayınca prob, hedef
 ve araç (STM32_Programmer_CLI, OpenOCD, pyOCD, st-flash; yoksa kurulum yolu) bilgisini içeren bir rapor açılır.
+
+**Yükleme:** Flash ve Run, algılanan proba göre OpenOCD (ST-Link, J-Link, CMSIS-DAP) ya da STM32CubeProgrammer (USB DFU,
+UART önyükleyicisi) çalıştırır. İlerleme bildiriminde aşama (bağlanma, silme, yazma, doğrulama) görünür ve iptal edilebilir;
+bitince boyut, süre ve hız gösterilir. Kullanılan komut ve tam çıktı **Embedded Studio: Yükleme** panelindedir. Prob yok, hedef
+beslenmiyor, okuma koruması (RDP), yazma koruması, bağlantı ve doğrulama hataları anlaşılır mesaja çevrilir.
+Gezginde bir `.elf` / `.hex` / `.bin` dosyasına sağ tıklayıp **Dosya Yükle** ile tek dosya yüklenebilir (`.bin` için adres sorulur;
+doğrulama, tam silme, sonra çalıştırma ve reset altında bağlanma seçilebilir).
+
+| Ayar | Varsayılan | |
+|---|---|---|
+| `embeddedStudio.flash.tool` | `auto` | `openocd` ya da `cubeprog` ile zorlanabilir |
+| `embeddedStudio.flash.erase` | `sector` | `full`: tüm flash silinir |
+| `embeddedStudio.flash.verify` | açık | Yazdıktan sonra doğrula |
+| `embeddedStudio.flash.connectUnderReset` | kapalı | Uyku modu ya da SWD pinlerini kullanan programlarda gerekir |
+| `embeddedStudio.flash.speedKHz` | `0` | SWD hızı (0: aracın varsayılanı); uzun kabloda düşürün |
 Otomatik algılama `embeddedStudio.probe.autoDetect` ayarıyla kapatılabilir.
 
 Kısayollar sadece Embedded Studio projesinde ve debug oturumu dışında geçerlidir. Yüklemeden önce onay için

@@ -77,7 +77,8 @@ function activate(context) {
     vscode.commands.registerCommand('embeddedStudio.run', () => actions.run()),
     vscode.commands.registerCommand('embeddedStudio.debug', () => actions.debug()),
     vscode.commands.registerCommand('embeddedStudio.terminal', async () => (await Studio.show(context)).post({ type: 'tab', tab: 'monitor' })),
-    vscode.commands.registerCommand('embeddedStudio.probe', () => probeCommand()));
+    vscode.commands.registerCommand('embeddedStudio.probe', () => probeCommand()),
+    vscode.commands.registerCommand('embeddedStudio.flashFile', (uri) => flashFileCommand(uri)));
 
   // ---- ES-202: tak/çıkar izleme; debug probu takılınca (debug oturumu yoksa) kart kendiliğinden sorgulanır ----
   let usbWatch = null;
@@ -129,6 +130,41 @@ function currentProject() {
   } catch {
     return null;
   }
+}
+
+/** ES-203: herhangi bir .elf / .hex / .bin dosyasını seçeneklerle yükle (gezginde sağ tık ya da komut paleti) */
+async function flashFileCommand(uri) {
+  const p = currentProject();
+  if (!p) return vscode.window.showErrorMessage(t('Önce bir Embedded Studio projesi açın.'));
+  let file = uri && uri.fsPath;
+  if (!file) {
+    const pick = await vscode.window.showOpenDialog({
+      canSelectMany: false, defaultUri: vscode.Uri.file(path.join(p.root, cm.buildDir(p.design.build))),
+      filters: { [t('Firmware')]: ['elf', 'hex', 'bin'] }, openLabel: t('Yükle')
+    });
+    if (!pick) return false;
+    file = pick[0].fsPath;
+  }
+  let address;
+  if (/\.bin$/i.test(file)) {
+    const v = await vscode.window.showInputBox({
+      prompt: t('.bin dosyası adres bilgisi taşımaz. Hangi adrese yazılsın?'), value: '0x08000000',
+      validateInput: (x) => (/^0x[0-9a-f]{1,8}$/i.test(x.trim()) ? null : t('Onaltılık adres girin, ör. 0x08000000'))
+    });
+    if (!v) return false;
+    address = parseInt(v.trim(), 16);
+  }
+  const set = require('./flasher').flashSettings();
+  const items = [
+    { id: 'reset', label: t('Yükledikten sonra çalıştır (reset)'), picked: true },
+    { id: 'verify', label: t('Doğrula (verify)'), picked: set.verify },
+    { id: 'full', label: t('Tam silme (tüm flash; varsayılan: sadece gereken sektörler)'), picked: set.erase === 'full' },
+    { id: 'ur', label: t('Reset altında bağlan (connect under reset)'), picked: set.underReset }
+  ];
+  const chosen = await vscode.window.showQuickPick(items, { canPickMany: true, title: t('{0} yükleme seçenekleri', path.basename(file)) });
+  if (!chosen) return false;
+  const on = new Set(chosen.map((x) => x.id));
+  return actions.flashFileAt(p, file, { reset: on.has('reset'), verify: on.has('verify'), erase: on.has('full') ? 'full' : 'sector', underReset: on.has('ur'), address });
 }
 
 /** Prob ve kart raporu: USB problar + OpenOCD ile hedef kimliği + araçlar; Markdown önizlemede açılır */

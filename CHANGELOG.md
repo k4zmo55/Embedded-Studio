@@ -1,5 +1,15 @@
 # Değişiklik günlüğü
 
+## 0.5.3 (önizleme)
+
+- **Tek tuşla flash:** Flash ve Run artık OpenOCD'yi (ya da STM32_Programmer_CLI'yi) doğrudan çalıştırır. Araç algılanan proba göre seçilir: ST-Link, J-Link ve CMSIS-DAP için OpenOCD (doğru arayüz dosyası, birden fazla probda seri numarası); USB DFU ve UART önyükleyicisi için STM32CubeProgrammer.
+- **İlerleme ve sonuç:** iptal edilebilir bildirimde aşama (bağlanma, silme, yazma, doğrulama, reset); bitince boyut, süre ve hız. Kullanılan komut ve tam çıktı "Embedded Studio: Yükleme" çıktı panelinde.
+- **Anlaşılır hatalar:** prob yok, hedef beslenmiyor, okuma koruması (RDP), yazma koruması (WRP), hedefe bağlanılamadı, farklı işlemci, dosya yok, zaman aşımı, doğrulama hatası.
+- **Dosya Yükle:** gezginde `.elf` / `.hex` / `.bin` dosyasına sağ tık (ya da komut paleti). `.bin` için adres sorulur; doğrulama, tam silme, sonra çalıştırma, reset altında bağlanma seçilebilir.
+- **Ayarlar:** `embeddedStudio.flash.tool` (auto / openocd / cubeprog), `flash.erase` (sector / full; H7'de iki banka), `flash.verify`, `flash.connectUnderReset`, `flash.speedKHz`.
+- Debug yapılandırması da algılanan probun OpenOCD arayüzünü kullanır (J-Link, CMSIS-DAP).
+- Testler: birim 56 (komut kurulumu, ilerleme/istatistik ayrıştırma, hata açıklamaları), arayüz 35. Gerçek kartla yükleme henüz denenmedi.
+
 ## 0.5.2 (önizleme)
 
 - **Prob ve kart algılama:** ST-Link (V1/V2/V2-1/V3), J-Link, CMSIS-DAP/DAPLink, STM32 USB DFU önyükleyicisi ve USB-UART köprüleri (CH340, CP210x, FTDI, PL2303) seri numarası ve sanal seri portuyla listelenir. Yerel modül yok: Windows'ta CIM + `Win32_DeviceChangeEvent` (tak/çıkar olayı), Linux'ta `/sys`, macOS'ta `ioreg`.

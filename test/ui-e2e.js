@@ -32,7 +32,7 @@ const THEMES = {
 // ------------------------------------------------------------------ sahte vscode API
 const sse = [];
 const backlog = [];
-const recorded = { external: [], tasks: [], executions: [], info: [], warn: [], errors: [], openFolder: [], debug: [], context: {} };
+const recorded = { external: [], tasks: [], executions: [], info: [], warn: [], errors: [], openFolder: [], debug: [], context: {}, output: [] };
 const statusItems = []; // durum çubuğu öğeleri (ES-201)
 let toWebview = (m) => { const line = `data: ${JSON.stringify(m)}\n\n`; if (!sse.length) backlog.push(line); sse.forEach((r) => r.write(line)); };
 let onWebviewMessage = null;
@@ -54,7 +54,7 @@ const vscodeFake = {
   },
   window: {
     createStatusBarItem: () => { const i = { visible: false, show() { this.visible = true; }, hide() { this.visible = false; }, dispose() {} }; statusItems.push(i); return i; },
-    createOutputChannel: () => ({ append() {}, appendLine() {} }),
+    createOutputChannel: () => ({ append(s) { recorded.output.push(String(s)); }, appendLine(s) { recorded.output.push(String(s)); }, show() {}, clear() {} }),
     createWebviewPanel: () => ({
       webview: {
         cspSource: ORIGIN,
@@ -70,7 +70,7 @@ const vscodeFake = {
     showWarningMessage: async (msg, opts, ...items) => { recorded.warn.push(msg); return items[0]; },
     showErrorMessage: async (msg) => { recorded.errors.push(msg); },
     showTextDocument: async () => {},
-    withProgress: async (o, fn) => fn({ report() {} })
+    withProgress: async (o, fn) => fn({ report() {} }, { isCancellationRequested: false, onCancellationRequested() {} }),
   },
   tasks: {
     executeTask: async (t) => { const ex = { task: t }; recorded.tasks.push(t); recorded.executions.push(ex); return ex; },
@@ -920,26 +920,26 @@ async function until(fn, ms = 8000, what = 'koşul') {
     const cfg = recorded.debug[recorded.debug.length - 1];
     assert.ok(cfg && cfg.type === 'cortex-debug' && cfg.runToEntryPoint === 'main' && /build[\\/]debug[\\/]demo_proje\.elf$/.test(cfg.executable), JSON.stringify(cfg));
     assert.deepStrictEqual(cfg.configFiles, ['interface/stlink.cfg', 'target/stm32f4x.cfg']);
-    // Run: derle + yükle (reset ile çalıştır)
+    // Run: derle + yükle (reset ile çalıştır). ES-203: yükleme görev değil, OpenOCD doğrudan çalışır;
+    // bu makinede kart yok → anlaşılır hata, kullanılan komut "Embedded Studio: Yükleme" panelinde
     n = recorded.executions.length;
+    let errs = recorded.errors.length;
     const r = cmds['embeddedStudio.run']();
     await waitNew(n, 'run derleme');
     await finishLast(0);
-    await waitNew(n + 1, 'yükleme görevi');
-    const flashTask = recorded.tasks[recorded.tasks.length - 1];
-    assert.ok(flashTask.exec.cmd.includes('program build/debug/demo_proje.elf verify reset exit'), flashTask.exec.cmd);
-    await finishLast(0);
-    assert.strictEqual(await r, true);
-    assert.ok(recorded.info.some((m) => m.startsWith('Yüklendi ve çalışıyor')), 'çalışıyor bildirimi');
+    assert.strictEqual(await r, false);
+    assert.strictEqual(recorded.executions.length, n + 1, 'yükleme görev olarak açılmadı');
+    assert.ok(recorded.output.some((l) => /openocd.* -c "program \{.*demo_proje\.elf\} verify reset exit"/.test(l)), recorded.output.join('\n'));
+    assert.ok(recorded.errors.length > errs, 'yükleme hatası bildirildi');
     // Flash: hedef durur (reset yok)
     n = recorded.executions.length;
+    errs = recorded.errors.length;
     const f = cmds['embeddedStudio.flash']();
     await waitNew(n, 'flash derleme');
     await finishLast(0);
-    await waitNew(n + 1, 'flash görevi');
-    assert.ok(/verify exit"$/.test(recorded.tasks[recorded.tasks.length - 1].exec.cmd), recorded.tasks[recorded.tasks.length - 1].exec.cmd);
-    await finishLast(0);
-    await f;
+    assert.strictEqual(await f, false);
+    assert.ok(recorded.output.some((l) => /verify exit"$/.test(l)), 'reset olmadan yükleme komutu');
+    assert.ok(recorded.errors.length > errs, 'flash hatası bildirildi');
     // Terminal → Monitör sekmesi
     await cmds['embeddedStudio.terminal']();
     await until(() => cdp.eval(`document.querySelector('#monitor').classList.contains('active')`), 3000, 'monitör sekmesi');

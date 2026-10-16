@@ -15,7 +15,9 @@ const path = require('path');
 const { spawn } = require('child_process');
 const cm = require('./codegen/build');
 const { elfSize } = require('./toolchain');
-const { openocdCmd, parseProbe } = require('./debug/probe');
+const { parseProbe } = require('./debug/probe');
+const { runFlash, flashSettings, resultText } = require('./flasher');
+const { detectTools } = require('./debug/tools');
 const { classify, listUsb } = require('./debug/usb');
 const { readCommands, decodeTarget, matchesProject } = require('./debug/stm32id');
 const { t } = require('./i18n');
@@ -152,21 +154,57 @@ class ProjectActions {
     return go === t('Yükle');
   }
 
+  /**
+   * Yükleme seçenekleri: araç (OpenOCD / STM32_Programmer_CLI), prob (USB taramasından), aile ve hedef yapılandırması.
+   * @param {any} p proje @param {string} file @param {{ reset?: boolean, erase?: string, verify?: boolean, underReset?: boolean, address?: number }} over
+   */
+  async flashOptions(p, file, over = {}) {
+    const mcu = p.lib.mcus[p.design.mcuId];
+    const set = flashSettings();
+    const probes = this.state.probes || (await this.scanUsb().catch(() => []));
+    const probe = probes.find((x) => x.interfaceCfg) || probes.find((x) => x.kind === 'dfu' || x.kind === 'uart');
+    // DFU ve UART önyükleyicisi sadece CubeProgrammer ile; SWD problarında ayar (auto: OpenOCD)
+    let tool = set.tool === 'cubeprog' || (probe && !probe.interfaceCfg) ? 'cubeprog' : 'openocd';
+    let toolPath;
+    if (tool === 'cubeprog') {
+      const tools = this.tools || (this.tools = await detectTools().catch(() => []));
+      const cp = tools.find((x) => x.id === 'cubeprog' && x.found);
+      if (cp) toolPath = cp.path;
+      else if (probe && !probe.interfaceCfg) throw new Error(t('{0} ile yüklemek için STM32CubeProgrammer gerekir: {1}', probe.label, 'https://www.st.com/en/development-tools/stm32cubeprog.html'));
+      else tool = 'openocd';
+    }
+    return {
+      tool, toolPath, file, family: mcu.device.family || 'f4', targetCfg: mcu.device.openocdTarget,
+      probe, multipleProbes: probes.filter((x) => probe && x.kind === probe.kind).length > 1,
+      erase: over.erase || set.erase, verify: over.verify ?? set.verify, reset: !!over.reset,
+      underReset: over.underReset ?? set.underReset, speedKHz: set.speedKHz || undefined, address: over.address
+    };
+  }
+
+  /** Bir dosyayı yükle (proje derlenmeden). Dönüş: başarılı mı */
+  async flashFileAt(p, file, over = {}) {
+    let opts;
+    try {
+      opts = await this.flashOptions(p, file, over);
+    } catch (e) {
+      this.info('error', e.message);
+      return false;
+    }
+    this.set({ running: over.reset ? 'run' : 'flash' });
+    const r = await runFlash(opts);
+    this.set({ running: null, lastFlash: { ...r, file } });
+    this.info(r.ok ? 'info' : r.cancelled ? 'warn' : 'error', resultText(r, opts));
+    return r.ok;
+  }
+
   /** Derle + yükle. run: yükledikten sonra çalıştır (reset), değilse hedef durdurulmuş kalır. */
   async flash(opts = { run: false }) {
     const p = this.project();
     if (!p || this.state.running) return false;
     if (!(await this.build({ quiet: true }))) return false;
-    const elf = cm.elfRel(p.design);
+    const elf = path.join(p.root, cm.elfRel(p.design));
     if (!(await this.confirm(p, elf))) return false;
-    const mcu = p.lib.mcus[p.design.mcuId];
-    this.set({ running: opts.run ? 'run' : 'flash' });
-    const code = await this.runTask(p, opts.run ? 'run' : 'flash', opts.run ? t('Çalıştır') : t('Yükle'),
-      openocdCmd(mcu, [`program ${elf} verify${opts.run ? ' reset' : ''} exit`]));
-    this.set({ running: null });
-    if (code === 0) this.info('info', opts.run ? t('Yüklendi ve çalışıyor: {0}', path.basename(elf)) : t('Yüklendi ve doğrulandı; hedef durduruldu: {0}', path.basename(elf)));
-    else this.info('error', t('Yükleme başarısız. Prob takılı mı? Ayrıntı Terminal\'de.'));
-    return code === 0;
+    return this.flashFileAt(p, elf, { reset: !!opts.run });
   }
 
   run() {
@@ -184,7 +222,8 @@ class ProjectActions {
       servertype: 'openocd',
       cwd: p.root,
       executable: path.join(p.root, cm.elfRel(p.design)),
-      configFiles: ['interface/stlink.cfg', mcu.device.openocdTarget],
+      // Algılanan probun arayüzü (J-Link, CMSIS-DAP); bilinmiyorsa ST-Link
+      configFiles: [((this.state.probes || []).find((x) => x.interfaceCfg) || {}).interfaceCfg || 'interface/stlink.cfg', mcu.device.openocdTarget],
       runToEntryPoint: 'main',
       ...(fs.existsSync(svd) ? { svdFile: svd } : {}),
       armToolchainPath: p.design.build.toolchain.gccPath || undefined

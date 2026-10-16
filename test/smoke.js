@@ -651,5 +651,49 @@ test('dil seçimi: ayar > VS Code dili; İngilizcede çeviri, bağlam eki ve yer
   assert.strictEqual(i18n.t('Durdur@@debug'), 'Durdur');
 });
 
+test('flash komutu: OpenOCD/CubeProgrammer, .bin adresi, tam silme, reset altında, hız, seri no', () => {
+  const fc = require('../src/debug/flashcmd');
+  const base = { file: 'C:\\p\\build\\app.elf', family: 'f4', targetCfg: 'target/stm32f4x.cfg' };
+  let c = fc.buildFlashCommand({ ...base, tool: 'openocd', reset: true });
+  assert.deepStrictEqual(c.args, ['-f', 'interface/stlink.cfg', '-f', 'target/stm32f4x.cfg', '-c', 'program {C:/p/build/app.elf} verify reset exit']);
+  c = fc.buildFlashCommand({ ...base, tool: 'openocd', file: 'a.bin', verify: false, address: 0x08004000 });
+  assert.ok(c.args[c.args.length - 1] === 'program {a.bin} exit 0x08004000', c.display);
+  c = fc.buildFlashCommand({ ...base, tool: 'openocd', file: 'a.bin' });
+  assert.ok(/exit 0x08000000$/.test(c.args[c.args.length - 1]), c.display);
+  c = fc.buildFlashCommand({ ...base, tool: 'openocd', erase: 'full', underReset: true, speedKHz: 480, multipleProbes: true,
+    probe: { kind: 'jlink', interfaceCfg: 'interface/jlink.cfg', serial: '123' } });
+  const j = c.args.join(' ');
+  assert.ok(j.startsWith('-f interface/jlink.cfg -c adapter serial 123 -f target/stm32f4x.cfg'), j);
+  assert.ok(/adapter speed 480/.test(j) && /connect_assert_srst/.test(j) && /stm32f2x mass_erase 0/.test(j), j);
+  c = fc.buildFlashCommand({ ...base, family: 'h7', tool: 'openocd', erase: 'full' });
+  assert.ok(/stm32h7x mass_erase 1/.test(c.args.join(' ')), 'H7 ikinci banka');
+  c = fc.buildFlashCommand({ ...base, tool: 'cubeprog', erase: 'full', underReset: true, speedKHz: 1000, reset: true });
+  assert.deepStrictEqual(c.args, ['-c', 'port=SWD', 'freq=1000', 'mode=UR', 'reset=HWrst', '-e', 'all', '-w', base.file, '-v', '-rst']);
+  c = fc.buildFlashCommand({ ...base, tool: 'cubeprog', file: 'x.bin', probe: { kind: 'dfu' }, verify: false });
+  assert.deepStrictEqual(c.args, ['-c', 'port=USB1', '-w', 'x.bin', '0x08000000']);
+  c = fc.buildFlashCommand({ ...base, tool: 'cubeprog', probe: { kind: 'uart', port: 'COM7' } });
+  assert.deepStrictEqual(c.args.slice(0, 3), ['-c', 'port=COM7', 'br=115200']);
+  assert.strictEqual(fc.kindOf('a.HEX'), 'hex');
+});
+test('flash çıktısı: ilerleme, istatistik, başarı ölçütü ve hata açıklamaları', () => {
+  const fc = require('../src/debug/flashcmd');
+  assert.deepStrictEqual(fc.parseProgress('openocd', '** Programming Started **'), { stage: 'program', percent: 30 });
+  assert.strictEqual(fc.parseProgress('openocd', 'Info : clock speed 2000 kHz'), null);
+  assert.strictEqual(fc.parseProgress('cubeprog', '  ██████ 50%').percent, 50);
+  const log = 'Info : stm32f4x.cpu: hardware has 6 breakpoints\n** Programming Started **\nInfo : wrote 16384 bytes from file app.elf in 0.52s (30.769 KiB/s)\n** Programming Finished **\n** Verify Started **\n** Verified OK **\n';
+  assert.deepStrictEqual(fc.parseStats('openocd', log), { bytes: 16384, seconds: 0.52, kibps: 30.769 });
+  assert.strictEqual(fc.parseStats('cubeprog', 'Time elapsed during download operation: 00:00:01.250').seconds, 1.25);
+  assert.ok(fc.flashSucceeded('openocd', log, 0, true));
+  assert.ok(!fc.flashSucceeded('openocd', log.replace('** Verified OK **', ''), 0, true), 'verify yoksa başarısız');
+  assert.ok(!fc.flashSucceeded('openocd', log, 1, true));
+  assert.ok(fc.flashSucceeded('cubeprog', 'File download complete\n', 0, false));
+  assert.ok(/Prob bulunamadı/.test(fc.explainFlashError('Error: open failed')));
+  assert.ok(/RDP/.test(fc.explainFlashError('Error: stm32x device protected')));
+  assert.ok(/beslenmiyor/.test(fc.explainFlashError('Info : Target voltage: 0.000000\nError: init mode failed (unable to connect to the target)')));
+  assert.ok(/bağlanılamadı/.test(fc.explainFlashError('Error: init mode failed (unable to connect to the target)')));
+  assert.ok(/Doğrulama/.test(fc.explainFlashError('Error: checksum mismatch - attempting binary compare\nverify failed')));
+  assert.strictEqual(fc.explainFlashError('her şey yolunda'), null);
+});
+
 fs.rmSync(root, { recursive: true, force: true });
 console.log(`\nsmoke: ${passed} test geçti`);

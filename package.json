@@ -2,7 +2,7 @@
   "name": "embedded-studio",
   "displayName": "Embedded Studio",
   "description": "STM32 için görsel gömülü sistem tasarımı: komponent seçimi, otomatik pin/saat ataması, HAL veya bare-metal + FreeRTOS kod üretimi, canlı monitör ve debug.",
-  "version": "0.5.2",
+  "version": "0.5.3",
   "publisher": "mhmtakfseckin",
   "license": "MIT",
   "repository": {
@@ -97,6 +97,12 @@
         "title": "%command.probe%",
         "category": "Embedded Studio",
         "icon": "$(plug)"
+      },
+      {
+        "command": "embeddedStudio.flashFile",
+        "title": "%command.flashFile%",
+        "category": "Embedded Studio",
+        "icon": "$(zap)"
       }
     ],
     "configuration": {
@@ -126,6 +132,51 @@
           "type": "boolean",
           "default": true,
           "description": "%config.probeAutoDetect%"
+        },
+        "embeddedStudio.flash.tool": {
+          "type": "string",
+          "enum": [
+            "auto",
+            "openocd",
+            "cubeprog"
+          ],
+          "enumDescriptions": [
+            "%config.flashTool.auto%",
+            "OpenOCD",
+            "STM32CubeProgrammer (STM32_Programmer_CLI)"
+          ],
+          "default": "auto",
+          "description": "%config.flashTool%"
+        },
+        "embeddedStudio.flash.erase": {
+          "type": "string",
+          "enum": [
+            "sector",
+            "full"
+          ],
+          "enumDescriptions": [
+            "%config.flashErase.sector%",
+            "%config.flashErase.full%"
+          ],
+          "default": "sector",
+          "description": "%config.flashErase%"
+        },
+        "embeddedStudio.flash.verify": {
+          "type": "boolean",
+          "default": true,
+          "description": "%config.flashVerify%"
+        },
+        "embeddedStudio.flash.connectUnderReset": {
+          "type": "boolean",
+          "default": false,
+          "description": "%config.flashUnderReset%"
+        },
+        "embeddedStudio.flash.speedKHz": {
+          "type": "number",
+          "default": 0,
+          "minimum": 0,
+          "maximum": 24000,
+          "description": "%config.flashSpeed%"
         }
       }
     },
@@ -177,6 +228,17 @@
         {
           "command": "embeddedStudio.probe",
           "when": "embeddedStudio.projectOpen"
+        },
+        {
+          "command": "embeddedStudio.flashFile",
+          "when": "embeddedStudio.projectOpen"
+        }
+      ],
+      "explorer/context": [
+        {
+          "command": "embeddedStudio.flashFile",
+          "when": "embeddedStudio.projectOpen && resourceExtname =~ /^\\.(elf|hex|bin)$/",
+          "group": "embeddedStudio"
         }
       ]
     }

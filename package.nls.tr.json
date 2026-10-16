@@ -11,5 +11,14 @@
   "command.terminal": "Monitörü Aç",
   "command.probe": "Prob ve Kart Bilgisi",
   "config.flashConfirm": "Karta yüklemeden önce onay iste (durum çubuğundaki Flash/Run, tasarımcıdaki Yükle).",
-  "config.probeAutoDetect": "Prob takılınca (ST-Link, J-Link, CMSIS-DAP, DFU, UART köprüsü) algıla ve bağlı kartı kendiliğinden sorgula."
+  "config.probeAutoDetect": "Prob takılınca (ST-Link, J-Link, CMSIS-DAP, DFU, UART köprüsü) algıla ve bağlı kartı kendiliğinden sorgula.",
+  "command.flashFile": "Dosya Yükle (.elf / .hex / .bin)…",
+  "config.flashTool": "Yükleme aracı. \"auto\": SWD problarında OpenOCD, USB DFU ve UART önyükleyicisinde STM32CubeProgrammer.",
+  "config.flashTool.auto": "SWD problarında OpenOCD, DFU/UART için STM32CubeProgrammer",
+  "config.flashErase": "Yüklemeden önce silme.",
+  "config.flashErase.sector": "Sadece yazılan sektörler/sayfalar",
+  "config.flashErase.full": "Tüm flash (mass erase)",
+  "config.flashVerify": "Yazdıktan sonra flash içeriğini doğrula.",
+  "config.flashUnderReset": "Reset altında bağlan (bağlanırken NRST tutulur). Program işlemciyi uyutuyor ya da SWD pinlerini başka işe kullanıyorsa gerekir.",
+  "config.flashSpeed": "SWD saati, kHz (0: aracın varsayılanı). Uzun kablo ya da kararsız bağlantıda düşürün."
 }
