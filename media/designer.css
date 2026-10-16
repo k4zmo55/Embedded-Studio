@@ -614,3 +614,23 @@ body.mode-pro .note { padding: 3px 8px; }
 .gen-preview { display: flex; flex-direction: column; gap: 8px; max-height: 60vh; overflow-y: auto; }
 .gen-preview button.link { display: block; background: none; border: none; padding: 1px 0; color: var(--info); text-align: left; cursor: pointer; font-size: 12px; }
 .gen-preview button.link:hover { text-decoration: underline; }
+
+/* HardFault analizörü (ES-207) */
+.fault-banner { display: flex; align-items: center; gap: 10px; margin: 6px 10px; padding: 6px 10px; border-radius: 4px; background: color-mix(in srgb, var(--err) 16%, transparent); border: 1px solid color-mix(in srgb, var(--err) 45%, transparent); }
+.fault-banner[hidden] { display: none; }
+.fault-banner .warn-ic { color: var(--err); font-size: 14px; }
+.fault { display: flex; flex-direction: column; gap: 6px; max-height: 70vh; overflow-y: auto; }
+.fault h4 { margin: 10px 0 2px; font-size: 12px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); }
+.fault-sim { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding-bottom: 8px; border-bottom: 1px solid var(--border); }
+.fault-sim select { width: auto; }
+.fault-sum { font-size: 13px; font-weight: 600; padding: 8px 10px; border-radius: 4px; background: var(--hover); }
+.fault-sum.bad { border-left: 3px solid var(--err); }
+.fault-ctx { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; font-size: 12px; }
+.fault-ctx .task { font-weight: 600; }
+.fault-regs { display: flex; flex-wrap: wrap; gap: 4px 14px; font-size: 11px; }
+.fault-regs b { color: var(--muted); font-weight: 600; }
+.fault-list { margin: 4px 0; padding-left: 18px; font-size: 12px; line-height: 1.6; }
+.fault-addr { font-size: 12px; }
+.fault-check { display: flex; flex-direction: column; gap: 4px; font-size: 12px; }
+.fault-check .check { align-items: flex-start; }
+.src-link { margin-left: 8px; font-family: var(--mono); font-size: 11px; color: var(--accent); }

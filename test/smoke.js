@@ -871,6 +871,70 @@ test('register yazma: alan ekleme, değer ayrıştırma; FPU ve özel register a
     passed++;
     console.log('  ✓ bellek görüntüleyici (ES-206): parçalı okuma, Intel HEX, yazma denetimi, canlı örnek değişkenler');
   }
+  {
+    // ES-207: fault register çözümü, EXC_RETURN, çerçeve, simülasyon senaryoları, addr2line
+    const F = require('../src/debug/fault');
+    const { SimTarget } = require('../src/debug/session');
+    let d = F.decodeFault({ CFSR: (1 << 9) | (1 << 15), HFSR: 1 << 30, BFAR: 0x8, SHCSR: 0 });
+    assert.deepStrictEqual(d.findings.map((x) => x.name), ['PRECISERR', 'FORCED']);
+    assert.strictEqual(d.kind, 'BusFault');
+    assert.deepStrictEqual(d.address, { reg: 'BFAR', value: 8 });
+    assert.ok(d.causes.some((c) => /NULL/.test(c)) && /HardFault/.test(d.summary) && /BusFault/.test(d.summary), d.summary);
+    assert.deepStrictEqual(d.enabled, { MemManage: false, BusFault: false, UsageFault: false });
+    d = F.decodeFault({ CFSR: (1 << 1) | (1 << 7), MMFAR: 0x40004400, HFSR: 0 });
+    assert.strictEqual(d.kind, 'MemManage');
+    assert.ok(d.address.reg === 'MMFAR' && d.causes.some((c) => /RCC/.test(c)));
+    assert.deepStrictEqual(F.decodeFault({ CFSR: (1 << 25) | (1 << 24) }).findings.map((x) => x.name), ['UNALIGNED', 'DIVBYZERO']);
+    assert.ok(/sıfır/.test(F.decodeFault({ CFSR: 0, HFSR: 0 }).summary));
+    assert.ok(/M0/.test(F.decodeFault({}, { v6m: true }).summary));
+    assert.deepStrictEqual(F.excReturn(0xfffffffd), { psp: true, thread: true, fpuFrame: false });
+    assert.deepStrictEqual(F.excReturn(0xffffffe9), { psp: false, thread: true, fpuFrame: true });
+    assert.strictEqual(F.excReturn(0x08000123), null);
+    const fr = F.parseFrame([1, 2, 3, 4, 12, 0x08000201, 0x08000300, 0x01000200], 0x20001000, true);
+    assert.strictEqual(fr.preSp, 0x20001000 + 0x68 + 4, 'FPU çerçevesi + hizalama dolgusu');
+    assert.ok(F.frameValid(fr) && !F.frameValid({ ...fr, pc: 0x20000000 }) && !F.frameValid({ ...fr, xpsr: 0 }) && F.frameValid({ ...fr, xpsr: 0 }, false));
+    // Simülasyon: her senaryo analizden doğru bulguyla geçer; MSP'de itilmiş kayıtlar atlanır
+    const expect = { nullwrite: ['PRECISERR', true, 0], divzero: ['DIVBYZERO', true, 0], unaligned: ['UNALIGNED', false, 8], badfunc: ['INVSTATE', true, 0], clock: ['PRECISERR', false, 8], stack: ['STKERR', true, 0] };
+    for (const [k, sc] of Object.entries(F.SIM_FAULTS())) {
+      const sim = new SimTarget({ peripherals: [], expected: new Map(), dynamic: new Map() });
+      await sim.fault(sc, { pc: 0x08000a3c, lr: 0x08000b10 });
+      const r = await F.analyze(sim, { fpu: true });
+      const [name, psp, shift] = expect[k];
+      assert.ok(r.decoded.findings.some((x) => x.name === name), k);
+      assert.strictEqual(r.context.handler, 'HardFault', k);
+      assert.ok(r.context.inFault && r.context.excReturn.psp === psp, k);
+      assert.strictEqual(r.shift, shift, k + ' shift');
+      assert.ok(!r.frame.invalid && r.frame.pc === 0x08000a3c && r.frame.lr === 0x08000b11, k + ' çerçeve');
+      await sim.reset();
+      assert.strictEqual((await sim.readMemory(F.SCB.CFSR, 1))[0], 0, 'reset fault kaydını siler');
+    }
+    // FreeRTOS: çalışan görev adı ve yığın başı (pxCurrentTCB)
+    {
+      const model = { peripherals: [], expected: new Map(), dynamic: new Map() };
+      const sim = new SimTarget(model);
+      await sim.fault(F.SIM_FAULTS().stack, { pc: 0x08000a3c, lr: 0x08000b10 });
+      const tcb = 0x20003000, name = Buffer.from('SensorTask\0\0\0\0\0\0');
+      model.expected.set(0x20000500, tcb);
+      model.expected.set(tcb + 44, 3);
+      model.expected.set(tcb + 48, 0x20001e20); // yığın başı: PSP'ye 32 bayt
+      for (let i = 0; i < 4; i++) model.expected.set(tcb + 52 + i * 4, name.readUInt32LE(i * 4));
+      const r = await F.analyze(sim, {}, { rtos: true, tcb: 0x20000500 });
+      assert.deepStrictEqual(r.task, { name: 'SensorTask', tcb, stack: 0x20001e20, priority: 3 });
+      assert.ok(/RTOS/.test(r.context.where) && /tükenmiş/.test(r.decoded.causes[0]), r.decoded.causes[0]);
+    }
+    // addr2line (derlenmiş örnek proje varsa)
+    const elfDir = 'C:/Users/mehme/AppData/Local/Temp/es-build/t_f103c8_hal_rtos/build/debug/t_f103c8_hal_rtos.elf';
+    if (fs.existsSync(elfDir)) {
+      const fn = await F.funcAddr(elfDir, ['main', 'Board_Init']);
+      assert.ok(fn.main > 0x08000000 && !(fn.main & 1), JSON.stringify(fn));
+      const [a, b] = await F.addr2line(elfDir, [fn.main + 4, 0x20000000]);
+      assert.ok(a && a.func === 'main' && /main\.c$/.test(a.file) && a.line > 0, JSON.stringify(a));
+      assert.ok(!b || !b.file, 'RAM adresi kaynağa çözülmez');
+    }
+    assert.deepStrictEqual(await F.addr2line('olmayan.elf', [1]), [null]);
+    passed++;
+    console.log('  ✓ HardFault analizörü (ES-207): CFSR/HFSR çözümü, EXC_RETURN, çerçeve arama, senaryolar, RTOS görevi, addr2line');
+  }
   const { OpenOcdTarget, freePort } = require('../src/debug/session');
   const port = await freePort();
   assert.ok(port > 0 && port !== 6666, String(port));

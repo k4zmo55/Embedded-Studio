@@ -1,5 +1,15 @@
 # Değişiklik günlüğü
 
+## 0.5.7 (önizleme)
+
+- **HardFault analizörü:** debug panelinde "Fault analizi". SHCSR, CFSR, HFSR, MMFAR ve BFAR okunur; set olan her bit anlamlı bir cümleye çevrilir (ör. "Geçersiz adrese veri erişimi", "Hizasız bellek erişimi", "Sıfıra bölme", "Thumb biti 0 olan adrese dallanıldı"). Yükseltilmiş (FORCED) fault'larda asıl tür (MemManage / BusFault / UsageFault) özette; hatalı adres (BFAR / MMFAR) geçerliyse gösterilir. Cortex-M0/M0+'ta bu register'lar olmadığı belirtilir.
+- **Nerede oldu:** EXC_RETURN'e göre yığın (MSP / PSP) seçilir, istisna çerçevesinden R0–R3, R12, LR, PC, xPSR ve fault öncesi SP (FPU çerçevesi ve hizalama dolgusu dahil) çıkarılır. İşleyici yığına kayıt yazmışsa (ör. `push {r7, lr}`) çerçeve MSP'de birkaç word ileride aranır. PC ve LR `arm-none-eabi-addr2line` ile fonksiyon ve `dosya:satır`a çözülür; tıklayınca kaynak satır açılır. Çerçeve geçersizse (yığın bozuk) uyarılır.
+- **MSP / PSP ayrımı:** fault'un RTOS görevinde mi, kesme işleyicisinde mi, RTOS başlamadan önce mi olduğu yazılır. FreeRTOS projelerinde `pxCurrentTCB`'den çalışan görevin adı, önceliği ve yığın başı okunur; SP yığın başına çok yakınsa "görevin yığını tükenmiş" uyarısı.
+- **Olası nedenler ve kontrol listesi:** bitlere ve hatalı adrese göre (0'a yakın adres → NULL işaretçi; çevre birimi bölgesi → RCC saati) işaretlenebilir liste. "Raporu kopyala" düz metin rapor üretir (issue'ya ya da yapay zekâ asistanına yapıştırmak için; yerleşik yapay zekâ yorumu ES-703'te).
+- İşlemci durduğunda bir fault işleyicisindeyse panelde uyarı şeridi ve "Analiz et" düğmesi çıkar. Hedef çalışıyorsa analiz önce durdurur.
+- Simülasyonda altı fault senaryosu (NULL yazma, sıfıra bölme, hizasız erişim, bozuk fonksiyon işaretçisi, saati kapalı çevre birimi, yığın taşması); proje derlenmişse senaryolar ELF'teki gerçek fonksiyon adreslerini kullanır, kaynak satıra gitme de denenebilir.
+- Testler: birim 65 (bit çözümü, EXC_RETURN, çerçeve arama, altı senaryo, FreeRTOS TCB okuma, derlenmiş ELF'te addr2line), arayüz 37 (fault yokken, PSP'de NULL yazma, MSP'de itilmiş çerçeve, kaynak satıra gitme, uyarı şeridi). Gerçek kartta henüz denenmedi.
+
 ## 0.5.6 (önizleme)
 
 - **Bellek görüntüleyici:** adres (`0x20000000`, `20000000`) ya da değişken adıyla (`uwTick`, `rx_buf+0x10`) gitme, yazarken ELF sembollerinden öneri; gidilen değişkenin baytları vurgulanır, değişken içindeki her hücrenin üzerinde `ad+ofset` görünür. 8 / 16 / 32 bit görünüm (little-endian), önceki/sonraki sayfa, değişen baytlar vurgulu. Dar sütunda satır başına 8 bayt.

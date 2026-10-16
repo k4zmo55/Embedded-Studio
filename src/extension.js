@@ -32,6 +32,7 @@ const { parseLine, Simulator } = require('./monitor/telemetry');
 const { OpenOcdTarget, SimTarget, simModel, elfSymbols } = require('./debug/session');
 const { builtinStm32f4, parseSvd, summary, parseValue, insertField, mask } = require('./debug/registers');
 const { readRegion, toIntelHex, checkWrite, simSymbols, MAX_SAVE } = require('./debug/memory');
+const fault = require('./debug/fault');
 const i18n = require('./i18n');
 const { t } = i18n;
 
@@ -519,6 +520,12 @@ class Studio {
         break;
       case 'debug.watch':
         this.saveDebugState({ watch: m.list });
+        break;
+      case 'debug.fault':
+        await this.faultAnalyze(m.simulate);
+        break;
+      case 'debug.source':
+        await this.openSource(m.file, m.line);
         break;
       case 'build':
         await actions.build();
@@ -1079,6 +1086,49 @@ class Studio {
   postPeripheral(name) {
     const p = this.peripheralDefs.find((x) => x.name === name);
     if (p) this.post({ type: 'debug.periph', name: p.name, base: p.base, registers: p.registers });
+  }
+
+  /**
+   * ES-207: HardFault analizi. Hedef çalışıyorsa önce durdurulur (fault işleyicisi sonsuz döngüdedir).
+   * simulate: simülasyonda önce o senaryodaki fault oluşturulur.
+   */
+  async faultAnalyze(simulate) {
+    if (!this.target) return;
+    const elf = this.root ? path.join(this.root, cm.elfRel(this.design)) : '';
+    try {
+      if (simulate && this.target.mode === 'sim') {
+        const sc = fault.SIM_FAULTS()[simulate];
+        if (!sc) throw new Error(t('Bilinmeyen senaryo: {0}', simulate));
+        // ELF varsa gerçek fonksiyon adresleri: kaynak satıra gitme simülasyonda da denenebilsin
+        const fn = await fault.funcAddr(elf, ['main', 'Board_Init', 'App_Init', 'HAL_Delay'], cm.gccTool(this.design.build, 'nm'));
+        const inner = fn.Board_Init ?? fn.App_Init ?? fn.HAL_Delay;
+        await this.target.fault(sc, fn.main !== undefined ? { pc: (inner ?? fn.main) + 8, lr: fn.main + 0x10 } : { pc: 0x08000a3c, lr: 0x08000b10 });
+      }
+      let halted = false;
+      if ((await this.target.state()) !== 'halted') { await this.target.halt(); halted = true; }
+      let tcb;
+      if (this.design.rtos) tcb = (await elfSymbols(elf, cm.gccTool(this.design.build, 'nm')).catch(() => [])).find((x) => x.name === 'pxCurrentTCB')?.addr;
+      const report = await fault.analyze(this.target, this.cpuInfo(), { rtos: !!this.design.rtos, tcb });
+      const f = report.frame;
+      const where = f && !f.invalid ? await fault.addr2line(elf, [f.pc, (f.lr & ~1) - 2], cm.gccTool(this.design.build, 'addr2line')) : [null, null];
+      const src = (loc) => loc && { ...loc, file: loc.file && (path.isAbsolute(loc.file) ? loc.file : path.join(this.root, loc.file)) };
+      this.post({ type: 'debug.faultReport', ...report, pcSource: src(where[0]), lrSource: src(where[1]), haltedNow: halted, elf: fs.existsSync(elf) ? path.relative(this.root, elf) : '' });
+      this.post({ type: 'debug.status', connected: true, mode: this.target.mode, state: await this.target.state() });
+    } catch (e) {
+      this.post({ type: 'debug.faultReport', error: e.message });
+    }
+  }
+
+  /** Kaynak dosyada satıra git */
+  async openSource(file, line) {
+    try {
+      if (!file || !fs.existsSync(file)) throw new Error(t('Kaynak dosya bulunamadı: {0}', file || '?'));
+      const doc = await vscode.workspace.openTextDocument(vscode.Uri.file(file));
+      const pos = new vscode.Position(Math.max(0, line - 1), 0);
+      await vscode.window.showTextDocument(doc, { selection: new vscode.Range(pos, pos), preview: false, viewColumn: vscode.ViewColumn.One });
+    } catch (e) {
+      this.toast('error', e.message);
+    }
   }
 
   async debugSymbols() {

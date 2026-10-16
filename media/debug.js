@@ -12,6 +12,8 @@
     memAddr: 0x20000000, memLen: 256, memWidth: 1, memEdit: null, memMark: null,
     // Live Watch: hist[ad] = [{ t, v }] (grafik için), watchEdit: düzenlenen değişken
     symbols: [], symSource: '', watch: [], symFilter: '', hist: {}, charts: [], chartKey: '', watchEdit: null, savedWatch: null,
+    // HardFault analizörü (ES-207)
+    fault: null, faultDlg: null, faultBody: null, faultBusy: false, faultDismissed: false, faultSim: '',
     auto: true, interval: 500, seq: 0, inflight: false, timer: 0
   };
 
@@ -35,6 +37,7 @@
         h('button', { class: 'ghost small', id: 'dbg-resume', title: t('Devam et'), onclick: () => cmd('resume') }, icon('play', 12), t('Devam')),
         h('button', { class: 'ghost small', id: 'dbg-step', title: t('Tek komut adım'), onclick: () => cmd('step') }, icon('step', 12), t('Adım')),
         h('button', { class: 'ghost small', id: 'dbg-reset', title: 'Reset', onclick: () => cmd('reset') }, icon('reset', 12), 'Reset'),
+        h('button', { class: 'ghost small', id: 'dbg-fault', title: t('HardFault analizörü: fault register\'ları, konum, olası nedenler'), onclick: () => analyzeFault() }, t('Fault analizi')),
         h('span', { class: 'sep' }),
         h('label', { class: 'check' }, h('input', { type: 'checkbox', checked: dbg.auto, onchange: (e) => { dbg.auto = e.target.checked; schedule(); } }), h('span', { text: t('Canlı') })),
         h('select', { 'aria-label': t('Yenileme aralığı'), onchange: (e) => { dbg.interval = Number(e.target.value); schedule(); } },
@@ -42,7 +45,9 @@
         h('span', { class: 'spacer' }),
         h('button', { class: 'ghost small', onclick: () => post({ type: 'build' }) }, t('Derle')),
         h('button', { class: 'small', onclick: () => post({ type: 'flash' }) }, t('Yükle'))),
-      h('div', { class: 'dbg-msg', id: 'dbg-msg' }),
+      // Sayfa ızgarasında tek satır: mesaj + fault şeridi
+      h('div', {}, h('div', { class: 'dbg-msg', id: 'dbg-msg' }),
+        h('div', { class: 'fault-banner', id: 'dbg-fault-banner', role: 'alert', hidden: true })),
       h('div', { class: 'dbg-grid' },
         h('section', { class: 'dbg-col' },
           h('div', { class: 'pane-head' }, h('span', { class: 'pane-title', text: t('Core register\'lar') })),
@@ -170,6 +175,7 @@
     dbg.values = { ...dbg.values, ...m.values };
     dbg.state = m.state;
     if (m.core) { dbg.core = m.core.error ? null : m.core; dbg.coreErr = m.core.error || ''; }
+    if (m.state !== 'halted') dbg.faultDismissed = false; // yeniden çalışınca bir sonraki fault yine haber verilsin
     else if (m.state !== 'halted') { dbg.coreErr = ''; }
     const errs = Object.values(m.errors || {});
     if (errs.length) dbg.error = errs[0];
@@ -233,7 +239,8 @@
     const st = $('dbg-state');
     st.textContent = dbg.connected ? (dbg.state === 'halted' ? t('DURDU') : dbg.state === 'running' ? t('ÇALIŞIYOR') : dbg.state.toUpperCase()) : t('BAĞLI DEĞİL');
     st.className = `badge ${dbg.connected ? (dbg.state === 'halted' ? 'warn' : 'ok') : ''}`;
-    for (const id of ['dbg-halt', 'dbg-resume', 'dbg-step', 'dbg-reset']) $(id).disabled = !dbg.connected;
+    for (const id of ['dbg-halt', 'dbg-resume', 'dbg-step', 'dbg-reset', 'dbg-fault']) $(id).disabled = !dbg.connected;
+    renderFaultBanner();
     $('dbg-step').disabled = !dbg.connected || dbg.state !== 'halted';
     const msg = $('dbg-msg');
     msg.className = `dbg-msg${dbg.error ? ' error' : ''}`;
@@ -657,6 +664,132 @@
         h('span', { class: 'ascii', text: rb.map((b) => (b >= 32 && b < 127 ? String.fromCharCode(b) : '.')).join('') })));
     }
     box.replaceChildren(...rows);
+  }
+
+  // ---------------------------------------------------------------- HardFault analizörü (ES-207)
+  const SIM_FAULT_LABELS = () => [
+    ['nullwrite', t('NULL işaretçiye yazma')], ['divzero', t('Sıfıra bölme')], ['unaligned', t('Hizasız erişim')],
+    ['badfunc', t('Bozuk fonksiyon işaretçisi (Thumb biti yok)')], ['clock', t('Saati kapalı çevre birimine erişim')], ['stack', t('Yığın taşması')]
+  ];
+  function analyzeFault(simulate) {
+    if (!dbg.connected) return toast('warn', t('Önce hedefe bağlanın.'));
+    dbg.faultBusy = true;
+    if (dbg.faultDlg) renderFault();
+    post({ type: 'debug.fault', simulate });
+  }
+  ES.on('debug.faultReport', (m) => {
+    dbg.faultBusy = false;
+    dbg.fault = m;
+    dbg.faultDismissed = true;
+    renderFaultBanner();
+    if (!dbg.faultDlg) {
+      dbg.faultBody = h('div', { class: 'fault' });
+      dbg.faultDlg = modal({
+        title: t('Fault analizi'), width: 720, body: dbg.faultBody,
+        buttons: [{ label: t('Raporu kopyala'), id: 'fault-copy', action: () => { copyReport(); return false; } }, { label: t('Kapat'), primary: true }],
+        onClose: () => { dbg.faultDlg = null; }
+      });
+    }
+    renderFault();
+  });
+
+  /** Kaynak konumu bağlantısı (dosya:satır) */
+  function srcLink(loc) {
+    if (!loc) return h('span', { class: 'hint', text: '—' });
+    const short = loc.file ? loc.file.replace(/\\/g, '/').split('/').slice(-2).join('/') : '';
+    return h('span', {}, h('span', { class: 'mono', text: loc.func }), loc.file && loc.line
+      ? h('a', { href: '#', class: 'src-link', title: loc.file, onclick: (e) => { e.preventDefault(); post({ type: 'debug.source', file: loc.file, line: loc.line }); } }, `${short}:${loc.line}`)
+      : null);
+  }
+
+  function renderFault() {
+    const box = dbg.faultBody;
+    if (!box) return;
+    const m = dbg.fault || {};
+    const parts = [];
+    if (dbg.mode === 'sim') {
+      const sel = h('select', { id: 'fault-sim', class: 'tiny', 'aria-label': t('Senaryo') }, ...SIM_FAULT_LABELS().map(([k, l]) => h('option', { value: k, text: l })));
+      if (dbg.faultSim) sel.value = dbg.faultSim;
+      parts.push(h('div', { class: 'fault-sim' }, h('span', { class: 'hint', text: t('Simülasyon: bir fault oluşturup analizi deneyin') }), sel,
+        h('button', { class: 'small', id: 'fault-sim-go', onclick: () => { dbg.faultSim = sel.value; analyzeFault(sel.value); } }, t('Fault oluştur'))));
+    }
+    if (dbg.faultBusy) parts.push(h('div', { class: 'hint pad', text: t('Okunuyor…') }));
+    if (m.error) parts.push(h('div', { class: 'dbg-msg error', text: m.error }));
+    if (m.decoded) {
+      const d = m.decoded, c = m.context, f = m.frame;
+      parts.push(h('div', { class: `fault-sum${d.findings.length || m.context.inFault ? ' bad' : ''}`, id: 'fault-summary', text: d.summary }));
+      parts.push(h('div', { class: 'fault-ctx' },
+        h('span', { class: 'badge', text: c.handler }),
+        h('span', { text: c.where }),
+        m.task ? h('span', { class: 'task', text: t('Görev: "{0}" (öncelik {1}, yığın başı {2})', m.task.name, m.task.priority, hex(m.task.stack)) } ) : null,
+        m.haltedNow ? h('span', { class: 'hint', text: t('Hedef analiz için durduruldu.') }) : null,
+        !c.inFault ? h('span', { class: 'hint', text: t('İşlemci şu an bir fault işleyicisinde değil; register\'lar son fault\'tan kalmış olabilir.') }) : null));
+      // Konum
+      const loc = [];
+      if (f) {
+        loc.push(h('tr', {}, h('td', { class: 'mono', text: 'PC' }), h('td', { class: 'mono val', text: hex(f.pc) }), h('td', { id: 'fault-pc' }, srcLink(m.pcSource)), h('td', { class: 'hint', text: t('fault anındaki komut') })));
+        loc.push(h('tr', {}, h('td', { class: 'mono', text: 'LR' }), h('td', { class: 'mono val', text: hex(f.lr) }), h('td', { id: 'fault-lr' }, srcLink(m.lrSource)), h('td', { class: 'hint', text: t('çağıran fonksiyon') })));
+      }
+      parts.push(h('h4', { text: t('Nerede oldu') }),
+        f ? h('table', { class: 'regs' }, ...loc) : h('div', { class: 'hint', text: t('Yığın çerçevesi okunamadı.') }),
+        f && f.invalid ? h('div', { class: 'dbg-msg error', text: t('Yığın çerçevesi geçerli görünmüyor: yığın bozulmuş olabilir; PC/LR güvenilir değil.') }) : null,
+        f && !m.elf ? h('div', { class: 'hint', text: t('Kaynak satırı göstermek için projeyi derleyin (ELF bulunamadı).') }) : null,
+        m.shift ? h('div', { class: 'hint', text: t('Çerçeve MSP+{0}\'da bulundu (işleyici yığına kayıt yazmış).', m.shift) }) : null);
+      // Bulgular
+      const regs = Object.entries(m.regs || {});
+      parts.push(h('h4', { text: t('Fault register\'ları') }),
+        regs.length ? h('div', { class: 'fault-regs mono' }, ...regs.map(([k, v]) => h('span', {}, h('b', { text: k }), ' ', hex(v)))) : null,
+        d.findings.length ? h('ul', { class: 'fault-list' }, ...d.findings.map((x) => h('li', {}, h('span', { class: 'mono acc', text: `${x.reg}.${x.name}` }), ' ', x.text))) : null,
+        d.address ? h('div', { class: 'fault-addr' }, t('Hatalı adres ({0}): ', d.address.reg), h('b', { class: 'mono', text: hex(d.address.value) })) : null,
+        d.enabled && !d.enabled.MemManage && !d.enabled.BusFault && !d.enabled.UsageFault && d.findings.length
+          ? h('div', { class: 'hint', text: t('MemManage, BusFault ve UsageFault işleyicileri kapalı (SHCSR): hepsi HardFault olarak görünür.') }) : null);
+      // Yığın çerçevesi
+      if (f) {
+        const names = ['r0', 'r1', 'r2', 'r3', 'r12', 'lr', 'pc', 'xpsr'];
+        parts.push(h('h4', { text: t('Yığın çerçevesi ({0})', c.excReturn && c.excReturn.psp ? 'PSP' : 'MSP') }),
+          h('div', { class: 'fault-regs mono' }, ...names.map((n) => h('span', {}, h('b', { text: n === 'xpsr' ? 'xPSR' : n.toUpperCase() }), ' ', hex(f[n]))),
+            h('span', {}, h('b', { text: 'SP' }), ' ', hex(f.preSp))));
+      }
+      // Olası nedenler / kontrol listesi
+      if (d.causes.length) {
+        parts.push(h('h4', { text: t('Olası nedenler ve kontrol listesi') }),
+          h('div', { class: 'fault-check' }, ...d.causes.map((x) => h('label', { class: 'check' }, h('input', { type: 'checkbox' }), h('span', { text: x })))));
+      }
+    } else if (!dbg.faultBusy && !m.error) parts.push(h('div', { class: 'hint pad', text: t('Henüz analiz yok.') }));
+    box.replaceChildren(...parts.filter(Boolean)); // replaceChildren null'ı "null" metni yapar
+  }
+
+  /** Düz metin rapor (issue'ya ya da mesaja yapıştırmak için) */
+  function copyReport() {
+    const m = dbg.fault;
+    if (!m || !m.decoded) return;
+    const L = [];
+    const loc = (s) => (s ? ` ${s.func}${s.file ? ` (${s.file}:${s.line})` : ''}` : '');
+    L.push(`${t('Fault analizi')}: ${m.decoded.summary}`, `${m.context.handler} · ${m.context.where}`);
+    if (m.task) L.push(t('Görev: "{0}" (öncelik {1}, yığın başı {2})', m.task.name, m.task.priority, hex(m.task.stack)));
+    if (m.frame) L.push(`PC ${hex(m.frame.pc)}${loc(m.pcSource)}`, `LR ${hex(m.frame.lr)}${loc(m.lrSource)}`);
+    L.push(Object.entries(m.regs || {}).map(([k, v]) => `${k}=${hex(v)}`).join(' '));
+    for (const x of m.decoded.findings) L.push(`- ${x.reg}.${x.name}: ${x.text}`);
+    if (m.decoded.address) L.push(`${m.decoded.address.reg} = ${hex(m.decoded.address.value)}`);
+    if (m.frame) L.push(['r0', 'r1', 'r2', 'r3', 'r12', 'lr', 'pc', 'xpsr'].map((n) => `${n}=${hex(m.frame[n])}`).join(' '));
+    for (const c of m.decoded.causes) L.push(`[ ] ${c}`);
+    const text = L.join('\n');
+    dbg.faultText = text;
+    try { navigator.clipboard.writeText(text).then(() => toast('info', t('Rapor panoya kopyalandı.')), () => toast('warn', t('Panoya kopyalanamadı.'))); } catch { toast('warn', t('Panoya kopyalanamadı.')); }
+  }
+
+  /** Durunca işlemci bir fault işleyicisindeyse uyarı şeridi */
+  function renderFaultBanner() {
+    const el = $('dbg-fault-banner');
+    if (!el) return;
+    const ipsr = dbg.core ? (dbg.core.xPSR >>> 0) & 0x1ff : 0;
+    const show = dbg.connected && dbg.state === 'halted' && ipsr >= 3 && ipsr <= 6 && !dbg.faultDismissed;
+    el.hidden = !show;
+    // Her okumada yeniden çizilirse düğmeye tıklama kayboluyordu: sadece işleyici değişince
+    if (!show || el.dataset.ipsr === String(ipsr)) return;
+    el.dataset.ipsr = String(ipsr);
+    el.replaceChildren(h('span', { class: 'warn-ic', text: '⚠' }), h('span', { text: t('İşlemci {0} işleyicisinde durdu.', { 3: 'HardFault', 4: 'MemManage', 5: 'BusFault', 6: 'UsageFault' }[ipsr]) }),
+      h('button', { class: 'small', onclick: () => analyzeFault() }, t('Analiz et')));
   }
 
   ES.tabs.debug = {

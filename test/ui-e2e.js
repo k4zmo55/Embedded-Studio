@@ -32,7 +32,7 @@ const THEMES = {
 // ------------------------------------------------------------------ sahte vscode API
 const sse = [];
 const backlog = [];
-const recorded = { external: [], tasks: [], executions: [], info: [], warn: [], errors: [], openFolder: [], debug: [], context: {}, output: [] };
+const recorded = { opened: [], external: [], tasks: [], executions: [], info: [], warn: [], errors: [], openFolder: [], debug: [], context: {}, output: [] };
 const statusItems = []; // durum çubuğu öğeleri (ES-201)
 let toWebview = (m) => { const line = `data: ${JSON.stringify(m)}\n\n`; if (!sse.length) backlog.push(line); sse.forEach((r) => r.write(line)); };
 let onWebviewMessage = null;
@@ -44,12 +44,14 @@ const taskEndListeners = []; // test, görev bitişini (derleme sonrası boyut �
 const uriOf = (p) => ({ fsPath: p, path: p, toString: () => p });
 const vscodeFake = {
   Uri: { file: uriOf, parse: (u) => ({ fsPath: u, toString: () => u }), joinPath: (u, ...parts) => uriOf(path.join(u.fsPath, ...parts)) },
-  ViewColumn: { One: 1, Beside: 2 }, StatusBarAlignment: { Left: 1 }, ProgressLocation: { Notification: 15 }, TaskScope: { Workspace: 2 },
+  ViewColumn: { One: 1, Beside: 2 },
+  Position: class { constructor(line, character) { Object.assign(this, { line, character }); } },
+  Range: class { constructor(start, end) { Object.assign(this, { start, end }); } }, StatusBarAlignment: { Left: 1 }, ProgressLocation: { Notification: 15 }, TaskScope: { Workspace: 2 },
   Task: class { constructor(def, scope, name, source, exec) { Object.assign(this, { def, definition: def, scope, name, source, exec }); } },
   ShellExecution: class { constructor(cmd, opts) { Object.assign(this, { cmd, opts }); } },
   commands: { registerCommand: () => ({ dispose() {} }), executeCommand: async (...a) => { if (a[0] === 'setContext') recorded.context[a[1]] = a[2]; else recorded.openFolder.push(a); } },
   workspace: {
-    workspaceFolders: [{ uri: uriOf(PROJECT) }], openTextDocument: async () => ({}),
+    workspaceFolders: [{ uri: uriOf(PROJECT) }], openTextDocument: async (u) => ({ uri: u }),
     getConfiguration: () => ({ get: (k, d) => (k in settings ? settings[k] : d) }),
     onDidChangeConfiguration: (fn) => { configListeners.push(fn); return { dispose() {} }; }
   },
@@ -72,7 +74,7 @@ const vscodeFake = {
     showInformationMessage: async (msg, ...items) => { recorded.info.push(msg); return items.includes('İndir') ? 'İndir' : undefined; },
     showWarningMessage: async (msg, opts, ...items) => { recorded.warn.push(msg); return items[0]; },
     showErrorMessage: async (msg) => { recorded.errors.push(msg); },
-    showTextDocument: async () => {},
+    showTextDocument: async (doc, opts) => { recorded.opened.push({ file: doc && doc.uri && doc.uri.fsPath, line: opts && opts.selection ? opts.selection.start.line + 1 : 0 }); },
     withProgress: async (o, fn) => fn({ report() {} }, { isCancellationRequested: false, onCancellationRequested() {} }),
   },
   tasks: {
@@ -788,6 +790,66 @@ async function until(fn, ms = 8000, what = 'koşul') {
     await sleep(1200);
     scene(null);
     await cdp.shot('16d-debug-livewatch');
+  });
+  await step('HardFault analizörü (ES-207): fault yokken, NULL yazma (PSP), MSP\'de itilmiş çerçeve, kaynak satıra gitme, kontrol listesi', async () => {
+    scene('debug');
+    // Derlenmiş ELF, analizörün aradığı yerde olsun (kaynak satır çözümü için)
+    const elfDbg = path.join(PROJECT, 'build', 'debug', 'demo_proje.elf');
+    const hadElf = fs.existsSync(elfDbg);
+    if (!hadElf) { fs.mkdirSync(path.dirname(elfDbg), { recursive: true }); fs.copyFileSync(path.join(PROJECT, 'build', 'demo_proje.elf'), elfDbg); }
+    try {
+      await until(() => cdp.eval(`!document.querySelector('#dbg-fault').disabled`), 3000, 'Fault analizi düğmesi');
+      await cdp.click('#dbg-fault');
+      await until(() => cdp.eval(`!!document.querySelector('#fault-summary')`), 5000, 'analiz penceresi');
+      assert.match(await cdp.eval(`document.querySelector('#fault-summary').textContent`), /Fault kaydı yok/);
+      assert.ok(await cdp.eval(`document.querySelector('.fault').textContent.includes('analiz için durduruldu')`), 'hedef durduruldu notu');
+      const sim = async (k) => {
+        await cdp.eval(`(() => { const s = document.querySelector('#fault-sim'); s.value = '${k}'; })()`);
+        await cdp.click('#fault-sim-go');
+        await until(() => cdp.eval(`!!document.querySelector('#fault-summary') && !document.querySelector('.fault').textContent.includes('Okunuyor')`), 5000, 'senaryo ' + k);
+      };
+      await sim('nullwrite');
+      const sum = await cdp.eval(`document.querySelector('#fault-summary').textContent`);
+      assert.ok(/BusFault/.test(sum) && /Geçersiz adrese/.test(sum), sum);
+      const body = await cdp.eval(`document.querySelector('.fault').textContent`);
+      assert.ok(body.includes('0x00000004') && /RTOS görevinde|PSP yığınında/.test(body) && /NULL/.test(body) && body.includes('CFSR.PRECISERR') && body.includes('HFSR.FORCED'), body.slice(0, 400));
+      assert.ok(await cdp.eval(`document.querySelectorAll('.fault-check input[type=checkbox]').length >= 3`), 'kontrol listesi');
+      // Kaynak satır: PC Board_Init/main içinde → main.c'ye gidilir
+      await until(() => cdp.eval(`!!document.querySelector('#fault-pc .src-link')`), 2000, 'PC kaynak bağlantısı');
+      const pcText = await cdp.eval(`document.querySelector('#fault-pc').textContent`);
+      await cdp.click('#fault-pc .src-link');
+      await until(() => recorded.opened.length > 0, 3000, 'kaynak dosya açıldı');
+      const op = recorded.opened[recorded.opened.length - 1];
+      assert.ok(op.file && fs.existsSync(op.file) && op.line > 0, JSON.stringify(op));
+      assert.ok(pcText.includes(path.basename(op.file)), pcText + ' / ' + op.file);
+      assert.ok(await cdp.eval(`document.querySelector('#fault-lr').textContent.includes('main')`), 'LR main');
+      await cdp.shot('16e-fault-analizi');
+      // Kesme işleyicisinde (MSP) hizasız erişim: işleyicinin itdiği 2 word atlanır
+      await sim('unaligned');
+      const b2 = await cdp.eval(`document.querySelector('.fault').textContent`);
+      assert.ok(/UNALIGNED/.test(b2) && /MSP\+8/.test(b2) && /Yığın çerçevesi \(MSP\)/.test(b2), b2.slice(0, 500));
+      // Rapor kopyalama düz metin üretir
+      await cdp.click('#fault-copy');
+      await sleep(300);
+      await cdp.eval(`document.querySelector('.modal .modal-foot button:last-child').click()`);
+      await until(() => cdp.eval(`!document.querySelector('.fault')`), 2000, 'pencere kapandı');
+      // Fault işleyicisinde durunca uyarı şeridi (devam → durdur: işlemci hâlâ HardFault döngüsünde)
+      await cdp.click('#dbg-resume');
+      await until(() => cdp.eval(`document.querySelector('#dbg-state').textContent === 'ÇALIŞIYOR'`), 3000, 'devam');
+      await cdp.click('#dbg-halt');
+      await until(() => cdp.eval(`!document.querySelector('#dbg-fault-banner').hidden && document.querySelector('#dbg-fault-banner').textContent.includes('HardFault')`), 4000, 'fault şeridi');
+      await cdp.shot('16f-fault-seridi');
+      await cdp.click('#dbg-fault-banner button');
+      await until(() => cdp.eval(`!!document.querySelector('#fault-summary') && /UNALIGNED|Hizasız/.test(document.querySelector('.fault').textContent)`), 4000, 'şeritten analiz');
+      await cdp.eval(`document.querySelector('.modal .modal-foot button:last-child').click()`);
+      assert.ok(await cdp.eval(`document.querySelector('#dbg-fault-banner').hidden`), 'analizden sonra şerit kapanır');
+      // Reset fault kaydını temizler
+      await cdp.click('#dbg-reset');
+      await until(() => cdp.eval(`document.querySelector('#dbg-state').textContent === 'ÇALIŞIYOR'`), 3000, 'reset');
+    } finally {
+      if (!hadElf) fs.rmSync(elfDbg, { force: true });
+    }
+    scene(null);
   });
   await step('Debug: OpenOCD kart yokken anlaşılır hata', async () => {
     await cdp.click('#dbg-conn');

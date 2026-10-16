@@ -264,7 +264,32 @@ class SimTarget {
   async halt() { if (!this.halted) this.haltMs = Date.now() - this.t0; this.halted = true; }
   async resume() { if (this.halted) this.t0 = Date.now() - (this.haltMs || 0); this.halted = false; }
   async step() { this.pc += 2; }
-  async reset() { this.t0 = Date.now(); this.pc = 0x08000420; this.halted = false; }
+  async reset() {
+    this.t0 = Date.now(); this.pc = 0x08000420; this.halted = false;
+    if (this.faultCore) for (const a of [0xe000ed24, 0xe000ed28, 0xe000ed2c, 0xe000ed34, 0xe000ed38]) this.model.expected.delete(a);
+    this.faultCore = null;
+  }
+
+  /**
+   * ES-207: fault benzetimi. SCB fault register'ları ve yığın çerçevesi yazılır, hedef HardFault işleyicisinde durur.
+   * @param {{ CFSR: number, HFSR: number, BFAR?: number, MMFAR?: number, psp: boolean }} sc
+   * @param {{ pc: number, lr: number }} at  çerçevedeki PC (fault anındaki komut) ve LR (çağıran)
+   */
+  async fault(sc, at) {
+    const set = (a, v) => this.model.expected.set(a, v >>> 0);
+    set(0xe000ed24, 0); set(0xe000ed28, sc.CFSR); set(0xe000ed2c, sc.HFSR);
+    set(0xe000ed34, sc.MMFAR || 0); set(0xe000ed38, sc.BFAR || 0);
+    const psp = 0x20001e40, msp = 0x2001ffa0;
+    // PSP: görev yığını; MSP: işleyici push {r7, lr} yapmış (çerçeve 8 bayt ileride)
+    const frameAt = sc.psp ? psp : msp + 8;
+    const invstate = (sc.CFSR >>> 17) & 1;
+    const frame = [0x20000104, 0, 0x2a, 0x40004400, 0x0c, at.lr | 1, at.pc & ~1, invstate ? 0 : 0x01000000];
+    frame.forEach((v, i) => set(frameAt + i * 4, v));
+    if (!sc.psp) { set(msp, 0x20020000); set(msp + 4, 0xfffffff9); }
+    this.faultCore = { pc: 0x080001c4, lr: sc.psp ? 0xfffffffd : 0xfffffff9, sp: sc.psp ? msp : msp, msp, psp, xPSR: 0x01000003 };
+    this.halted = true;
+    this.haltMs = Date.now() - this.t0;
+  }
   async program() { return t('simülasyon: yükleme atlandı'); }
 
   async readMemory(addr, words) {
@@ -288,6 +313,7 @@ class SimTarget {
     r.sp = 0x2001ffb0; r.lr = 0x08000a3d; r.pc = this.pc; r.xPSR = 0x61000000;
     for (const n of specialRegs(cpu)) r[n] = 0;
     r.msp = r.sp; r.psp = 0x20001f00;
+    if (this.faultCore) Object.assign(r, this.faultCore);
     if (cpu.fpu) {
       for (let i = 0; i < 32; i++) r[`s${i}`] = 0;
       r.s0 = 0x3fc00000; // 1.5f
