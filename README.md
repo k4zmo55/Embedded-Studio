@@ -181,6 +181,14 @@ Her sensör için uygun görünüm: **3B IMU** (uçak modeli ve kırmızı/yeşi
 ve grafik. Widget'ların türünü ve boyutunu değiştirin, sürükleyip sıralayın. FreeRTOS task'larının durumu, boş stack'i ve CPU payı
 sağdaki tabloda.
 
+### Seri port terminali
+
+Tera Term / PuTTY'ye gerek kalmadan: port listesi kendiliğinden yenilenir (ST-Link sanal COM portu öne alınır); baud, veri biti, parite,
+stop biti, akış kontrolü; DTR/RTS ve break. ASCII, HEX ve karışık görünüm, zaman damgası, gelen satır sonu (LF, CR, CR/LF), arama.
+Gönderme kutusu (geçmiş, `\r \n \xNN` kaçışları, HEX bayt, satır sonu, tekrarlı gönderme), proje dosyasında saklanan makro düğmeleri,
+metin ya da ham log dosyası; birden fazla port ayrı sekmelerde. Yerel modül kullanmaz (Windows'ta .NET `System.IO.Ports` yardımcısı,
+Linux/macOS'ta `stty`). Kart yoksa "Simülasyon" portu komutlara yanıt veren sanal bir aygıttır.
+
 ### Durum çubuğu: Build · Flash · Debug · Run
 
 Embedded Studio projesi açıkken VS Code'un alt durum çubuğunda (tasarımcı kapalıyken de):
@@ -191,7 +199,7 @@ Embedded Studio projesi açıkken VS Code'un alt durum çubuğunda (tasarımcı 
 | **Flash** | Shift+F7 | Derler, OpenOCD ile yükler ve doğrular; hedef durdurulmuş kalır |
 | **Debug** | F5 | Derler ve Cortex-Debug ile başlatır, `main`'de durur (eklenti yoksa kurmayı önerir) |
 | **Run** | Ctrl+F5 | Derler, yükler ve debugger olmadan çalıştırır |
-| **Terminal** | — | Monitör sekmesini açar (seri port terminali ileride) |
+| **Terminal** | — | Seri port terminalini açar |
 | Prob | — | Tıklayınca bağlı ST-Link, hedef voltajı ve çekirdek; projedeki işlemciyle uyuşmazsa uyarır |
 
 **Prob ve kart algılama:** ST-Link (V2/V2-1/V3), J-Link, CMSIS-DAP, USB DFU önyükleyicisi ve USB-UART köprüleri takılınca

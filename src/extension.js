@@ -51,6 +51,7 @@ const fault = require('./debug/fault');
 const trace = require('./debug/trace');
 const rtos = require('./debug/rtos');
 const A = require('./analyzer');
+const serial = require('./monitor/serial');
 const i18n = require('./i18n');
 const { t } = i18n;
 
@@ -97,7 +98,7 @@ function activate(context) {
     vscode.commands.registerCommand('embeddedStudio.flash', () => actions.flash()),
     vscode.commands.registerCommand('embeddedStudio.run', () => actions.run()),
     vscode.commands.registerCommand('embeddedStudio.debug', () => actions.debug()),
-    vscode.commands.registerCommand('embeddedStudio.terminal', async () => (await Studio.show(context)).post({ type: 'tab', tab: 'monitor' })),
+    vscode.commands.registerCommand('embeddedStudio.terminal', async () => (await Studio.show(context)).post({ type: 'tab', tab: 'terminal' })),
     vscode.commands.registerCommand('embeddedStudio.probe', () => probeCommand()),
     vscode.commands.registerCommand('embeddedStudio.flashFile', (uri) => flashFileCommand(uri)),
     vscode.commands.registerCommand('embeddedStudio.debugLaunchJson', () => launchJsonCommand()),
@@ -298,6 +299,7 @@ class Studio {
     panel.webview.onDidReceiveMessage((m) => this.onMessage(m).catch((e) => this.toast('error', e.message)), null, context.subscriptions);
     panel.onDidDispose(() => {
       this.monitor?.stop();
+      this.termCloseAll();
       this.dropTrace();
       this.target?.disconnect().catch(() => {});
       clearInterval(this.flushTimer);
@@ -580,6 +582,38 @@ class Studio {
         await actions.build();
         break;
       // ES-210: bellek kullanım raporu
+      // ES-211: seri port terminali
+      case 'term.init':
+        this.post({ type: 'term.config', config: this.termConfig(), platform: process.platform });
+        await this.termPorts(false);
+        break;
+      case 'term.ports':
+        await this.termPorts(!!m.quick);
+        break;
+      case 'term.open':
+        await this.termOpen(m);
+        break;
+      case 'term.close':
+        await this.termClose(m.id);
+        break;
+      case 'term.send':
+        this.termSend(m.id, Buffer.from(String(m.data || ''), 'base64'));
+        break;
+      case 'term.signals':
+        this.terms.get(m.id)?.sess.signals(m.dtr, m.rts);
+        break;
+      case 'term.break':
+        this.terms.get(m.id)?.sess.sendBreak(m.ms);
+        break;
+      case 'term.log':
+        await this.termLog(m);
+        break;
+      case 'term.config':
+        this.saveTermConfig(m.config);
+        break;
+      case 'term.save':
+        await this.saveConsole(m.text, m.name);
+        break;
       case 'analyzer.run':
         await this.analyzeBuild(m.config);
         break;
@@ -1318,6 +1352,131 @@ class Studio {
     }
   }
 
+  // ---------------------------------------------------------------- ES-211: seri port terminali
+  /** .embedded-studio/terminal.json: makrolar ve son kullanılan port ayarları (takımla paylaşılabilir) */
+  termConfig() {
+    try {
+      return JSON.parse(fs.readFileSync(path.join(this.root, STATE_DIR, 'terminal.json'), 'utf8')) || {};
+    } catch {
+      return {};
+    }
+  }
+
+  saveTermConfig(config) {
+    if (!this.root) return;
+    const file = path.join(this.root, STATE_DIR, 'terminal.json');
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, JSON.stringify({ ...this.termConfig(), ...config }, null, 2) + '\n');
+  }
+
+  /** Port listesi; quick: yalnızca port kümesi değiştiyse (hızlı kayıt defteri denetimi) yeniden okunur */
+  async termPorts(quick) {
+    const sig = (await serial.quickPorts()).join(',');
+    if (quick && sig === this._portSig && this._ports) return;
+    this._portSig = sig;
+    this._ports = await serial.listPorts();
+    this.post({ type: 'term.ports', ports: this._ports });
+  }
+
+  get terms() {
+    if (!this._terms) this._terms = new Map();
+    return this._terms;
+  }
+
+  async termOpen(m) {
+    await this.termClose(m.id);
+    const used = [...this.terms.values()].find((x) => x.sess.opts.path === m.path && m.path !== serial.SIM_PORT);
+    if (used) return this.post({ type: 'term.status', id: m.id, open: false, error: t('{0} bu terminalde başka bir sekmede zaten açık.', m.path) });
+    let sess;
+    try {
+      sess = new serial.SerialSession(m);
+    } catch (e) {
+      return this.post({ type: 'term.status', id: m.id, open: false, error: e.message });
+    }
+    const entry = { sess, pending: [], pendingBytes: 0, log: null, timer: null };
+    this.terms.set(m.id, entry);
+    this.post({ type: 'term.status', id: m.id, open: false, opening: true });
+    sess.on('data', (b) => {
+      const now = Date.now();
+      entry.log?.write('rx', b, now);
+      // Webview'a 50 ms'de bir toplu gönderilir; çok hızlı akışta en eski parçalar atılır (log dosyası eksiksiz kalır)
+      entry.pending.push({ t: now, d: b.toString('base64') });
+      entry.pendingBytes += b.length;
+      while (entry.pendingBytes > 1 << 20 && entry.pending.length > 1) entry.pendingBytes -= Buffer.byteLength(entry.pending.shift().d, 'base64');
+    });
+    sess.on('error', (e) => this.post({ type: 'term.status', id: m.id, open: sess.isOpen, error: e.message }));
+    sess.on('close', () => {
+      if (this.terms.get(m.id) !== entry) return;
+      this.termFlush(m.id, entry);
+      clearInterval(entry.timer);
+      entry.log?.close();
+      this.terms.delete(m.id);
+      this.post({ type: 'term.status', id: m.id, open: false, error: t('Port kapandı (kart çıkarılmış olabilir).') });
+    });
+    try {
+      await sess.open();
+    } catch (e) {
+      this.terms.delete(m.id);
+      return this.post({ type: 'term.status', id: m.id, open: false, error: e.message });
+    }
+    entry.timer = setInterval(() => this.termFlush(m.id, entry), 50);
+    this.saveTermConfig({ last: { path: m.path, baud: sess.opts.baud, dataBits: sess.opts.dataBits, parity: sess.opts.parity, stopBits: sess.opts.stopBits, flow: sess.opts.flow } });
+    this.post({ type: 'term.status', id: m.id, open: true, opts: sess.opts });
+  }
+
+  termFlush(id, entry) {
+    if (!entry.pending.length) return;
+    this.post({ type: 'term.data', id, chunks: entry.pending });
+    entry.pending = [];
+    entry.pendingBytes = 0;
+  }
+
+  termSend(id, data) {
+    const e = this.terms.get(id);
+    if (!e) return this.post({ type: 'term.status', id, open: false, error: t('Port açık değil.') });
+    try {
+      e.log?.write('tx', data);
+      e.sess.write(data);
+    } catch (err) {
+      this.post({ type: 'term.status', id, open: e.sess.isOpen, error: err.message });
+    }
+  }
+
+  async termClose(id) {
+    const e = this.terms.get(id);
+    if (!e) return;
+    this.terms.delete(id);
+    clearInterval(e.timer);
+    this.termFlush(id, e);
+    await e.log?.close();
+    await e.sess.close();
+    this.post({ type: 'term.status', id, open: false });
+  }
+
+  termCloseAll() {
+    for (const id of [...this.terms.keys()]) this.termClose(id).catch(() => {});
+  }
+
+  /** Log dosyasına sürekli kayıt: metin (zaman damgalı) ya da ham bayt */
+  async termLog(m) {
+    const e = this.terms.get(m.id);
+    if (!e) return;
+    if (!m.on) {
+      await e.log?.close();
+      e.log = null;
+      return this.post({ type: 'term.logging', id: m.id, file: '' });
+    }
+    const raw = m.format === 'raw';
+    const stamp = new Date().toISOString().slice(0, 19).replace(/[T:]/g, '-');
+    const uri = await vscode.window.showSaveDialog({
+      defaultUri: vscode.Uri.file(path.join(this.root || require('os').homedir(), `${e.sess.opts.path.replace(/[^\w.-]/g, '_')}-${stamp}.${raw ? 'bin' : 'log'}`)),
+      filters: raw ? { [t('Ham ikili')]: ['bin'] } : { [t('Günlük')]: ['log', 'txt'] }
+    });
+    if (!uri) return this.post({ type: 'term.logging', id: m.id, file: '' });
+    e.log = new serial.SerialLog(uri.fsPath, raw ? 'raw' : 'text');
+    this.post({ type: 'term.logging', id: m.id, file: uri.fsPath, format: raw ? 'raw' : 'text' });
+  }
+
   // ---------------------------------------------------------------- ES-210: Build Analyzer
   analyzerElf(config) {
     const b = cm.normalizeBuild(this.design.build);
@@ -1444,7 +1603,7 @@ class Studio {
     const webview = this.panel.webview;
     const media = (f) => webview.asWebviewUri(vscode.Uri.joinPath(this.context.extensionUri, 'media', f));
     const nonce = [...Array(32)].map(() => Math.random().toString(36)[2]).join('');
-    const scripts = ['i18n.js', 'core.js', 'art.js', 'wizard.js', 'design.js', 'creator.js', 'clock.js', 'widgets.js', 'monitor.js', 'rtos.js', 'console.js', 'debug.js', 'analyzer.js', 'settings.js', 'genpreview.js', 'main.js'];
+    const scripts = ['i18n.js', 'core.js', 'art.js', 'wizard.js', 'design.js', 'creator.js', 'clock.js', 'widgets.js', 'monitor.js', 'terminal.js', 'rtos.js', 'console.js', 'debug.js', 'analyzer.js', 'settings.js', 'genpreview.js', 'main.js'];
     return `<!doctype html>
 <html lang="${i18n.getLanguage()}">
 <head>

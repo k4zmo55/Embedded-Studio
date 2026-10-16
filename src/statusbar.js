@@ -56,7 +56,7 @@ class StatusBar {
     run.text = `${busy('run') ? '$(sync~spin)' : '$(play)'} Run`;
     run.tooltip = `${t('Derle, yükle ve debugger olmadan çalıştır')} · Ctrl+F5`;
     terminal.text = '$(terminal) Terminal';
-    terminal.tooltip = t('Monitör sekmesini aç (telemetri). Seri port terminali ES-211 ile gelecek.');
+    terminal.tooltip = t('Seri port terminalini aç');
 
     // Prob: önce USB taraması (tak/çıkar), sorgu yapıldıysa hedef kimliği
     const pr = s.probe;

@@ -228,8 +228,8 @@ window.ES = (function () {
   // Hangi sekme hangi modda ve hangi sırada görünür: tek yapılandırma. Yeni panel eklerken buraya ekleyin.
   //  home: mod ilk açıldığında gelinen sekme · art: kartlarda modül çizimi · assistant: asistan paneli açık başlar
   const MODES = {
-    beginner: { tabs: ['design', 'clock', 'monitor', 'debug', 'analyzer', 'settings'], home: 'design', art: true, assistant: true },
-    pro: { tabs: ['debug', 'analyzer', 'monitor', 'clock', 'design', 'settings'], home: 'debug', art: false, assistant: false }
+    beginner: { tabs: ['design', 'clock', 'monitor', 'terminal', 'debug', 'analyzer', 'settings'], home: 'design', art: true, assistant: true },
+    pro: { tabs: ['debug', 'terminal', 'analyzer', 'monitor', 'clock', 'design', 'settings'], home: 'debug', art: false, assistant: false }
   };
   const mode = () => MODES[state.design && state.design.mode] || MODES.beginner;
 

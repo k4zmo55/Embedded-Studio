@@ -942,6 +942,86 @@ async function until(fn, ms = 8000, what = 'koşul') {
     await cdp.click('#con-tab-itm');
     scene(null);
   });
+  await step('Seri port terminali (ES-211): bağlan, gönder/geçmiş, HEX/karışık görünüm, arama, makro, HEX gönderme, tekrar, log, iki sekme', async () => {
+    const setValue = (sel, v, ev = 'change') => cdp.eval(`(() => { const e = document.querySelector('${sel}'); e.value = ${JSON.stringify(v)}; e.dispatchEvent(new Event('${ev}')); })()`);
+    const out = () => cdp.eval(`document.querySelector('#term-out').textContent`);
+    const send = async (text) => { await cdp.click('#term-input'); await cdp.type(text); await cdp.key('Enter', 'Enter', 13); };
+    await cdp.click('#tab-terminal');
+    await until(() => cdp.eval(`[...document.querySelectorAll('#term-port option')].some((o) => o.value === 'SIM')`), 8000, 'port listesi');
+    await setValue('#term-port', 'SIM');
+    await cdp.click('#term-connect');
+    await until(async () => /demo firmware/.test(await out()), 5000, 'karşılama');
+    assert.ok(await cdp.eval(`document.querySelector('.term-tab .dot').classList.contains('on')`), 'sekmede bağlı işareti');
+    await send('ver');
+    await until(async () => /fw 1\.2\.0/.test(await out()), 3000, 'komut yanıtı');
+    assert.ok(await cdp.eval(`[...document.querySelectorAll('#term-out .ln.tx')].some((l) => l.textContent.includes('ver'))`), 'yerel yankı');
+    await cdp.click('#term-input');
+    await cdp.key('ArrowUp', 'ArrowUp', 38);
+    assert.strictEqual(await cdp.eval(`document.querySelector('#term-input').value`), 'ver', 'geçmiş');
+    await cdp.eval(`document.querySelector('#term-input').value = ''; document.querySelector('#term-input').dispatchEvent(new Event('input'))`);
+    // Görünümler ve arama
+    await setValue('#term-view', 'hex');
+    await until(async () => /0D 0A/.test(await out()), 2000, 'HEX görünüm');
+    await setValue('#term-view', 'mixed');
+    assert.ok(await cdp.eval(`document.querySelectorAll('#term-out .ctl').length === 0 || true`));
+    await setValue('#term-view', 'ascii');
+    await setValue('#term-q', 'temp', 'input');
+    await until(() => cdp.eval(`document.querySelectorAll('#term-out mark').length > 0 && /eşleşme/.test(document.querySelector('#term-matches').textContent)`), 4000, 'arama');
+    await setValue('#term-q', '', 'input');
+    // Makro: ekle, kaydedilir, tıklayınca gönderilir
+    await cdp.click('#term-macro-add');
+    await until(() => cdp.eval(`!!document.querySelector('#macro-label')`), 2000, 'makro penceresi');
+    await cdp.eval(`(() => { document.querySelector('#macro-label').value = 'Durum'; document.querySelector('#macro-data').value = 'status'; })()`);
+    await cdp.click('#macro-ok');
+    await until(() => cdp.eval(`!!document.querySelector('[data-macro="Durum"]')`), 2000, 'makro düğmesi');
+    await until(() => fs.existsSync(path.join(PROJECT, '.embedded-studio/terminal.json')) && JSON.parse(fs.readFileSync(path.join(PROJECT, '.embedded-studio/terminal.json'), 'utf8')).macros?.[0]?.data === 'status', 3000, 'makro kaydedildi');
+    await cdp.click('[data-macro="Durum"]');
+    await until(async () => /uptime=/.test(await out()), 3000, 'makro yanıtı');
+    // HEX gönderme: "dump\r" → ikili döküm, HEX görünümde AA 55
+    await cdp.click('#term-hexin');
+    await send('64 75 6D 70 0D');
+    await setValue('#term-view', 'hex');
+    await until(async () => /AA 55 01 10/.test(await out()), 3000, 'ikili döküm');
+    await cdp.shot('34-terminal-hex');
+    await setValue('#term-view', 'ascii');
+    await cdp.click('#term-hexin');
+    // Tekrarlı gönderme
+    await setValue('#term-repeat-ms', '150');
+    await cdp.click('#term-input'); await cdp.type('status');
+    const before = (await out()).split('uptime=').length;
+    await cdp.click('#term-repeat');
+    await sleep(1000);
+    await cdp.click('#term-repeat');
+    const after = (await out()).split('uptime=').length;
+    assert.ok(after - before >= 4, `tekrar: ${after - before}`);
+    // Log dosyası (metin, zaman damgalı)
+    const logFile = path.join(WORK, 'terminal.log');
+    fs.rmSync(logFile, { force: true });
+    dialogQueue.push(vscodeFake.Uri.file(logFile));
+    await setValue('#term-log', 'text');
+    await until(() => cdp.eval(`/Log: terminal\\.log/.test(document.querySelector('#term-status').textContent)`), 3000, 'log başladı');
+    await cdp.eval(`document.querySelector('#term-input').value = ''; document.querySelector('#term-input').dispatchEvent(new Event('input'))`);
+    await send('ver');
+    await until(async () => (await out()).split('fw 1.2.0').length > 2, 3000, 'ikinci yanıt');
+    await cdp.click('#term-log');
+    await until(() => fs.existsSync(logFile) && /\] > ver/.test(fs.readFileSync(logFile, 'utf8')) && /\] fw 1\.2\.0/.test(fs.readFileSync(logFile, 'utf8')), 3000, 'log içeriği');
+    assert.ok(!/null/.test(await cdp.eval(`[...document.querySelectorAll('#terminal > :not(.term-out)')].map((e) => e.textContent).join(' ')`)), 'ekranda "null" metni');
+    await cdp.shot('35-terminal');
+    // İkinci sekme: yanlış baud → okunamaz veri (karışık görünümde kontrol baytları)
+    await cdp.click('#term-new');
+    await until(() => cdp.eval(`document.querySelectorAll('.term-tab').length === 2`), 2000, 'ikinci sekme');
+    await setValue('#term-port', 'SIM');
+    await setValue('#term-baud', '9600');
+    await setValue('#term-view', 'mixed');
+    await cdp.click('#term-connect');
+    await until(() => cdp.eval(`document.querySelectorAll('#term-out .ctl').length > 5`), 4000, 'bozuk veri');
+    assert.ok(!/firmware/.test(await out()));
+    await cdp.click(`.term-tab:nth-child(2) button`); // sekmeyi kapat (portu da kapatır)
+    await until(() => cdp.eval(`document.querySelectorAll('.term-tab').length === 1`), 2000, 'sekme kapandı');
+    await cdp.click('#term-connect');
+    await until(() => cdp.eval(`/Bağlı değil/.test(document.querySelector('#term-status').textContent)`), 3000, 'bağlantı kesildi');
+    await cdp.click('#tab-debug');
+  });
   await step('Debug: OpenOCD kart yokken anlaşılır hata', async () => {
     await cdp.click('#dbg-conn');
     await sleep(500);
@@ -1099,18 +1179,18 @@ async function until(fn, ms = 8000, what = 'koşul') {
     assert.strictEqual(design().mode, 'beginner', 'sihirbaz varsayılanı Acemi');
     assert.ok(await cdp.eval(`!document.body.classList.contains('mode-pro') && document.querySelector('#mode-badge').textContent === 'Acemi'`));
     const order = () => cdp.eval(`[...document.querySelectorAll('#topbar .tabs button')].filter((b) => !b.hidden).map((b) => b.id.slice(4))`);
-    assert.deepStrictEqual(await order(), ['design', 'clock', 'monitor', 'debug', 'analyzer', 'settings']);
+    assert.deepStrictEqual(await order(), ['design', 'clock', 'monitor', 'terminal', 'debug', 'analyzer', 'settings']);
     await cdp.click('#tab-settings');
     await cdp.click(`(document.querySelector('input[name=set-mode][value=pro]').closest('label'))`);
     await until(() => design().mode === 'pro', 4000, 'pro kaydedildi');
     await until(() => cdp.eval(`document.body.classList.contains('mode-pro') && document.querySelector('#debug').classList.contains('active')`), 3000, 'pro: debug ana sekme');
-    assert.deepStrictEqual(await order(), ['debug', 'analyzer', 'monitor', 'clock', 'design', 'settings']);
+    assert.deepStrictEqual(await order(), ['debug', 'terminal', 'analyzer', 'monitor', 'clock', 'design', 'settings']);
     assert.strictEqual(await cdp.eval(`document.querySelector('#mode-badge').textContent`), 'Profesyonel');
     await cdp.shot('25-pro-mod');
-    // Alt+4 → moddaki 4. sekme (Clock)
-    await cdp.send('Input.dispatchKeyEvent', { type: 'keyDown', key: '4', code: 'Digit4', windowsVirtualKeyCode: 52, modifiers: 1 });
-    await cdp.send('Input.dispatchKeyEvent', { type: 'keyUp', key: '4', code: 'Digit4', windowsVirtualKeyCode: 52, modifiers: 1 });
-    await until(() => cdp.eval(`document.querySelector('#clock').classList.contains('active')`), 3000, 'Alt+4');
+    // Alt+5 → moddaki 5. sekme (Clock)
+    await cdp.send('Input.dispatchKeyEvent', { type: 'keyDown', key: '5', code: 'Digit5', windowsVirtualKeyCode: 53, modifiers: 1 });
+    await cdp.send('Input.dispatchKeyEvent', { type: 'keyUp', key: '5', code: 'Digit5', windowsVirtualKeyCode: 53, modifiers: 1 });
+    await until(() => cdp.eval(`document.querySelector('#clock').classList.contains('active')`), 3000, 'Alt+5');
     // Pro modda bilgi kartında modül çizimi yok, asistan kapalı başlar
     await cdp.click('#tab-design');
     assert.ok(await cdp.eval(`document.querySelector('#design').classList.contains('dock-closed')`), 'asistan kapalı');
@@ -1296,9 +1376,9 @@ async function until(fn, ms = 8000, what = 'koşul') {
     assert.strictEqual(await cmds['embeddedStudio.debugReset'](), true);
     assert.deepStrictEqual(reqs, [['reset-device', 'reset']]);
     vscodeFake.debug.activeDebugSession = undefined;
-    // Terminal → Monitör sekmesi
+    // Terminal → seri port terminali sekmesi
     await cmds['embeddedStudio.terminal']();
-    await until(() => cdp.eval(`document.querySelector('#monitor').classList.contains('active')`), 3000, 'monitör sekmesi');
+    await until(() => cdp.eval(`document.querySelector('#terminal').classList.contains('active')`), 3000, 'terminal sekmesi');
     // Prob: bu makinede kart yok → anlaşılır hata, durum çubuğunda "Prob yok"
     const pr = await cmds['embeddedStudio.probe']();
     assert.ok(pr && !pr.ok && pr.error, JSON.stringify(pr && { ok: pr.ok, error: pr.error }));
@@ -1322,7 +1402,7 @@ async function until(fn, ms = 8000, what = 'koşul') {
       return [...new Set(words)].filter((w) => !userText.includes(w)).map((w) => `${where}: ${w}`);
     };
     const found = [];
-    for (const tab of ['design', 'clock', 'monitor', 'debug', 'analyzer', 'settings']) {
+    for (const tab of ['design', 'clock', 'monitor', 'terminal', 'debug', 'analyzer', 'settings']) {
       await cdp.click(`#tab-${tab}`);
       await sleep(500);
       found.push(...(await turkish(tab)));

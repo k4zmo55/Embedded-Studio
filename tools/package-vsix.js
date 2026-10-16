@@ -82,7 +82,7 @@ const manifest = `<?xml version="1.0" encoding="utf-8"?>
 </PackageManifest>
 `;
 
-const MIME = { '.json': 'application/json', '.js': 'application/javascript', '.css': 'text/css', '.svg': 'image/svg+xml', '.png': 'image/png', '.md': 'text/markdown', '.txt': 'text/plain', '.vsixmanifest': 'text/xml' };
+const MIME = { '.json': 'application/json', '.js': 'application/javascript', '.css': 'text/css', '.svg': 'image/svg+xml', '.png': 'image/png', '.md': 'text/markdown', '.txt': 'text/plain', '.ps1': 'text/plain', '.vsixmanifest': 'text/xml' };
 const exts = new Set(['.vsixmanifest', ...entries.map((e) => path.extname(e.name).toLowerCase())]);
 for (const x of exts) if (!MIME[x]) throw new Error(`Bilinmeyen dosya türü: ${x}`);
 const contentTypes = `<?xml version="1.0" encoding="utf-8"?>

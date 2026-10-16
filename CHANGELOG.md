@@ -1,5 +1,18 @@
 # Değişiklik günlüğü
 
+## 0.6.0 (önizleme) — M2 "Test ve debug" tamamlandı
+
+- **Seri port terminali (Terminal sekmesi):** harici programa (Tera Term, PuTTY, RealTerm) gerek yok. Durum çubuğundaki **Terminal** ve "Seri Port Terminalini Aç" komutu bu sekmeyi açar.
+- **Portlar:** liste sekme açıkken kendiliğinden yenilenir (Windows'ta kayıt defterinden hızlı denetim, değişince aygıt adlarıyla yeniden okunur); ST-Link / J-Link / CMSIS-DAP sanal COM portu öne alınır, son kullanılan port ve ayarlar hatırlanır. Baud (liste ya da özel), veri biti, parite (yok/çift/tek/mark/space), stop biti (1/1,5/2), akış kontrolü (RTS/CTS, XON/XOFF); DTR/RTS ve break (Windows). Port meşgul, bulunamadı, ayar desteklenmiyor gibi hatalar anlaşılır cümleyle.
+- **Görünüm:** ASCII, HEX ve karışık (yazdırılamayan baytlar kutucukta onaltılık); satır başına zaman damgası; gelen satır sonu (LF, CR, CR/LF); yerel yankı (gönderilenler farklı renkte); arama (eşleşme sayısı, sonraki/önceki); otomatik kaydırma (yukarı kaydırınca durur); 20 000 satır geçmiş.
+- **Gönderme:** metin (`\r \n \t \xNN` kaçışları) ya da HEX bayt (`AA 55 0D`), satır sonu (yok, CR, LF, CRLF), ↑↓ ile geçmiş, aralıklı tekrarlı gönderme. **Makrolar:** ad + veri (metin ya da HEX) düğmeleri; `.embedded-studio/terminal.json`'da saklanır, takımla paylaşılabilir.
+- **Log:** sürekli kayıt, metin (yerel saatle zaman damgalı, gönderilenler `> `) ya da ham bayt (`.bin`); eklenti tarafında yazılır, hızlı akışta arayüz yetişemese de eksiksizdir. Görünen oturum ayrıca metin olarak kaydedilebilir.
+- **Birden fazla port:** her port ayrı sekmede; aynı port iki sekmede açılamaz.
+- **Teknik karar:** yerel `serialport` modülü yerine yardımcı süreç (Windows: PowerShell'de derlenen .NET `System.IO.Ports` yardımcısı; Linux/macOS: `stty` + aygıt dosyası). VSIX platformdan bağımsız kalır. Linux/macOS'ta DTR/RTS ve break yok; bu platformlar henüz denenmedi.
+- **Simülasyon portu:** kart yokken 115200 8N1'de telemetri satırları üreten, `help`, `ver`, `status`, `led on/off`, `dump` (ikili) komutlarına yanıt veren sanal aygıt; DTR düşüp kalkınca yeniden başlar, baud yanlışsa okunamaz veri gelir.
+- Sekme sırası: Acemi — Tasarım, Clock, Monitör, Terminal, Debug, Bellek raporu, Ayarlar; Profesyonel — Debug, Terminal, Bellek raporu, Monitör, Clock, Tasarım, Ayarlar.
+- Testler: birim 69 (port listesi, stty, hata açıklamaları, simülasyon aygıtı, log biçimleri, Windows yardımcısının derlenmesi ve hata yolu), arayüz 41 (bağlan, gönder/geçmiş, görünümler, arama, makro, HEX gönderme, tekrar, log, ikinci sekme). Gerçek bir seri portla henüz denenmedi (bu makinede COM portu yok).
+
 ## 0.5.10 (önizleme)
 
 - **Bellek raporu (Build Analyzer) sekmesi:** derleme tipi seçilir (Debug / Release …), derleme bitince rapor kendiliğinden yenilenir.

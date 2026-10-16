@@ -8,7 +8,7 @@
   "command.flash": "Yükle (derle ve yükle, hedef durur)",
   "command.debug": "Debug (derle, yükle, main'de dur)",
   "command.run": "Çalıştır (derle, yükle ve debugger olmadan çalıştır)",
-  "command.terminal": "Monitörü Aç",
+  "command.terminal": "Seri Port Terminalini Aç",
   "command.probe": "Prob ve Kart Bilgisi",
   "config.flashConfirm": "Karta yüklemeden önce onay iste (durum çubuğundaki Flash/Run, tasarımcıdaki Yükle).",
   "config.probeAutoDetect": "Prob takılınca (ST-Link, J-Link, CMSIS-DAP, DFU, UART köprüsü) algıla ve bağlı kartı kendiliğinden sorgula.",

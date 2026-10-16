@@ -8,7 +8,7 @@
   "command.flash": "Flash (build and download, target halted)",
   "command.debug": "Debug (build, download, stop at main)",
   "command.run": "Run (build, download and run without debugger)",
-  "command.terminal": "Open Monitor",
+  "command.terminal": "Open Serial Terminal",
   "command.probe": "Probe and Board Info",
   "config.flashConfirm": "Ask for confirmation before flashing (status bar Flash/Run, designer Flash).",
   "config.probeAutoDetect": "Detect probes (ST-Link, J-Link, CMSIS-DAP, DFU, UART bridges) when they are plugged in and query the connected board automatically.",

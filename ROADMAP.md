@@ -218,12 +218,13 @@ STM32CubeIDE'deki *Fault Analyzer* eşdeğeri.
 
 Harici programa (Tera Term, PuTTY, RealTerm) gerek kalmamalı.
 
-- [ ] Port listesi ve kendiliğinden yenileme; baud, veri biti, parite, stop biti, akış kontrolü
-- [ ] ASCII, HEX ve karışık görünüm; zaman damgası; satır sonu seçimi (CR, LF, CRLF)
-- [ ] Gönderme kutusu, geçmiş, tekrarlı gönderme, kayıtlı komut/makro butonları
-- [ ] Log dosyasına kaydetme (metin veya ham), oturumu temizleme, arama
-- [ ] Birden fazla port aynı anda (ayrı sekmeler)
-- [ ] Teknik not: Node `serialport` yerel modül gerektirir; platform başına hazır derlenmiş paket mi kullanılacak, yoksa bir yardımcı süreç mi, kararı verilmeli
+- [x] Port listesi ve kendiliğinden yenileme; baud, veri biti, parite, stop biti, akış kontrolü
+- [x] ASCII, HEX ve karışık görünüm; zaman damgası; satır sonu seçimi (CR, LF, CRLF)
+- [x] Gönderme kutusu, geçmiş, tekrarlı gönderme, kayıtlı komut/makro butonları
+- [x] Log dosyasına kaydetme (metin veya ham), oturumu temizleme, arama
+- [x] Birden fazla port aynı anda (ayrı sekmeler)
+- [x] Teknik not: Node `serialport` yerel modül gerektirir; platform başına hazır derlenmiş paket mi kullanılacak, yoksa bir yardımcı süreç mi, kararı verilmeli
+  - **Karar (0.6.0):** yardımcı süreç. Windows'ta PowerShell içinde derlenen küçük bir C# yardımcısı (.NET `System.IO.Ports`, her Windows'ta hazır; stdin/stdout satır protokolü), Linux/macOS'ta `stty` ile ayarlanan aygıt dosyası doğrudan Node'dan. Yerel modül her VS Code/Electron sürümünde yeniden derlenmiş ikili ister ve VSIX'i platforma bağlar; bu yolla eklenti tek paket kalır. Bedeli: Windows'ta port açılışı ~0,6 sn; Linux/macOS'ta DTR/RTS ve break yok.
 
 ---
 

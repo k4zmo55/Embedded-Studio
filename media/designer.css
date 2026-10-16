@@ -716,3 +716,35 @@ body.mode-pro .note { padding: 3px 8px; }
 .an-table tr.warnrow td:first-child { box-shadow: inset 3px 0 0 var(--warn); }
 .an-diffsum { display: flex; flex-wrap: wrap; gap: 4px 18px; padding: 0 12px 8px; font-size: 12px; }
 .an-more { margin: 8px 12px; }
+
+/* ---- Seri port terminali (ES-211) ---- */
+#terminal { grid-template-rows: auto auto auto minmax(0, 1fr) auto auto auto; }
+.term-tabs { display: flex; align-items: center; gap: 2px; padding: 6px 10px 0; border-bottom: 1px solid var(--border); flex-wrap: wrap; }
+.term-tab { display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px; border: 1px solid transparent; border-bottom: none; border-radius: 4px 4px 0 0; cursor: pointer; font-size: 12px; color: var(--muted); }
+.term-tab.active { color: var(--fg); background: var(--hover); border-color: var(--border); }
+.term-tab .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--muted); opacity: .5; }
+.term-tab .dot.on { background: var(--ok); opacity: 1; }
+.term-tab .dot.err { background: var(--err); opacity: 1; }
+.term-bar, .term-tools { display: flex; align-items: center; gap: 6px 10px; padding: 6px 12px; flex-wrap: wrap; font-size: 12px; }
+.term-bar { border-bottom: 1px solid var(--border); }
+.term-field { display: inline-flex; align-items: center; gap: 5px; }
+.term-field span { color: var(--muted); }
+.term-field select { width: auto; }
+#term-baud-custom, #term-repeat-ms { width: 86px; }
+.term-search { width: 200px; margin: 0; }
+.term-out { overflow: auto; min-height: 0; padding: 6px 12px; font-family: var(--mono); font-size: 12px; line-height: 1.45; background: color-mix(in srgb, var(--fg) 3%, transparent); border-top: 1px solid var(--border); border-bottom: 1px solid var(--border); }
+.term-out .ln { white-space: pre-wrap; word-break: break-all; }
+.term-out .ts { color: var(--muted); margin-right: 10px; user-select: none; }
+.term-out .txm { color: var(--accent); margin-right: 6px; user-select: none; }
+.term-out .ln.tx .tx { color: var(--accent); }
+.term-out .ctl { display: inline-block; padding: 0 2px; margin: 0 1px; border-radius: 2px; font-size: 10px; background: var(--hover); color: var(--muted); }
+.term-out mark { background: color-mix(in srgb, var(--warn) 45%, transparent); color: inherit; }
+.term-out mark.cur { background: var(--warn); color: #000; }
+.term-status { display: flex; gap: 16px; padding: 4px 12px; font-size: 11px; color: var(--muted); flex-wrap: wrap; }
+.term-status.error { color: var(--err); }
+.term-status .rec { color: var(--err); }
+.term-macros { display: flex; align-items: center; gap: 4px; padding: 4px 12px; flex-wrap: wrap; }
+.term-macros .macro.editing { border-style: dashed; }
+.term-send { display: flex; align-items: center; gap: 6px; padding: 6px 12px 10px; }
+.term-send #term-input { flex: 1; }
+.term-send select { width: auto; }

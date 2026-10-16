@@ -1239,6 +1239,68 @@ edge: { sourcename: "Task_A" targetname: "__indirect_call" label: "a.c:9:40" }
     passed++;
     console.log('  ✓ Build Analyzer (ES-210): map bölgeleri ve girdiler, ELF section/sembol, bölge kullanımı, dosya katkısı, fark, yığın grafiği, -fstack-usage');
   }
+  {
+    // ES-211: seri port terminali — port listesi, ayarlar, stty, hata açıklamaları, simülasyon aygıtı, log
+    const S = require('../src/monitor/serial');
+    assert.deepStrictEqual(S.parseRegPorts('\r\nHKEY_LOCAL_MACHINE\\HARDWARE\\DEVICEMAP\\SERIALCOMM\r\n    \\Device\\USBSER000    REG_SZ    COM12\r\n    \\Device\\Serial0    REG_SZ    COM1\r\n    \\Device\\VCP0    REG_SZ    COM5\r\n'), ['COM1', 'COM5', 'COM12']);
+    assert.deepStrictEqual(S.parseRegPorts(''), []);
+    assert.throws(() => S.normalizeOptions({ path: 'COM3', baud: 'abc' }), /baud/);
+    assert.deepStrictEqual(S.normalizeOptions({ path: 'COM3', baud: '9600', dataBits: 9, parity: 'x', stopBits: 3, flow: 'y' }),
+      { path: 'COM3', baud: 9600, dataBits: 8, parity: 'none', stopBits: '1', flow: 'none', dtr: true, rts: true });
+    const st = (o, mac) => S.sttyArgs({ path: '/dev/ttyACM0', baud: 115200, dataBits: 8, parity: 'none', stopBits: '1', flow: 'none', ...o }, mac).join(' ');
+    assert.strictEqual(st({}, false), '-F /dev/ttyACM0 115200 raw -echo -echoe -echok cs8 clocal -hupcl -parenb -cstopb -crtscts -ixon -ixoff');
+    assert.ok(st({ parity: 'odd', stopBits: '2', flow: 'rtscts', dataBits: 7 }, true).startsWith('-f /dev/ttyACM0 115200 raw -echo -echoe -echok cs7') && st({ parity: 'odd', stopBits: '2', flow: 'rtscts' }, true).includes('parenb parodd cstopb crtscts'));
+    assert.ok(st({ parity: 'space' }, false).includes('parenb -parodd cmspar') && st({ flow: 'xonxoff' }, false).includes('ixon ixoff'));
+    assert.ok(/kullanılıyor/.test(S.explainOpen("UnauthorizedAccessException: Access to the port 'COM5' is denied.", 'COM5')));
+    assert.ok(/bulunamadı/.test(S.explainOpen("IOException: The port 'COM9' does not exist.", 'COM9')));
+    assert.strictEqual(S.clock(new Date(2026, 0, 1, 9, 5, 7, 42).getTime()), '09:05:07.042');
+    const ports = await S.listPorts();
+    assert.deepStrictEqual(ports[ports.length - 1], { path: 'SIM', name: 'Simülasyon (kart yok)', sim: true });
+    // Simülasyon aygıtı: karşılama, komut yanıtı, HEX döküm, DTR ile yeniden başlama, yanlış baud'da bozuk veri
+    const sess = new S.SerialSession({ path: 'SIM', baud: 115200 });
+    let rx = Buffer.alloc(0);
+    sess.on('data', (b) => { rx = Buffer.concat([rx, b]); });
+    await sess.open();
+    assert.ok(sess.isOpen && /demo firmware/.test(rx.toString()));
+    sess.write(Buffer.from('ver\r\nled on\r\n'));
+    sess.write(Buffer.from('dump\n'));
+    assert.ok(/fw 1\.2\.0/.test(rx.toString()) && /OK led on/.test(rx.toString()));
+    assert.ok(rx.includes(Buffer.from([0xaa, 0x55, 0x01, 0x10, 0, 1, 2])), 'ikili döküm');
+    rx = Buffer.alloc(0);
+    sess.signals(false, true); sess.signals(true, true);
+    assert.ok(/demo firmware/.test(rx.toString()), 'DTR düşüp kalkınca yeniden başlar');
+    let closed = false;
+    sess.on('close', () => { closed = true; });
+    await sess.close();
+    assert.ok(closed && !sess.isOpen);
+    assert.throws(() => sess.write(Buffer.from('x')), /açık değil/);
+    const bad = new S.SerialSession({ path: 'SIM', baud: 9600 });
+    let junk = Buffer.alloc(0);
+    bad.on('data', (b) => { junk = Buffer.concat([junk, b]); });
+    await bad.open();
+    assert.ok(junk.length > 20 && !/firmware/.test(junk.toString('latin1')), 'yanlış baud: okunamaz bayt');
+    await bad.close();
+    // Log: metin (yerel saat damgası, gönderilen "> "), ham (yalnızca gelen baytlar)
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'es-serial-'));
+    const lt = new S.SerialLog(path.join(dir, 'a.log'), 'text');
+    const at = new Date(2026, 0, 1, 10, 0, 0, 5).getTime();
+    lt.write('rx', Buffer.from('hel'), at); lt.write('rx', Buffer.from('lo\r\nwor'), at); lt.write('tx', Buffer.from('ver\r\n'), at); lt.write('rx', Buffer.from('ld\n'), at);
+    await lt.close();
+    assert.strictEqual(fs.readFileSync(path.join(dir, 'a.log'), 'utf8'), '[10:00:00.005] hello\n[10:00:00.005] wor\n[10:00:00.005] > ver\n[10:00:00.005] ld\n');
+    const lr = new S.SerialLog(path.join(dir, 'a.bin'), 'raw');
+    lr.write('rx', Buffer.from([0, 1, 255])); lr.write('tx', Buffer.from('x')); lr.write('rx', Buffer.from([7]));
+    await lr.close();
+    assert.deepStrictEqual([...fs.readFileSync(path.join(dir, 'a.bin'))], [0, 1, 255, 7]);
+    fs.rmSync(dir, { recursive: true, force: true });
+    // Windows yardımcısı: derlenir, olmayan portta anlaşılır hata (gerçek veri alışverişi kart gerektirir)
+    if (process.platform === 'win32') {
+      const w = new S.SerialSession({ path: 'COM250', baud: 115200 });
+      await assert.rejects(() => w.open(), /COM250 bulunamadı/);
+      assert.ok(!w.isOpen && w.proc === null);
+    }
+    passed++;
+    console.log('  ✓ Seri port terminali (ES-211): port listesi, ayarlar, stty, hata açıklamaları, simülasyon aygıtı, log, Windows yardımcısı');
+  }
   const { OpenOcdTarget, freePort } = require('../src/debug/session');
   const port = await freePort();
   assert.ok(port > 0 && port !== 6666, String(port));
