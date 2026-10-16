@@ -14,8 +14,10 @@ const REPOS = {
   hal: { url: 'https://github.com/STMicroelectronics/stm32f4xx-hal-driver.git', sparse: ['Inc', 'Src'] },
   device: { url: 'https://github.com/STMicroelectronics/cmsis-device-f4.git', sparse: ['Include', 'Source/Templates'] },
   core: { url: 'https://github.com/STMicroelectronics/cmsis-core.git', sparse: ['CMSIS/Core/Include'] },
-  freertos: { url: 'https://github.com/FreeRTOS/FreeRTOS-Kernel.git', sparse: ['include', 'portable/GCC/ARM_CM4F', 'portable/MemMang'] }
+  freertos: { url: 'https://github.com/FreeRTOS/FreeRTOS-Kernel.git', sparse: ['include', 'portable/GCC/ARM_CM4F', 'portable/GCC/ARM_CM3', 'portable/MemMang'] }
 };
+/** FreeRTOS portları: FPU açıkken ARM_CM4F, yazılım float'ta ARM_CM3 (bkz. build.js rtosPort) */
+const RTOS_PORTS = ['ARM_CM4F', 'ARM_CM3'];
 
 function git(args, cwd) {
   return new Promise((resolve, reject) => {
@@ -32,13 +34,21 @@ const has = (cache, key) => fs.existsSync(path.join(cache, key, '.es-ok'));
 async function ensurePacks(cache, needs, log = () => {}) {
   fs.mkdirSync(cache, { recursive: true });
   for (const key of needs) {
-    if (has(cache, key)) continue;
     const dir = path.join(cache, key);
+    const sparse = REPOS[key].sparse.join(',');
+    if (has(cache, key)) {
+      // Eski sürümün indirdiği paket daha az klasör içeriyorsa (ör. ARM_CM3 portu) sadece klasör listesini genişlet
+      if (fs.readFileSync(path.join(dir, '.es-ok'), 'utf8').split('\n')[1] === sparse) continue;
+      log(`${key} güncelleniyor...`);
+      await git(['sparse-checkout', 'set', ...REPOS[key].sparse], dir);
+      fs.writeFileSync(path.join(dir, '.es-ok'), `${new Date().toISOString()}\n${sparse}`);
+      continue;
+    }
     fs.rmSync(dir, { recursive: true, force: true });
     log(`${key} indiriliyor...`);
     await git(['clone', '--depth', '1', '--filter=blob:none', '--sparse', REPOS[key].url, dir]);
     await git(['sparse-checkout', 'set', ...REPOS[key].sparse], dir);
-    fs.writeFileSync(path.join(dir, '.es-ok'), new Date().toISOString());
+    fs.writeFileSync(path.join(dir, '.es-ok'), `${new Date().toISOString()}\n${sparse}`);
   }
 }
 
@@ -58,14 +68,14 @@ function copyFile(src, dst) {
   fs.copyFileSync(src, dst);
 }
 
-/** Projede eksik olan paket parçalarının listesi. */
-function missingInProject(root, mcu, framework, rtos) {
+/** Projede eksik olan paket parçalarının listesi. rtosPort: derlenecek FreeRTOS portu (ARM_CM4F / ARM_CM3). */
+function missingInProject(root, mcu, framework, rtos, rtosPort = 'ARM_CM4F') {
   const L = layout(framework);
   const need = [];
   if (!fs.existsSync(path.join(root, L.cmsisCore, 'core_cm4.h'))) need.push('core');
   if (!fs.existsSync(path.join(root, L.startupDir, mcu.device.startup)) || !fs.existsSync(path.join(root, L.systemC))) need.push('device');
   if (framework === 'hal' && !fs.existsSync(path.join(root, L.hal, 'Inc/stm32f4xx_hal.h'))) need.push('hal');
-  if (rtos && !fs.existsSync(path.join(root, L.rtos, 'tasks.c'))) need.push('freertos');
+  if (rtos && (!fs.existsSync(path.join(root, L.rtos, 'tasks.c')) || !fs.existsSync(path.join(root, L.rtos, 'portable/GCC', rtosPort, 'port.c')))) need.push('freertos');
   return need;
 }
 
@@ -91,7 +101,9 @@ function installIntoProject(cache, root, mcu, keys, framework = 'hal') {
       for (const f of ['tasks.c', 'queue.c', 'list.c', 'timers.c', 'event_groups.c', 'stream_buffer.c', 'LICENSE.md']) {
         if (fs.existsSync(path.join(src, f))) copyFile(path.join(src, f), path.join(dst, f));
       }
-      copyDir(path.join(src, 'portable/GCC/ARM_CM4F'), path.join(dst, 'portable/GCC/ARM_CM4F'));
+      for (const port of RTOS_PORTS) {
+        if (fs.existsSync(path.join(src, 'portable/GCC', port))) copyDir(path.join(src, 'portable/GCC', port), path.join(dst, 'portable/GCC', port));
+      }
       copyFile(path.join(src, 'portable/MemMang/heap_4.c'), path.join(dst, 'portable/MemMang/heap_4.c'));
     }
   }

@@ -14,6 +14,7 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const { layout } = require('./layout');
+const { normalizeBuild, buildCommand } = require('./build');
 
 const STATE_DIR = '.embedded-studio';
 const sha1 = (s) => crypto.createHash('sha1').update(s).digest('hex');
@@ -74,7 +75,8 @@ function designFingerprint(design, generatorVersion) {
     project: design.project && design.project.name,
     clock: design.clock || null,
     instances: design.instances.map((i) => ({ id: i.id, c: i.componentId, l: i.label, o: i.options || null })),
-    locks: design.locks || {}
+    locks: design.locks || {},
+    build: normalizeBuild(design.build) // derleme ayarları cmake/embedded-studio.cmake'i değiştirir
   };
   return sha1(JSON.stringify(relevant));
 }
@@ -161,9 +163,11 @@ function writeProject(root, gen, info) {
     }
   }
 
-  // Artık üretilmeyen dosyalar (çıkarılan sensör sürücüleri, kapatılan RTOS ayarı...)
+  // Artık üretilmeyen dosyalar (çıkarılan sensör sürücüleri, kapatılan RTOS ayarı...).
+  // 'once' türüne geçen dosya (ör. "CMake'i ben yönetiyorum" sonrası CMakeLists.txt) kullanıcıya devredilmiştir: dokunma.
+  const handedOver = new Set(gen.files.filter((f) => f.kind === 'once').map((f) => f.path));
   for (const [rel, hash] of Object.entries(manifest.files || {})) {
-    if (newManifest.files[rel]) continue;
+    if (newManifest.files[rel] || handedOver.has(rel)) continue;
     const abs = path.join(root, rel);
     if (!fs.existsSync(abs)) continue;
     const text = fs.readFileSync(abs, 'utf8');
@@ -262,6 +266,27 @@ function relocateLayout(root, framework, genFiles) {
   return moved;
 }
 
+/**
+ * 0.4.x ile oluşturulan .vscode/tasks.json ve launch.json tek bir build/ klasörünü kullanıyordu; artık her derleme tipi
+ * build/<preset>/ altında. Bu dosyalar kullanıcınındır, sadece eski üretilmiş metin aynen duruyorsa güncellenir.
+ * @returns {string[]} güncellenen dosyalar
+ */
+function upgradeLegacyVscode(root, name) {
+  const legacyBuild = 'cmake -S . -B build -G Ninja -DCMAKE_TOOLCHAIN_FILE=cmake/arm-none-eabi.cmake -DCMAKE_BUILD_TYPE=Debug && cmake --build build';
+  const changed = [];
+  for (const rel of ['.vscode/tasks.json', '.vscode/launch.json']) {
+    const abs = path.join(root, rel);
+    if (!fs.existsSync(abs)) continue;
+    const text = fs.readFileSync(abs, 'utf8');
+    const next = text.split(legacyBuild).join(JSON.stringify(buildCommand('Debug')).slice(1, -1)).split(`build/${name}.elf`).join(`build/debug/${name}.elf`);
+    if (next !== text) {
+      fs.writeFileSync(abs, next);
+      changed.push(rel);
+    }
+  }
+  return changed;
+}
+
 /** Boşalan klasörleri (ör. taşımadan sonra Core/Src) siler; içinde dosya kalan klasörlere dokunmaz. */
 function removeEmptyDirs(root, rels) {
   for (const rel of rels) {
@@ -273,4 +298,4 @@ function removeEmptyDirs(root, rels) {
   }
 }
 
-module.exports = { writeProject, mergeUserBlocks, extractBlocks, designFingerprint, diffSnapshots, relocateLayout, removeEmptyDirs, STATE_DIR };
+module.exports = { writeProject, mergeUserBlocks, extractBlocks, designFingerprint, diffSnapshots, relocateLayout, removeEmptyDirs, upgradeLegacyVscode, STATE_DIR };

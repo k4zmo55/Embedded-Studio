@@ -9,8 +9,10 @@ const { assign } = require('./engine/pinAssigner');
 const { computeClock, solveClock } = require('./engine/clock');
 const { analyze, ruleBasedProvider } = require('./ai/advisor');
 const { generate, GENERATOR_VERSION } = require('./codegen/generator');
-const { writeProject, designFingerprint, relocateLayout, removeEmptyDirs, STATE_DIR } = require('./codegen/merge');
+const { writeProject, designFingerprint, relocateLayout, removeEmptyDirs, upgradeLegacyVscode, STATE_DIR } = require('./codegen/merge');
 const { layout } = require('./codegen/layout');
+const cm = require('./codegen/build');
+const { detectToolchains, elfSize } = require('./toolchain');
 const packs = require('./codegen/packs');
 const { parseLine, Simulator } = require('./monitor/telemetry');
 const { OpenOcdTarget, SimTarget, simModel, elfSymbols } = require('./debug/session');
@@ -80,6 +82,7 @@ function migrate(design, lib) {
   d.project = d.project || { name: 'embedded_app' };
   d.instances = d.instances || [];
   d.locks = d.locks || {};
+  d.build = cm.normalizeBuild(d.build);
   if (!lib.mcus[d.mcuId]) d.mcuId = Object.keys(lib.mcus)[0];
   d.clock = { ...lib.mcus[d.mcuId].clock.default, ...(d.clock || {}) };
   return d;
@@ -138,7 +141,10 @@ class Studio {
       this.pending = [];
     }, 120);
     context.subscriptions.push(vscode.tasks.onDidEndTaskProcess((e) => {
-      if (e.execution.task.source === 'Embedded Studio') this.post({ type: 'task.done', name: e.execution.task.name, ok: e.exitCode === 0 });
+      const task = e.execution.task;
+      if (task.source !== 'Embedded Studio') return;
+      this.post({ type: 'task.done', name: task.name, ok: e.exitCode === 0 });
+      if (e.exitCode === 0 && task.definition.kind === 'build') this.reportSize(task.definition.config).catch(() => {});
     }));
   }
 
@@ -243,6 +249,14 @@ class Studio {
       case 'settings.preview':
         this.post({ type: 'settings.preview', seq: m.seq, ...this.previewSettings(m.settings) });
         break;
+      case 'build.detect':
+        this.post({ type: 'build.toolchains', items: await detectToolchains() });
+        break;
+      case 'build.pickDir': {
+        const pick = await vscode.window.showOpenDialog({ canSelectFolders: true, canSelectFiles: false, openLabel: t('Bu klasörü kullan') });
+        if (pick) this.post({ type: 'build.dir', field: m.field, path: pick[0].fsPath });
+        break;
+      }
       case 'clock.solve': {
         const cfg = solveClock(this.lib.mcus[this.design.mcuId], this.design.clock, m.target);
         if (!cfg) return this.toast('error', t('{0} MHz için geçerli bir PLL ayarı bulunamadı.', m.target));
@@ -377,8 +391,8 @@ class Studio {
   }
 
   /** HAL/CMSIS/FreeRTOS paketlerini (gerekirse indirip) projeye kopyalar. */
-  async installPacks(root, mcu, framework, rtos) {
-    const need = packs.missingInProject(root, mcu, framework, rtos);
+  async installPacks(root, mcu, framework, rtos, rtosPort = 'ARM_CM4F') {
+    const need = packs.missingInProject(root, mcu, framework, rtos, rtosPort);
     if (!need.length) return true;
     const cache = path.join(this.context.globalStorageUri.fsPath, 'packs');
     try {
@@ -437,7 +451,7 @@ class Studio {
       added: [...b.keys()].filter((p) => !a.has(p)).sort(),
       removed: [...a.keys()].filter((p) => !b.has(p)).sort(),
       changed: [...b.keys()].filter((p) => a.has(p) && a.get(p) !== b.get(p)).sort(),
-      packs: this.root ? packs.missingInProject(this.root, mcuNext, next.framework, next.rtos).map((k) => names[k]) : [],
+      packs: this.root ? packs.missingInProject(this.root, mcuNext, next.framework, next.rtos, cm.rtosPort(next.build)).map((k) => names[k]) : [],
       notes
     };
   }
@@ -458,12 +472,12 @@ class Studio {
       if (go !== t('Yine de üret')) return;
     }
     const mcu = this.lib.mcus[this.design.mcuId];
-    const missing = packs.missingInProject(this.root, mcu, this.design.framework, this.design.rtos);
+    const missing = packs.missingInProject(this.root, mcu, this.design.framework, this.design.rtos, cm.rtosPort(this.design.build));
     if (missing.length) {
       const names = { hal: 'STM32 HAL', device: t('CMSIS cihaz'), core: t('CMSIS çekirdek'), freertos: 'FreeRTOS' };
       const go = await vscode.window.showInformationMessage(
         t('Derleme için şu paketler gerekiyor: {0}. İndirilsin mi? (git, bir kez ~30 MB)', missing.map((k) => names[k]).join(', ')), t('İndir'), t('Şimdilik atla'));
-      if (go === t('İndir')) await this.installPacks(this.root, mcu, this.design.framework, this.design.rtos);
+      if (go === t('İndir')) await this.installPacks(this.root, mcu, this.design.framework, this.design.rtos, cm.rtosPort(this.design.build));
     }
     const cache = path.join(this.context.globalStorageUri.fsPath, 'packs');
     const gen = generate(this.design, this.lib, result, clock, { halConfTemplate: packs.halConfTemplate(cache, this.root) });
@@ -490,6 +504,8 @@ class Studio {
     // Klasör yapısı değiştiyse (HAL ↔ bare-metal) kullanıcı dosyalarını yeni yerlerine taşı
     const moved = relocateLayout(this.root, this.design.framework, gen.files);
     const report = writeProject(this.root, gen, info);
+    report.updated.push(...upgradeLegacyVscode(this.root, this.design.project.name));
+    this.checkUserCmake();
     if (moved.length) {
       const old = moved[0].from.split('/')[0];
       removeEmptyDirs(this.root, ['Core/Inc', 'Core/Src', 'Drivers/Components', 'inc', 'src', 'drivers']);
@@ -514,6 +530,15 @@ class Studio {
       const target = choice === t('Değişiklikler') ? `${STATE_DIR}/LAST_CHANGES.md` : appFile;
       await vscode.window.showTextDocument(vscode.Uri.file(path.join(this.root, target)));
     }
+  }
+
+  /** "CMake'i ben yönetiyorum": kullanıcının CMakeLists.txt'si üretilen ayarları içermiyorsa nasıl ekleneceğini söyle. */
+  checkUserCmake() {
+    if (this.design.build.cmake !== 'user' || !this.root) return;
+    const file = path.join(this.root, 'CMakeLists.txt');
+    if (!fs.existsSync(file) || fs.readFileSync(file, 'utf8').includes('embedded-studio.cmake')) return;
+    vscode.window.showWarningMessage(t('CMakeLists.txt, Embedded Studio\'nun ürettiği derleme ayarlarını içermiyor. project() satırından sonra include(cmake/embedded-studio.cmake) ve add_executable sonrası embedded_studio_target(<hedef>) ekleyin.'), t('CMakeLists.txt\'yi aç'))
+      .then((c) => c && vscode.window.showTextDocument(vscode.Uri.file(file)));
   }
 
   /** Önizlemedeki bir dosya için VS Code fark görünümü: soldaki diskteki hali, sağdaki yazılacak hali. */
@@ -714,9 +739,9 @@ class Studio {
   }
 
   async debugSymbols() {
-    const elf = this.root && path.join(this.root, 'build', `${this.design.project.name}.elf`);
+    const elf = this.root && path.join(this.root, cm.elfRel(this.design));
     try {
-      const syms = await elfSymbols(elf || '');
+      const syms = await elfSymbols(elf || '', cm.gccTool(this.design.build, 'nm'));
       this.post({ type: 'debug.symbols', symbols: syms, source: path.relative(this.root, elf) });
     } catch (e) {
       // Simülasyonda ELF yoksa örnek semboller göster
@@ -731,19 +756,43 @@ class Studio {
     if (!this.root) return this.toast('error', t('Önce bir proje açın.'));
     if (!fs.existsSync(path.join(this.root, 'CMakeLists.txt'))) return this.toast('warn', t('Önce "Kod Üret" ile projeyi oluşturun.'));
     const mcu = this.lib.mcus[this.design.mcuId];
-    const name = this.design.project.name;
+    const config = this.design.build.type;
     const cmd = kind === 'build'
-      ? 'cmake -S . -B build -G Ninja -DCMAKE_TOOLCHAIN_FILE=cmake/arm-none-eabi.cmake -DCMAKE_BUILD_TYPE=Debug && cmake --build build'
-      : `openocd -f interface/stlink.cfg -f ${mcu.device.openocdTarget} -c "program build/${name}.elf verify reset exit"`;
+      ? cm.buildCommand(config)
+      : `openocd -f interface/stlink.cfg -f ${mcu.device.openocdTarget} -c "program ${cm.elfRel(this.design)} verify reset exit"`;
     const folder = vscode.workspace.workspaceFolders?.[0];
-    const task = new vscode.Task({ type: 'embedded-studio', kind }, folder || vscode.TaskScope.Workspace,
-      kind === 'build' ? t('Derle') : t('Yükle'), 'Embedded Studio', new vscode.ShellExecution(cmd, { cwd: this.root }), ['$gcc']);
+    // Windows'ta varsayılan kabuk PowerShell 5 olabilir; && için cmd.exe
+    const shell = process.platform === 'win32' ? { executable: 'cmd.exe', shellArgs: ['/d', '/c'] } : {};
+    const task = new vscode.Task({ type: 'embedded-studio', kind, config }, folder || vscode.TaskScope.Workspace,
+      kind === 'build' ? t('Derle ({0})', config) : t('Yükle'), 'Embedded Studio', new vscode.ShellExecution(cmd, { cwd: this.root, ...shell }), ['$gcc']);
     await vscode.tasks.executeTask(task);
     this.post({ type: 'task.start', name: task.name });
   }
 
+  /** Derleme sonrası boyut özeti: flash/RAM kullanımı ve çıktı dosyaları (.elf, .hex, .bin, .map). */
+  async reportSize(config) {
+    if (!this.root || !this.design) return;
+    const design = { ...this.design, build: { ...this.design.build, type: config || this.design.build.type } };
+    const elf = path.join(this.root, cm.elfRel(design));
+    const size = await elfSize(cm.gccTool(design.build, 'size'), elf);
+    if (!size) return;
+    const dev = this.lib.mcus[design.mcuId].device;
+    const kb = (n) => (n / 1024).toFixed(1);
+    const pct = (n, totalKB) => ((n * 100) / (totalKB * 1024)).toFixed(1);
+    const dir = path.dirname(elf);
+    const base = path.basename(elf, '.elf');
+    const outputs = ['.elf', '.hex', '.bin', '.map'].filter((x) => fs.existsSync(path.join(dir, base + x)));
+    const summary = { config: design.build.type, ...size, flashKB: dev.flashKB, ramKB: dev.ramKB, dir: path.relative(this.root, dir).split(path.sep).join('/'), outputs };
+    this.post({ type: 'build.size', ...summary });
+    const msg = t('Derlendi ({0}): Flash {1} KB / {2} KB (%{3}) · RAM {4} KB / {5} KB (%{6}) · {7}',
+      summary.config, kb(size.flash), dev.flashKB, pct(size.flash, dev.flashKB), kb(size.ram), dev.ramKB, pct(size.ram, dev.ramKB), `${summary.dir}/${base}{${outputs.join(',')}}`);
+    const open = outputs.includes('.map') ? t('Map dosyasını aç') : undefined;
+    const choice = await vscode.window.showInformationMessage(msg, ...(open ? [open] : []));
+    if (choice && choice === open) await vscode.window.showTextDocument(vscode.Uri.file(path.join(dir, base + '.map')));
+  }
+
   async flash() {
-    const elf = this.root && path.join(this.root, 'build', `${this.design.project.name}.elf`);
+    const elf = this.root && path.join(this.root, cm.elfRel(this.design));
     if (!elf || !fs.existsSync(elf)) return this.toast('warn', t('ELF bulunamadı. Önce Derle.'));
     const go = await vscode.window.showWarningMessage(t('{0} karta yüklensin mi? Karttaki mevcut program silinir.', path.basename(elf)), { modal: true }, t('Yükle'));
     if (go !== t('Yükle')) return;

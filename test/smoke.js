@@ -135,8 +135,8 @@ test('bare-metal: sade klasör yapısı (inc/ src/ drivers/ linker/), HAL dosyas
   const files = g.files.map((f) => f.path);
   for (const f of ['inc/FreeRTOSConfig.h', 'inc/board.h', 'src/main.c', 'src/app.c', 'src/bsp.c', 'drivers/bme280.c', 'linker/STM32F411CEU6_FLASH.ld']) assert.ok(files.includes(f), f);
   assert.ok(!files.some((f) => f.startsWith('Core/') || f.startsWith('Drivers/') || /hal_conf/.test(f)), files.join(' '));
-  const cmake = g.files.find((f) => f.path === 'CMakeLists.txt').content;
-  for (const s of ['src/*.c drivers/*.c', 'startup/system_stm32f4xx.c', 'startup/startup_stm32f411xe.s', 'cmsis/core', 'cmsis/device', 'rtos/FreeRTOS/tasks.c', 'linker/STM32F411CEU6_FLASH.ld']) assert.ok(cmake.includes(s), s);
+  const cmake = g.files.find((f) => f.path === 'cmake/embedded-studio.cmake').content;
+  for (const s of ['${ES_ROOT}/src/*.c ${ES_ROOT}/drivers/*.c', 'startup/system_stm32f4xx.c', 'startup/startup_stm32f411xe.s', 'cmsis/core', 'cmsis/device', 'rtos/FreeRTOS/tasks.c', 'linker/STM32F411CEU6_FLASH.ld']) assert.ok(cmake.includes(s), s);
   assert.ok(!/Drivers|Middlewares|Core\//.test(cmake), 'CMake HAL yolları içermemeli');
 });
 test('HAL: CubeMX klasör yapısı korunur', () => {
@@ -225,6 +225,84 @@ test('acemi → profesyonel geçişi: app.c silinmez, eski kesme kodu çakışma
   assert.ok(!/^void SysTick_Handler/m.test(itText), 'SysTick artık bsp_irq.c\'de');
   assert.ok(itText.includes('void EXTI0_IRQHandler(void) {}'), 'kullanıcının kesmesi korunmalı');
   fs.rmSync(dir, { recursive: true, force: true });
+});
+
+console.log('Derleme yapılandırması (CMake)');
+const cmakeOf = (d, p = 'cmake/embedded-studio.cmake') => generate(d, lib, assign(d, lib), computeClock(mcu, d.clock), {}).files.find((f) => f.path === p);
+test('varsayılan: ayarlar cmake/embedded-studio.cmake\'te, CMakeLists.txt ince ve USER CODE bloklu, CMakePresets.json', () => {
+  const d = design([inst('usb_uart'), inst('bme280')], { rtos: true });
+  const mod = cmakeOf(d).content;
+  for (const s of ['function(embedded_studio_target target)', '-mfpu=fpv4-sp-d16 -mfloat-abi=hard', '$<$<CONFIG:Debug>:-Og>', '$<$<CONFIG:MinSizeRel>:-Os>',
+    '--specs=nano.specs --specs=nosys.specs', 'ES_WARNINGS -Wall -Wextra', '"USE_HAL_DRIVER"', 'portable/GCC/ARM_CM4F/port.c', '.hex', '.bin', '-Wl,-Map=']) assert.ok(mod.includes(s), s);
+  const lists = cmakeOf(d, 'CMakeLists.txt');
+  assert.strictEqual(lists.kind, 'user');
+  assert.ok(/include\(cmake\/embedded-studio\.cmake\)[\s\S]*USER CODE BEGIN Sources[\s\S]*embedded_studio_target\(\$\{PROJECT_NAME\}\)[\s\S]*USER CODE BEGIN Targets/.test(lists.content));
+  assert.ok(!/-mcpu|--specs/.test(lists.content), 'bayraklar CMakeLists.txt\'de olmamalı');
+  const presets = JSON.parse(cmakeOf(d, 'CMakePresets.json').content);
+  assert.deepStrictEqual(presets.configurePresets.filter((p) => !p.hidden).map((p) => p.name), ['debug', 'release', 'minsizerel', 'relwithdebinfo']);
+  assert.strictEqual(presets.configurePresets[0].binaryDir, '${sourceDir}/build/${presetName}');
+  assert.ok(/build\/debug\/smoke\.elf/.test(cmakeOf(d, '.vscode/launch.json').content));
+});
+test('derleme ayarları: -O, -D, include, bayraklar, linker, specs, FPU, uyarı, araç zinciri yolu', () => {
+  const d = design([inst('usb_uart')], { rtos: true, build: {
+    type: 'Release', opt: { Release: '-O3' }, defines: ['APP_VER="1.2"', 'X=1'], includes: ['lib/inc', 'C:\\SDK\\inc'], cflags: '-fstack-usage', ldflags: '-Wl,--cref',
+    linkerScript: 'custom.ld', specs: { nano: false, nosys: true }, fpu: 'soft', warnings: 'strict', werror: true, toolchain: { gccPath: 'C:\\Arm\\bin' } } });
+  const mod = cmakeOf(d).content;
+  for (const s of ['$<$<CONFIG:Release>:-O3>', '"APP_VER=\\"1.2\\""', '"X=1"', '${ES_ROOT}/lib/inc', 'C:/SDK/inc', '"-fstack-usage"', '"-Wl,--cref"',
+    'set(ES_LINKER_SCRIPT "${ES_ROOT}/custom.ld")', '-mfloat-abi=soft', 'portable/GCC/ARM_CM3/port.c', '-Wshadow', '-Werror', 'CMAKE_BUILD_TYPE Release']) assert.ok(mod.includes(s), s);
+  assert.ok(!/nano\.specs|-mfpu|ARM_CM4F/.test(mod), 'nano.specs, -mfpu ve ARM_CM4F olmamalı');
+  assert.ok(cmakeOf(d, 'cmake/arm-none-eabi.cmake').content.includes('es_tool_dir(ES_GCC_DIR "C:/Arm/bin")'));
+});
+test('derleme ayarı değişince yeniden üretilir (parmak izi); bozuk ayarlar varsayılana döner', () => {
+  const d = design([inst('usb_uart')]);
+  assert.notStrictEqual(designFingerprint(d, GENERATOR_VERSION), designFingerprint({ ...d, build: { type: 'Release' } }, GENERATOR_VERSION));
+  assert.strictEqual(designFingerprint(d, GENERATOR_VERSION), designFingerprint({ ...d, build: {} }, GENERATOR_VERSION), 'boş ayar = varsayılan');
+  const { normalizeBuild } = require('../src/codegen/build');
+  const b = normalizeBuild({ type: 'Hızlı', opt: { Debug: '-O9' }, fpu: 'x', warnings: 'max', cmake: 'kimse' });
+  assert.deepStrictEqual([b.type, b.opt.Debug, b.fpu, b.warnings, b.cmake], ['Debug', '-Og', 'hard', 'normal', 'tool']);
+});
+test('"CMake\'i ben yönetiyorum": CMakeLists.txt\'ye hiç yazılmaz, embedded-studio.cmake yine güncellenir', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'es-cmake-'));
+  const run = (d) => writeProject(dir, generate(d, lib, assign(d, lib), computeClock(mcu, d.clock), {}),
+    { fingerprint: designFingerprint(d, GENERATOR_VERSION), snapshot: { instances: [], connections: [] } });
+  const d = design([inst('usb_uart'), inst('bme280')], { framework: 'register' });
+  run(d);
+  const lists = path.join(dir, 'CMakeLists.txt');
+  assert.ok(fs.readFileSync(lists, 'utf8').includes('USER CODE BEGIN Sources'));
+  const mine = 'cmake_minimum_required(VERSION 3.20)\nproject(benim C ASM)\ninclude(cmake/embedded-studio.cmake)\nadd_executable(benim main.c)\nembedded_studio_target(benim)\n';
+  fs.writeFileSync(lists, mine);
+  const user = { ...d, build: { cmake: 'user', defines: ['YENI=1'] } };
+  const rep = run(user);
+  assert.strictEqual(fs.readFileSync(lists, 'utf8'), mine, 'kullanıcının CMakeLists.txt\'si aynen kalmalı');
+  assert.ok(!rep.removed.includes('CMakeLists.txt') && !rep.preserved.includes('CMakeLists.txt'));
+  assert.ok(fs.existsSync(path.join(dir, 'CMakePresets.json')), 'kullanıcıya devredilen CMakePresets.json silinmemeli');
+  assert.ok(rep.updated.includes('cmake/embedded-studio.cmake') && fs.readFileSync(path.join(dir, 'cmake/embedded-studio.cmake'), 'utf8').includes('"YENI=1"'));
+  // Kullanıcı CMakeLists.txt'yi silerse başlangıç dosyası bir kez oluşturulur, sonra yine dokunulmaz
+  fs.unlinkSync(lists);
+  run({ ...user, build: { ...user.build, defines: [] } });
+  const starter = fs.readFileSync(lists, 'utf8');
+  assert.ok(starter.includes('Bu CMakeLists.txt sizindir') && starter.includes('embedded_studio_target(${PROJECT_NAME})'));
+  assert.ok(!/USER CODE/.test(starter));
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+test('0.4.x .vscode görevleri yeni build/debug klasörüne güncellenir; kullanıcı değiştirdiyse dokunulmaz', () => {
+  const { upgradeLegacyVscode } = require('../src/codegen/merge');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'es-vscode-'));
+  fs.mkdirSync(path.join(dir, '.vscode'));
+  const legacyCmd = 'cmake -S . -B build -G Ninja -DCMAKE_TOOLCHAIN_FILE=cmake/arm-none-eabi.cmake -DCMAKE_BUILD_TYPE=Debug && cmake --build build';
+  fs.writeFileSync(path.join(dir, '.vscode/tasks.json'), JSON.stringify({ tasks: [{ command: legacyCmd }, { command: 'openocd -c "program build/app.elf verify reset exit"' }] }));
+  fs.writeFileSync(path.join(dir, '.vscode/launch.json'), JSON.stringify({ configurations: [{ executable: 'out/benim.elf' }] }));
+  assert.deepStrictEqual(upgradeLegacyVscode(dir, 'app'), ['.vscode/tasks.json']);
+  const tasks = fs.readFileSync(path.join(dir, '.vscode/tasks.json'), 'utf8');
+  assert.ok(tasks.includes('-B build/debug') && tasks.includes('program build/debug/app.elf') && !tasks.includes(legacyCmd), tasks);
+  assert.deepStrictEqual(upgradeLegacyVscode(dir, 'app'), [], 'ikinci kez değişiklik yok');
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+test('boyut özeti: arm-none-eabi-size çıktısı → flash = text+data, RAM = data+bss', () => {
+  const { parseSize } = require('../src/toolchain');
+  assert.deepStrictEqual(parseSize('   text\t   data\t    bss\t    dec\t    hex\tfilename\n  19876\t    232\t  16512\t  36620\t   8f0c\tbuild/debug/app.elf\n'),
+    { text: 19876, data: 232, bss: 16512, flash: 20108, ram: 16744 });
+  assert.strictEqual(parseSize('arm-none-eabi-size: x.elf: file format not recognized'), null);
 });
 
 console.log('Kütüphane, telemetri, debug');

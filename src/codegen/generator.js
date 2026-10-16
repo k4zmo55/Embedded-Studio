@@ -13,9 +13,10 @@ const { DRIVERS } = require('./drivers');
 const { parseSignal } = require('../engine/pinAssigner');
 const bsp = require('./bsp');
 const { layout, join } = require('./layout');
+const cm = require('./build');
 const { cIdent, indent } = bsp;
 
-const GENERATOR_VERSION = 3; // 3: bare-metal projeler sade klasör yapısında (inc/, src/, startup/, linker/, cmsis/, drivers/)
+const GENERATOR_VERSION = 4; // 3: bare-metal sade klasör yapısı; 4: derleme ayarları cmake/embedded-studio.cmake'te, CMakePresets.json
 
 /** Hazır sürücüsü olmayan (kullanıcının yüklediği) komponentler: pinler ve bus hazır, okuma kodu kullanıcıda. */
 const GENERIC_DRIVER = {
@@ -71,6 +72,7 @@ function generate(design, lib, result, clock, opts = {}) {
   const P = layout(framework);
   // Profesyonel + bare-metal: main.c / app.c kullanıcının; araç sadece sürücü, BSP, kesme, derleme dosyalarını yazar
   const owned = framework === 'register' && design.mode === 'pro';
+  const build = cm.normalizeBuild(design.build);
   const x = bsp.makeContext(design, lib, result, clock);
   /** @type {{ path: string, content: string, kind: 'generated'|'user'|'once' }[]} */
   const files = [];
@@ -172,11 +174,12 @@ void Telemetry_Status(const char *source, const char *text)
 static int fmt_fixed(char *buf, size_t n, int32_t v, uint8_t decimals)
 {
   static const int32_t pow10[] = { 1, 10, 100, 1000, 10000, 100000, 1000000, 10000000 };
-  int32_t p = pow10[decimals > 7 ? 7 : decimals];
+  int d = decimals > 7 ? 7 : decimals;
+  int32_t p = pow10[d];
   const char *sign = v < 0 ? "-" : "";
   uint32_t a = v < 0 ? (uint32_t)(-(int64_t)v) : (uint32_t)v;
-  if (decimals == 0) return snprintf(buf, n, "%s%lu", sign, (unsigned long)a);
-  return snprintf(buf, n, "%s%lu.%0*lu", sign, (unsigned long)(a / (uint32_t)p), (int)decimals, (unsigned long)(a % (uint32_t)p));
+  if (d == 0) return snprintf(buf, n, "%s%lu", sign, (unsigned long)a);
+  return snprintf(buf, n, "%s%lu.%0*lu", sign, (unsigned long)(a / (uint32_t)p), d, (unsigned long)(a % (uint32_t)p));
 }
 
 void Telemetry_Fixed(const char *channel, int32_t value, uint8_t decimals)
@@ -396,8 +399,13 @@ ${indent(userBlock('PostInit'))}
   if (framework === 'hal') add(`${P.inc}/stm32f4xx_hal_conf.h`, halConf(opts.halConfTemplate, x, stamp));
 
   // ---- Derleme sistemi ----
-  add('CMakeLists.txt', cmakeLists(name, mcu, framework, design, clock, P), 'user');
-  add('cmake/arm-none-eabi.cmake', TOOLCHAIN);
+  // Ayarlar cmake/embedded-studio.cmake'te; CMakeLists.txt ya Embedded Studio'nun (USER CODE bloklu) ya da kullanıcının
+  const userCmake = build.cmake === 'user';
+  add('cmake/embedded-studio.cmake', cm.cmakeModule({ name, mcu, framework, rtos: !!design.rtos, hseHz: Math.round(clock.config.hseMHz * 1e6), P, build }));
+  add('cmake/arm-none-eabi.cmake', cm.toolchainFile(build));
+  if (userCmake) add('CMakeLists.txt', cm.cmakeListsStarter(name), 'once');
+  else add('CMakeLists.txt', cm.cmakeListsManaged(name, userBlock), 'user');
+  add('CMakePresets.json', cm.cmakePresets(), userCmake ? 'once' : 'generated');
   add(join(P.linkerDir, `${mcu.name}_FLASH.ld`), linkerScript(mcu));
   add('.vscode/tasks.json', tasksJson(name, mcu), 'once');
   add('.vscode/launch.json', launchJson(name, mcu), 'once');
@@ -546,74 +554,6 @@ ${userBlock('Config')}
 `;
 }
 
-const TOOLCHAIN = `# Embedded Studio: arm-none-eabi-gcc araç zinciri
-set(CMAKE_SYSTEM_NAME Generic)
-set(CMAKE_SYSTEM_PROCESSOR arm)
-set(CMAKE_C_COMPILER arm-none-eabi-gcc)
-set(CMAKE_ASM_COMPILER arm-none-eabi-gcc)
-set(CMAKE_OBJCOPY arm-none-eabi-objcopy)
-set(CMAKE_SIZE arm-none-eabi-size)
-set(CMAKE_EXECUTABLE_SUFFIX ".elf")
-set(CMAKE_EXECUTABLE_SUFFIX_C ".elf")
-set(CMAKE_EXECUTABLE_SUFFIX_ASM ".elf")
-set(CMAKE_TRY_COMPILE_TARGET_TYPE STATIC_LIBRARY)
-set(CMAKE_FIND_ROOT_PATH_MODE_PROGRAM NEVER)
-set(CMAKE_FIND_ROOT_PATH_MODE_LIBRARY ONLY)
-set(CMAKE_FIND_ROOT_PATH_MODE_INCLUDE ONLY)
-`;
-
-function cmakeLists(name, mcu, framework, design, clock, P) {
-  const dev = mcu.device;
-  return `# Embedded Studio tarafından üretildi. Kendi eklemelerinizi USER CODE bloklarına yazın.
-cmake_minimum_required(VERSION 3.20)
-set(CMAKE_TOOLCHAIN_FILE \${CMAKE_CURRENT_SOURCE_DIR}/cmake/arm-none-eabi.cmake CACHE FILEPATH "")
-project(${name} C ASM)
-set(CMAKE_C_STANDARD 11)
-set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
-if(NOT CMAKE_BUILD_TYPE)
-  set(CMAKE_BUILD_TYPE Debug)
-endif()
-
-set(MCU_FLAGS -mcpu=cortex-m4 -mthumb -mfpu=fpv4-sp-d16 -mfloat-abi=hard)
-
-file(GLOB APP_SOURCES CONFIGURE_DEPENDS ${P.src}/*.c ${P.drivers}/*.c)
-set(DEVICE_SOURCES
-  ${P.systemC}
-  ${P.startupDir}/${dev.startup})
-${framework === 'hal' ? `file(GLOB HAL_SOURCES ${P.hal}/Src/stm32f4xx_hal*.c)
-list(FILTER HAL_SOURCES EXCLUDE REGEX "template")` : 'set(HAL_SOURCES "")'}
-${design.rtos ? `set(RTOS_SOURCES
-  ${P.rtos}/tasks.c ${P.rtos}/queue.c ${P.rtos}/list.c ${P.rtos}/timers.c
-  ${P.rtos}/portable/GCC/ARM_CM4F/port.c ${P.rtos}/portable/MemMang/heap_4.c)` : 'set(RTOS_SOURCES "")'}
-${userBlock('Sources', 'cmake')}
-
-add_executable(\${PROJECT_NAME} \${APP_SOURCES} \${DEVICE_SOURCES} \${HAL_SOURCES} \${RTOS_SOURCES})
-
-target_include_directories(\${PROJECT_NAME} PRIVATE
-  ${P.inc}
-  ${P.drivers}
-  ${P.cmsisCore}
-  ${P.deviceInc}${framework === 'hal' ? `\n  ${P.hal}/Inc` : ''}${design.rtos ? `\n  ${P.rtos}/include\n  ${P.rtos}/portable/GCC/ARM_CM4F` : ''})
-
-target_compile_definitions(\${PROJECT_NAME} PRIVATE ${dev.define} HSE_VALUE=${Math.round(clock.config.hseMHz * 1e6)}U${framework === 'hal' ? ' USE_HAL_DRIVER' : ''})
-target_compile_options(\${PROJECT_NAME} PRIVATE \${MCU_FLAGS} -ffunction-sections -fdata-sections -g3
-  $<$<CONFIG:Debug>:-Og> $<$<CONFIG:Release>:-O2>)
-# Uyarılar sadece uygulama kodunda (HAL/FreeRTOS kaynaklarında değil)
-set_source_files_properties(\${APP_SOURCES} PROPERTIES COMPILE_OPTIONS "-Wall;-Wextra")
-target_link_options(\${PROJECT_NAME} PRIVATE \${MCU_FLAGS}
-  -T\${CMAKE_CURRENT_SOURCE_DIR}/${join(P.linkerDir, `${mcu.name}_FLASH.ld`)}
-  --specs=nano.specs --specs=nosys.specs
-  -Wl,--gc-sections -Wl,-Map=\${PROJECT_NAME}.map -Wl,--print-memory-usage -Wl,--no-warn-rwx-segments)
-
-add_custom_command(TARGET \${PROJECT_NAME} POST_BUILD
-  COMMAND \${CMAKE_OBJCOPY} -O ihex $<TARGET_FILE:\${PROJECT_NAME}> \${PROJECT_NAME}.hex
-  COMMAND \${CMAKE_OBJCOPY} -O binary $<TARGET_FILE:\${PROJECT_NAME}> \${PROJECT_NAME}.bin
-  COMMAND \${CMAKE_SIZE} $<TARGET_FILE:\${PROJECT_NAME}>)
-
-${userBlock('Targets', 'cmake')}
-`;
-}
-
 function linkerScript(mcu) {
   return `/* Embedded Studio: ${mcu.name} bağlayıcı betiği (${mcu.device.flashKB} KB flash, ${mcu.device.ramKB} KB RAM) */
 ENTRY(Reset_Handler)
@@ -730,13 +670,19 @@ SECTIONS
 `;
 }
 
+/** Windows'ta && için cmd.exe (PowerShell 5 && desteklemez) */
+const WIN_SHELL = { options: { shell: { executable: 'cmd.exe', args: ['/d', '/c'] } } };
+
 function tasksJson(name, mcu) {
-  const cfg = `-DCMAKE_TOOLCHAIN_FILE=cmake/arm-none-eabi.cmake -DCMAKE_BUILD_TYPE=Debug`;
+  const build = (type, isDefault) => ({
+    label: `Embedded Studio: Derle${isDefault ? '' : ` (${type})`}`, type: 'shell', command: cm.buildCommand(type), windows: WIN_SHELL,
+    group: isDefault ? { kind: 'build', isDefault: true } : 'build', problemMatcher: ['$gcc']
+  });
   return JSON.stringify({
     version: '2.0.0',
     tasks: [
-      { label: 'Embedded Studio: Derle', type: 'shell', command: `cmake -S . -B build -G Ninja ${cfg} && cmake --build build`, group: { kind: 'build', isDefault: true }, problemMatcher: ['$gcc'] },
-      { label: 'Embedded Studio: Yükle (ST-Link)', type: 'shell', command: `openocd -f interface/stlink.cfg -f ${mcu.device.openocdTarget} -c "program build/${name}.elf verify reset exit"`, dependsOn: 'Embedded Studio: Derle', problemMatcher: [] }
+      build('Debug', true), build('Release'), build('MinSizeRel'),
+      { label: 'Embedded Studio: Yükle (ST-Link)', type: 'shell', command: `openocd -f interface/stlink.cfg -f ${mcu.device.openocdTarget} -c "program build/debug/${name}.elf verify reset exit"`, dependsOn: 'Embedded Studio: Derle', problemMatcher: [] }
     ]
   }, null, 2) + '\n';
 }
@@ -750,7 +696,7 @@ function launchJson(name, mcu) {
       request: 'launch',
       servertype: 'openocd',
       cwd: '${workspaceFolder}',
-      executable: `build/${name}.elf`,
+      executable: `build/debug/${name}.elf`,
       configFiles: ['interface/stlink.cfg', mcu.device.openocdTarget],
       runToEntryPoint: 'main',
       preLaunchTask: 'Embedded Studio: Derle'
@@ -763,6 +709,10 @@ function agentGuide(design, lib, result, mcu, framework, name, files) {
   const userFiles = files.filter((f) => f.kind === 'user' && f.path.endsWith('.c') || f.kind === 'user' && f.path.endsWith('.h')).map((f) => `- \`${f.path}\``).join('\n');
   const label = (id) => design.instances.find((i) => i.id === id)?.label ?? id;
   const pins = result.connections.map((c) => `| ${label(c.instId)} | ${c.compPin} | ${c.mcuPin} | ${c.signal} |`).join('\n');
+  const b = cm.normalizeBuild(design.build);
+  const cmakeRow = b.cmake === 'user'
+    ? '| Derleme ayarı / ek kaynak | `CMakeLists.txt` kullanıcınındır (Embedded Studio yazmaz); üretilen ayarlar `cmake/embedded-studio.cmake` içinde, `embedded_studio_target()` ile uygulanır |'
+    : '| Ek kaynak / hedef | `CMakeLists.txt` → `Sources`, `Targets` |\n| Derleme ayarı (bayrak, -O, -D, FPU, linker) | Embedded Studio > Proje Ayarları > Derleme → `cmake/embedded-studio.cmake` (elle düzenlemeyin) |';
   return `${mdStamp()}# ${name}: yapay zekâ ajanları için proje kuralları
 
 Bu proje **Embedded Studio** (VS Code eklentisi) ile tasarlanır. Donanım tasarımı (komponentler, pinler,
@@ -796,19 +746,19 @@ başlangıç olarak oluşturuldu ve artık tamamen kullanıcınındır; Embedded
 | 1 ms periyodik iş | Kendi dosyanızda \`void bsp_systick_hook(void)\` tanımlayın (weak) |
 | UART'tan gelen byte | Kendi dosyanızda \`void bsp_uart_rx_callback(uint8_t bus, uint8_t byte)\` tanımlayın (weak) |
 | Hata işleyicileri | \`src/stm32f4xx_it.c\` (SysTick ve UART kesmeleri üretilen \`src/bsp_irq.c\`'de) |
-| Ek kaynak / derleme ayarı | \`CMakeLists.txt\` → \`Sources\`, \`Targets\` |` : `| Amaç | Dosya / blok |
+${cmakeRow}` : `| Amaç | Dosya / blok |
 |---|---|
 | Sensör verisini işlemek | \`app.c\` → \`Poll_<SENSÖR>()\` içindeki \`USER CODE BEGIN <SENSÖR>\` (okunan değişkenler kapsamda) |
 | Global değişken / yardımcı fonksiyon | \`app.c\` → \`Globals\`, \`Functions\` |
 | Başlangıç kodu | \`app.c\` → \`Init\`; \`main.c\` → \`PreInit\` / \`PostInit\` |
 | ${design.rtos ? 'Kendi FreeRTOS task\'ları | `app.c` → `Tasks` (vTaskStartScheduler öncesi xTaskCreate)' : 'Ana döngü işi | `app.c` → `Loop`'} |
 | Kesme işleyicileri | \`stm32f4xx_it.c\` → \`Handlers\` |
-| Ek kaynak / derleme ayarı | \`CMakeLists.txt\` → \`Sources\`, \`Targets\` |`}
+${cmakeRow}`}
 
 ## Donanım özeti
 
 - MCU: ${mcu.name} (${mcu.board}), altyapı: ${framework === 'hal' ? 'STM32 HAL' : 'bare-metal (CMSIS register)'}, ${design.rtos ? 'FreeRTOS' : 'RTOS yok (süper döngü)'}
-- Derleme: \`cmake -S . -B build -G Ninja -DCMAKE_TOOLCHAIN_FILE=cmake/arm-none-eabi.cmake && cmake --build build\`
+- Derleme: \`cmake --preset ${cm.presetName(b.type)} && cmake --build --preset ${cm.presetName(b.type)}\` → \`${cm.buildDir(b)}/${name}.elf\`, \`.hex\`, \`.bin\`, \`.map\` (preset'ler: debug, release, minsizerel, relwithdebinfo)
 
 | Komponent | Pin | MCU | Sinyal |
 |---|---|---|---|
@@ -837,11 +787,12 @@ ${[...rows, ...power].join('\n')}
 ## Derleme ve yükleme
 
 VS Code: \`Ctrl+Shift+B\` (Embedded Studio: Derle). Yüklemek için Embedded Studio > Debug > Yükle.
+Derleme ayarları: Embedded Studio > Proje Ayarları > Derleme (\`cmake/embedded-studio.cmake\`).
 
 \`\`\`
-cmake -S . -B build -G Ninja -DCMAKE_TOOLCHAIN_FILE=cmake/arm-none-eabi.cmake
-cmake --build build
-openocd -f interface/stlink.cfg -f ${mcu.device.openocdTarget} -c "program build/${name}.elf verify reset exit"
+cmake --preset debug            # ya da release, minsizerel, relwithdebinfo
+cmake --build --preset debug    # build/debug/${name}.elf, .hex, .bin, .map
+openocd -f interface/stlink.cfg -f ${mcu.device.openocdTarget} -c "program build/debug/${name}.elf verify reset exit"
 \`\`\`
 
 ${userBlock('Notes', 'md')}

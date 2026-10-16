@@ -132,14 +132,34 @@ Klasör yapısı kod altyapısına göre değişir:
 | HAL sürücüleri | `Drivers/STM32F4xx_HAL_Driver/` | — |
 | FreeRTOS (açıksa) | `Middlewares/FreeRTOS/` | `rtos/FreeRTOS/` |
 
-Her iki yapıda da: `CMakeLists.txt` (arm-none-eabi-gcc + Ninja), yapay zekâ ajanları için `AGENTS.md` / `CLAUDE.md` ve son tasarım değişikliğini anlatan `.embedded-studio/LAST_CHANGES.md`.
+Her iki yapıda da: CMake projesi (`CMakeLists.txt`, `CMakePresets.json`, `cmake/`), yapay zekâ ajanları için `AGENTS.md` / `CLAUDE.md` ve son tasarım değişikliğini anlatan `.embedded-studio/LAST_CHANGES.md`.
 Altyapıyı Ayarlar sekmesinden değiştirirseniz bir sonraki "Kod Üret"te kendi dosyalarınız ve USER CODE bloklarınız yeni klasörlere taşınır.
 
 **Profesyonel modda bare-metal:** `main.c` bir kez oluşturulur ve sizindir, `app.c` üretilmez. "Kod Üret" sadece sürücüleri, BSP'yi, init ve kesme dosyalarını yazar; önce bir önizleme gösterir (dosya bazında fark görünümü) ve elle değiştirdiğiniz üretilmiş dosyanın üzerine yazmaz (yeni hali `.new`). Her sürücü başlığında bu projeye göre bir kullanım örneği vardır.
 
 - Tasarım değişmediyse **hiçbir dosyaya dokunulmaz**.
 - Bir sensörü çıkarırsanız sürücüsü kaldırılır ama **ona yazdığınız kod silinmez**; dosyanın sonunda `#if 0` bloğunda durur.
-- Üretilen kod her push'ta Linux'ta **ARM GCC ile dört varyantta** (HAL / register × RTOS / RTOS'suz) `-Wall -Wextra` altında derlenir.
+- Üretilen kod her push'ta Linux'ta **ARM GCC ile** HAL / register × RTOS / RTOS'suz, Debug / Release / MinSizeRel, donanım / yazılım float varyantlarında derlenir; sıkı uyarılar ve `-Werror` altında da temiz kalır.
+
+### Derleme ayarları ve CMake
+
+Derleme ayarları **Ayarlar > Derleme** bölümündedir ve üretilen `cmake/embedded-studio.cmake` dosyasına yazılır:
+derleme tipi (Debug / Release / MinSizeRel / RelWithDebInfo) ve her biri için optimizasyon (`-O0` … `-Oz`), `-D` tanımları,
+ek include klasörleri, ek derleyici / bağlayıcı bayrakları, linker script, `--specs` (nano / nosys), FPU / float ABI,
+uyarı seviyesi ve `-Werror`, araç zinciri (arm-none-eabi-gcc klasörü; kurulu sürümleri bulur, deneysel Clang/LLVM).
+
+- **CMake'i ben yönetiyorum:** Embedded Studio `CMakeLists.txt` dosyasına hiç yazmaz; sadece `cmake/embedded-studio.cmake`
+  dosyasını günceller. Kendi `CMakeLists.txt` dosyanıza şunu eklemeniz yeterli:
+
+  ```cmake
+  include(cmake/embedded-studio.cmake)
+  add_executable(${PROJECT_NAME} main_ek.c)      # kendi kaynaklarınız
+  embedded_studio_target(${PROJECT_NAME})        # üretilen kaynaklar, include, tanımlar, bayraklar, linker, .hex/.bin/.map
+  ```
+
+  Kaynak listesini tamamen kendiniz vermek için `embedded_studio_target(<hedef> NO_SOURCES)` ve `${ES_SOURCES}` kullanın.
+- `CMakePresets.json`: `cmake --preset release && cmake --build --preset release` → `build/release/<proje>.elf`, `.hex`, `.bin`, `.map`.
+- **Derle** seçili tipi kullanır ve bitince flash / RAM kullanımını gösterir.
 
 ### Monitör
 

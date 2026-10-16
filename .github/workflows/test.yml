@@ -17,7 +17,7 @@ jobs:
       - run: node test/smoke.js
 
   build:
-    name: Üretilen kodu derle (HAL / register × RTOS)
+    name: Üretilen kodu derle (HAL / register × RTOS × derleme ayarları)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -30,5 +30,5 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/es-packs
-          key: es-packs-v1
+          key: es-packs-v2
       - run: node test/build.js ~/es-packs ~/es-build

@@ -38,11 +38,12 @@ let onWebviewMessage = null;
 const dialogQueue = [];
 const settings = {};
 const configListeners = [];
+const taskEndListeners = []; // test, görev bitişini (derleme sonrası boyut özeti) elle tetikler
 const uriOf = (p) => ({ fsPath: p, path: p, toString: () => p });
 const vscodeFake = {
   Uri: { file: uriOf, parse: (u) => ({ fsPath: u, toString: () => u }), joinPath: (u, ...parts) => uriOf(path.join(u.fsPath, ...parts)) },
   ViewColumn: { One: 1, Beside: 2 }, StatusBarAlignment: { Left: 1 }, ProgressLocation: { Notification: 15 }, TaskScope: { Workspace: 2 },
-  Task: class { constructor(def, scope, name, source, exec) { Object.assign(this, { def, scope, name, source, exec }); } },
+  Task: class { constructor(def, scope, name, source, exec) { Object.assign(this, { def, definition: def, scope, name, source, exec }); } },
   ShellExecution: class { constructor(cmd, opts) { Object.assign(this, { cmd, opts }); } },
   commands: { registerCommand: () => ({ dispose() {} }), executeCommand: async (...a) => recorded.openFolder.push(a) },
   workspace: {
@@ -70,7 +71,7 @@ const vscodeFake = {
     showTextDocument: async () => {},
     withProgress: async (o, fn) => fn({ report() {} })
   },
-  tasks: { executeTask: async (t) => recorded.tasks.push(t), onDidEndTaskProcess: () => ({ dispose() {} }) },
+  tasks: { executeTask: async (t) => recorded.tasks.push(t), onDidEndTaskProcess: (fn) => { taskEndListeners.push(fn); return { dispose() {} }; } },
   env: { language: 'tr', openExternal: async (u) => recorded.external.push(String(u.toString ? u.toString() : u)) }
 };
 const origResolve = Module._resolveFilename;
@@ -711,6 +712,52 @@ async function until(fn, ms = 8000, what = 'koşul') {
     await cdp.click('#generate');
     await until(() => fs.existsSync(P('Core/Src/app.c')) && !fs.existsSync(P('src/app.c')), 20000, 'HAL dosyaları');
     assert.ok(fs.readFileSync(P('Core/Src/app.c'), 'utf8').includes('static uint32_t benim_sayacim;'));
+    await cdp.click('#tab-design');
+  });
+  await step('Derleme ayarları: tip, -D, araç zinciri algılama; "CMake\'i ben yönetiyorum"da CMakeLists.txt\'ye dokunulmaz; Derle ve boyut özeti', async () => {
+    const P = (p) => path.join(PROJECT, p);
+    const setValue = (sel, v) => cdp.eval(`(() => { const e = document.querySelector('${sel}'); e.value = ${JSON.stringify(v)}; e.dispatchEvent(new Event('change')); })()`);
+    await cdp.click('#tab-settings');
+    await until(() => cdp.eval(`!!document.querySelector('#set-build')`), 3000, 'derleme bölümü');
+    await setValue('#set-build-type', 'Release');
+    await until(() => design().build.type === 'Release', 4000, 'Release kaydedildi');
+    await setValue('#set-defines', 'APP_VER=7\nE2E_TEST');
+    await until(() => design().build.defines.join() === 'APP_VER=7,E2E_TEST', 4000, 'tanımlar kaydedildi');
+    await cdp.click('#set-detect');
+    await until(() => cdp.eval(`document.querySelectorAll('.tc-item').length > 0 || /bulunamadı/.test(document.querySelector('#set-build').textContent)`), 15000, 'araç zinciri algılama');
+    // CMake'i ben yönetiyorum: önce kullanıcının dosyası; üretim ona dokunmamalı
+    const lists = fs.readFileSync(P('CMakeLists.txt'), 'utf8').replace('# USER CODE BEGIN Targets\n', '# USER CODE BEGIN Targets\n# benim satirim\n').replace('# Embedded Studio tarafından üretildi.', '# Benim dosyam.');
+    fs.writeFileSync(P('CMakeLists.txt'), lists);
+    await cdp.click(`(document.querySelector('input[name=set-cmake][value=user]').closest('label'))`);
+    await until(() => design().build.cmake === 'user', 4000, 'kullanıcı CMake');
+    await until(() => cdp.eval(`(document.querySelector('#set-cmake-snippet') || {}).textContent?.includes('embedded_studio_target')`), 3000, 'include örneği');
+    await cdp.shot('24b-derleme-ayarlari');
+    await cdp.click('#generate');
+    await until(() => fs.readFileSync(P('cmake/embedded-studio.cmake'), 'utf8').includes('"E2E_TEST"'), 20000, 'embedded-studio.cmake güncellendi');
+    assert.strictEqual(fs.readFileSync(P('CMakeLists.txt'), 'utf8'), lists, 'CMakeLists.txt aynen kalmalı');
+    // Derle: seçili tip, Windows'ta cmd.exe; gerçek derleme + görev bitişi → boyut özeti
+    await cdp.click('#tab-debug');
+    await cdp.click(`([...document.querySelectorAll('#debug button')].find((b) => b.textContent === 'Derle'))`);
+    await until(() => recorded.tasks.length && recorded.tasks[recorded.tasks.length - 1].def.kind === 'build', 3000, 'derleme görevi');
+    const task = recorded.tasks[recorded.tasks.length - 1];
+    assert.ok(task.exec.cmd.includes('-B build/release') && task.exec.cmd.includes('-DCMAKE_BUILD_TYPE=Release'), task.exec.cmd);
+    if (process.platform === 'win32') assert.strictEqual(task.exec.opts.executable, 'cmd.exe');
+    execSync(task.exec.cmd, { cwd: PROJECT, stdio: 'pipe', shell: process.platform === 'win32' ? 'cmd.exe' : undefined });
+    for (const x of ['elf', 'hex', 'bin', 'map']) assert.ok(fs.existsSync(P(`build/release/demo_proje.${x}`)), x);
+    taskEndListeners.forEach((fn) => fn({ execution: { task }, exitCode: 0 }));
+    await until(() => recorded.info.some((m) => m.startsWith('Derlendi (Release): Flash')), 8000, 'boyut özeti bildirimi');
+    await cdp.click('#tab-settings');
+    await until(() => cdp.eval(`!!document.querySelector('#set-size .bar > div')`), 3000, 'ayarlarda boyut çubukları');
+    await cdp.eval(`document.querySelector('#set-size').scrollIntoView({ block: 'center' })`);
+    await cdp.shot('24c-boyut-ozeti');
+    // Geri al: Embedded Studio yönetir, Debug, tanım yok
+    await cdp.click(`(document.querySelector('input[name=set-cmake][value=tool]').closest('label'))`);
+    await setValue('#set-build-type', 'Debug');
+    await setValue('#set-defines', '');
+    await until(() => design().build.cmake === 'tool' && design().build.type === 'Debug' && !design().build.defines.length, 4000, 'varsayılana döndü');
+    await cdp.click('#generate');
+    await until(() => fs.readFileSync(P('CMakeLists.txt'), 'utf8').includes('# Embedded Studio tarafından üretildi.'), 20000, 'CMakeLists.txt yeniden yönetiliyor');
+    assert.ok(fs.readFileSync(P('CMakeLists.txt'), 'utf8').includes('# benim satirim'), 'USER CODE bloğu korunmalı');
     await cdp.click('#tab-design');
   });
   await step('Çalışma modu: Profesyonel sekme sırası, kısayollar, çizimsiz kartlar; Acemi\'ye dönüş', async () => {

@@ -1,0 +1,319 @@
+// @ts-check
+/**
+ * Derleme yapılandırması (ES-105): tasarımdaki `build` ayarlarından CMake dosyalarını üretir.
+ *
+ *  cmake/embedded-studio.cmake  her üretimde yazılır: kaynaklar, include yolları, tanımlar, bayraklar, linker,
+ *                               .hex/.bin/.map + boyut. embedded_studio_target(<hedef>) ile bir hedefe uygulanır.
+ *  cmake/arm-none-eabi.cmake    araç zinciri (GCC yolu ya da deneysel Clang/LLVM)
+ *  CMakePresets.json            Debug / Release / MinSizeRel / RelWithDebInfo → build/<preset>/
+ *  CMakeLists.txt               'tool': Embedded Studio yönetir (USER CODE bloklu, ince)
+ *                               'user': kullanıcı yönetir; sadece yoksa bir başlangıç dosyası oluşturulur
+ */
+const { join } = require('./layout');
+
+const BUILD_TYPES = ['Debug', 'Release', 'MinSizeRel', 'RelWithDebInfo'];
+const OPT_LEVELS = ['-O0', '-Og', '-O1', '-O2', '-O3', '-Os', '-Oz'];
+const WARNINGS = {
+  off: [],
+  normal: ['-Wall', '-Wextra'],
+  strict: ['-Wall', '-Wextra', '-Wshadow', '-Wdouble-promotion', '-Wformat=2', '-Wundef', '-Wnull-dereference']
+};
+
+const DEFAULT_BUILD = {
+  cmake: 'tool',
+  type: 'Debug',
+  opt: { Debug: '-Og', Release: '-O2', MinSizeRel: '-Os', RelWithDebInfo: '-O2' },
+  fpu: 'hard',
+  specs: { nano: true, nosys: true },
+  warnings: 'normal',
+  werror: false,
+  defines: [],
+  includes: [],
+  cflags: '',
+  ldflags: '',
+  linkerScript: '',
+  toolchain: { compiler: 'gcc', gccPath: '', llvmPath: '' }
+};
+
+const lines = (v) => (Array.isArray(v) ? v : String(v || '').split(/\r?\n/)).map((s) => String(s).trim()).filter(Boolean);
+const pick = (v, allowed, def) => (allowed.includes(v) ? v : def);
+
+/** Eksik/bozuk ayarları varsayılanlarla tamamlar (eski tasarımlarda `build` yoktur). */
+function normalizeBuild(b) {
+  const s = b && typeof b === 'object' ? b : {};
+  const D = DEFAULT_BUILD;
+  const opt = {};
+  for (const t of BUILD_TYPES) opt[t] = pick(s.opt && s.opt[t], OPT_LEVELS, D.opt[t]);
+  const tc = s.toolchain || {};
+  return {
+    cmake: s.cmake === 'user' ? 'user' : 'tool',
+    type: pick(s.type, BUILD_TYPES, D.type),
+    opt,
+    fpu: pick(s.fpu, ['hard', 'softfp', 'soft'], D.fpu),
+    specs: { nano: s.specs ? s.specs.nano !== false : true, nosys: s.specs ? s.specs.nosys !== false : true },
+    warnings: pick(s.warnings, Object.keys(WARNINGS), D.warnings),
+    werror: !!s.werror,
+    defines: lines(s.defines),
+    includes: lines(s.includes),
+    cflags: String(s.cflags || '').trim(),
+    ldflags: String(s.ldflags || '').trim(),
+    linkerScript: String(s.linkerScript || '').trim(),
+    toolchain: {
+      compiler: tc.compiler === 'clang' ? 'clang' : 'gcc',
+      gccPath: String(tc.gccPath || '').trim(),
+      llvmPath: String(tc.llvmPath || '').trim()
+    }
+  };
+}
+
+/** CMake preset adı ve derleme klasörü: build/debug, build/release … */
+const presetName = (type) => type.toLowerCase();
+const buildDir = (b) => `build/${presetName(normalizeBuild(b).type)}`;
+/** Projeye göre .elf yolu (proje köküne göre). */
+const elfRel = (design) => `${buildDir(design.build)}/${design.project.name}.elf`;
+
+/** arm-none-eabi-<araç> komutu (seçilen GCC klasörüne göre). */
+function gccTool(b, tool) {
+  const dir = normalizeBuild(b).toolchain.gccPath;
+  const exe = `arm-none-eabi-${tool}${process.platform === 'win32' ? '.exe' : ''}`;
+  return dir ? require('path').join(dir, exe) : `arm-none-eabi-${tool}`;
+}
+
+/** CMake tırnaklı metni */
+const q = (s) => `"${String(s).replace(/\\/g, '/').replace(/"/g, '\\"')}"`;
+/** CMake tırnaklı metni (yol olmayan: tanım, bayrak) */
+const qs = (s) => `"${String(s).replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`;
+const fwd = (s) => String(s).replace(/\\/g, '/');
+/** Proje köküne göre yol → ${ES_ROOT}/yol (mutlak yollar olduğu gibi) */
+const rootPath = (p) => (/^([A-Za-z]:)?[\\/]/.test(p) ? fwd(p) : `\${ES_ROOT}/${fwd(p).replace(/^\.\//, '')}`);
+const splitFlags = (s) => String(s || '').split(/\s+/).filter(Boolean);
+
+function mcuFlags(b) {
+  const fpu = { hard: ['-mfpu=fpv4-sp-d16', '-mfloat-abi=hard'], softfp: ['-mfpu=fpv4-sp-d16', '-mfloat-abi=softfp'], soft: ['-mfloat-abi=soft'] }[b.fpu];
+  return ['-mcpu=cortex-m4', '-mthumb', ...fpu];
+}
+
+/** FreeRTOS portu: FPU kullanılmıyorsa ARM_CM4F portu derlenmez (FPU bağlamı kaydeder), ARM_CM3 kullanılır. */
+const rtosPort = (b) => (normalizeBuild(b).fpu === 'soft' ? 'ARM_CM3' : 'ARM_CM4F');
+
+/**
+ * cmake/embedded-studio.cmake
+ * @param {{ name: string, mcu: any, framework: 'hal'|'register', rtos: boolean, hseHz: number, P: any, build: any }} o
+ */
+function cmakeModule(o) {
+  const b = normalizeBuild(o.build);
+  const { P, mcu, framework } = o;
+  const dev = mcu.device;
+  const port = rtosPort(b);
+  const linker = b.linkerScript ? rootPath(b.linkerScript) : `\${ES_ROOT}/${join(P.linkerDir, `${mcu.name}_FLASH.ld`)}`;
+  const defines = [dev.define, `HSE_VALUE=${o.hseHz}U`, ...(framework === 'hal' ? ['USE_HAL_DRIVER'] : []), ...b.defines];
+  const warn = [...WARNINGS[b.warnings], ...(b.werror ? ['-Werror'] : [])];
+  const specs = [b.specs.nano && '--specs=nano.specs', b.specs.nosys && '--specs=nosys.specs'].filter(Boolean);
+  const list = (items, ind = '  ') => items.map((s) => `${ind}${s}`).join('\n');
+  return `# Embedded Studio tarafından üretildi: ${o.name} / ${mcu.name}. Bu dosya her "Kod Üret"te yeniden yazılır.
+# Ayarları değiştirmek için: Embedded Studio > Proje Ayarları > Derleme (ya da kendi CMakeLists.txt'nizde bu
+# değişkenleri embedded_studio_target() çağrısından sonra kendiniz ekleyin).
+#
+# Kendi CMakeLists.txt dosyanızda kullanım:
+#   cmake_minimum_required(VERSION 3.20)
+#   set(CMAKE_TOOLCHAIN_FILE \${CMAKE_CURRENT_SOURCE_DIR}/cmake/arm-none-eabi.cmake CACHE FILEPATH "")
+#   project(${o.name} C ASM)
+#   include(cmake/embedded-studio.cmake)
+#   add_executable(\${PROJECT_NAME} <kendi kaynaklarınız>)
+#   embedded_studio_target(\${PROJECT_NAME})            # Embedded Studio kaynaklarını ve ayarlarını ekler
+#   # ya da: embedded_studio_target(\${PROJECT_NAME} NO_SOURCES) ve kaynakları \${ES_SOURCES} ile kendiniz verin
+#
+# Tanımlanan değişkenler: ES_SOURCES (= ES_APP_SOURCES + ES_VENDOR_SOURCES), ES_INCLUDE_DIRS, ES_SYSTEM_INCLUDE_DIRS,
+# ES_DEFINES, ES_MCU_FLAGS, ES_C_FLAGS, ES_WARNINGS, ES_LINKER_SCRIPT, ES_LINK_FLAGS.
+include_guard(GLOBAL)
+get_filename_component(ES_ROOT "\${CMAKE_CURRENT_LIST_DIR}/.." ABSOLUTE)
+
+if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
+  set(CMAKE_BUILD_TYPE ${b.type} CACHE STRING "Debug, Release, MinSizeRel, RelWithDebInfo" FORCE)
+endif()
+set(CMAKE_C_STANDARD 11)
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
+
+set(ES_MCU_FLAGS ${mcuFlags(b).join(' ')})
+
+# Uygulama kaynakları (kendi src/*.c dosyalarınız otomatik toplanır)
+file(GLOB ES_APP_SOURCES CONFIGURE_DEPENDS \${ES_ROOT}/${P.src}/*.c \${ES_ROOT}/${P.drivers}/*.c)
+# Üretici kaynakları: uyarıları kapalı derlenir
+set(ES_VENDOR_SOURCES
+  \${ES_ROOT}/${P.systemC}
+  \${ES_ROOT}/${P.startupDir}/${dev.startup})
+${framework === 'hal' ? `file(GLOB ES_HAL_SOURCES \${ES_ROOT}/${P.hal}/Src/stm32f4xx_hal*.c)
+list(FILTER ES_HAL_SOURCES EXCLUDE REGEX "template")
+list(APPEND ES_VENDOR_SOURCES \${ES_HAL_SOURCES})
+` : ''}${o.rtos ? `list(APPEND ES_VENDOR_SOURCES
+  \${ES_ROOT}/${P.rtos}/tasks.c \${ES_ROOT}/${P.rtos}/queue.c \${ES_ROOT}/${P.rtos}/list.c \${ES_ROOT}/${P.rtos}/timers.c
+  \${ES_ROOT}/${P.rtos}/portable/GCC/${port}/port.c \${ES_ROOT}/${P.rtos}/portable/MemMang/heap_4.c)
+` : ''}set(ES_SOURCES \${ES_APP_SOURCES} \${ES_VENDOR_SOURCES})
+
+set(ES_INCLUDE_DIRS
+${list([`\${ES_ROOT}/${P.inc}`, `\${ES_ROOT}/${P.drivers}`, ...b.includes.map(rootPath)].map((p) => (p.includes(' ') ? q(p) : p)))})
+# Üretici başlıkları SYSTEM: uyarı seviyesi onları etkilemez
+set(ES_SYSTEM_INCLUDE_DIRS
+${list([`\${ES_ROOT}/${P.cmsisCore}`, `\${ES_ROOT}/${P.deviceInc}`, ...(framework === 'hal' ? [`\${ES_ROOT}/${P.hal}/Inc`] : []), ...(o.rtos ? [`\${ES_ROOT}/${P.rtos}/include`, `\${ES_ROOT}/${P.rtos}/portable/GCC/${port}`] : [])])})
+set(ES_DEFINES
+${list(defines.map(qs))})
+set(ES_C_FLAGS -ffunction-sections -fdata-sections -g3${b.cflags ? ' ' + splitFlags(b.cflags).map(qs).join(' ') : ''})
+set(ES_OPT_FLAGS
+  $<$<CONFIG:Debug>:${b.opt.Debug}> $<$<CONFIG:Release>:${b.opt.Release}>
+  $<$<CONFIG:MinSizeRel>:${b.opt.MinSizeRel}> $<$<CONFIG:RelWithDebInfo>:${b.opt.RelWithDebInfo}>)
+set(ES_WARNINGS${warn.length ? ' ' + warn.join(' ') : ''})
+set(ES_LINKER_SCRIPT ${q(linker)})
+set(ES_LINK_FLAGS${specs.length ? ' ' + specs.join(' ') : ''} -Wl,--gc-sections -Wl,--print-memory-usage -Wl,--no-warn-rwx-segments${b.ldflags ? ' ' + splitFlags(b.ldflags).map(qs).join(' ') : ''})
+
+# Hedefe uygular: kaynaklar (NO_SOURCES verilmezse), include, tanımlar, bayraklar, linker; derleme sonrası .hex, .bin, .map ve boyut.
+function(embedded_studio_target target)
+  cmake_parse_arguments(ES "NO_SOURCES" "" "" \${ARGN})
+  if(NOT ES_NO_SOURCES)
+    target_sources(\${target} PRIVATE \${ES_SOURCES})
+  endif()
+  target_include_directories(\${target} PRIVATE \${ES_INCLUDE_DIRS})
+  target_include_directories(\${target} SYSTEM PRIVATE \${ES_SYSTEM_INCLUDE_DIRS})
+  target_compile_definitions(\${target} PRIVATE \${ES_DEFINES})
+  target_compile_options(\${target} PRIVATE \${ES_MCU_FLAGS} \${ES_C_FLAGS} \${ES_OPT_FLAGS} \${ES_WARNINGS})
+  set_source_files_properties(\${ES_VENDOR_SOURCES} PROPERTIES COMPILE_OPTIONS "-w")
+  target_link_options(\${target} PRIVATE \${ES_MCU_FLAGS} -T\${ES_LINKER_SCRIPT} \${ES_LINK_FLAGS}
+    -Wl,-Map=$<TARGET_FILE_DIR:\${target}>/\${target}.map)
+  set_property(TARGET \${target} APPEND PROPERTY LINK_DEPENDS \${ES_LINKER_SCRIPT})
+  add_custom_command(TARGET \${target} POST_BUILD
+    COMMAND \${CMAKE_OBJCOPY} -O ihex $<TARGET_FILE:\${target}> $<TARGET_FILE_DIR:\${target}>/\${target}.hex
+    COMMAND \${CMAKE_OBJCOPY} -O binary $<TARGET_FILE:\${target}> $<TARGET_FILE_DIR:\${target}>/\${target}.bin
+    COMMAND \${CMAKE_SIZE} $<TARGET_FILE:\${target}>
+    VERBATIM)
+endfunction()
+`;
+}
+
+/** cmake/arm-none-eabi.cmake */
+function toolchainFile(build) {
+  const b = normalizeBuild(build);
+  const tc = b.toolchain;
+  return `# Embedded Studio: araç zinciri (Proje Ayarları > Derleme > Araç zinciri). Her "Kod Üret"te yeniden yazılır.
+# Klasör boşsa araçlar PATH'te aranır. Makineye özel yol için projeyi değiştirmeden:
+#   ES_GCC_DIR${tc.compiler === 'clang' ? ' / ES_LLVM_DIR' : ''} ortam değişkeni ya da cmake -DES_GCC_DIR=<arm-none-eabi bin klasörü>
+set(CMAKE_SYSTEM_NAME Generic)
+set(CMAKE_SYSTEM_PROCESSOR arm)
+
+macro(es_tool_dir var default)
+  if(NOT ${'$'}{var})
+    if(DEFINED ENV{${'$'}{var}})
+      set(${'$'}{var} "$ENV{${'$'}{var}}")
+    else()
+      set(${'$'}{var} "${'$'}{default}")
+    endif()
+  endif()
+  file(TO_CMAKE_PATH "${'$'}{${'$'}{var}}" ${'$'}{var})
+endmacro()
+es_tool_dir(ES_GCC_DIR ${q(tc.gccPath)})
+list(APPEND CMAKE_TRY_COMPILE_PLATFORM_VARIABLES ES_GCC_DIR${tc.compiler === 'clang' ? ' ES_LLVM_DIR' : ''})
+set(ES_EXE "")
+if(CMAKE_HOST_WIN32)
+  set(ES_EXE ".exe")
+endif()
+if(ES_GCC_DIR)
+  set(ES_GCC "${'$'}{ES_GCC_DIR}/arm-none-eabi-")
+else()
+  set(ES_GCC "arm-none-eabi-")
+endif()
+
+${tc.compiler === 'clang' ? `# Clang/LLVM (deneysel): C kodu clang ile derlenir; assembler, bağlayıcı ve C kütüphanesi (newlib) arm-none-eabi-gcc'den gelir.
+es_tool_dir(ES_LLVM_DIR ${q(tc.llvmPath)})
+if(ES_LLVM_DIR)
+  set(CMAKE_C_COMPILER "${'$'}{ES_LLVM_DIR}/clang${'$'}{ES_EXE}")
+else()
+  set(CMAKE_C_COMPILER clang)
+endif()
+set(CMAKE_C_COMPILER_TARGET arm-none-eabi)
+execute_process(COMMAND "${'$'}{ES_GCC}gcc${'$'}{ES_EXE}" -mcpu=cortex-m4 -mthumb -print-sysroot OUTPUT_VARIABLE ES_GCC_SYSROOT OUTPUT_STRIP_TRAILING_WHITESPACE)
+file(TO_CMAKE_PATH "${'$'}{ES_GCC_SYSROOT}" ES_GCC_SYSROOT)
+set(CMAKE_SYSROOT "${'$'}{ES_GCC_SYSROOT}")
+set(CMAKE_C_LINK_EXECUTABLE "\\"${'$'}{ES_GCC}gcc${'$'}{ES_EXE}\\" <CMAKE_C_LINK_FLAGS> <LINK_FLAGS> <OBJECTS> -o <TARGET> <LINK_LIBRARIES>")` : `set(CMAKE_C_COMPILER "${'$'}{ES_GCC}gcc${'$'}{ES_EXE}")`}
+set(CMAKE_ASM_COMPILER "${'$'}{ES_GCC}gcc${'$'}{ES_EXE}")
+set(CMAKE_OBJCOPY "${'$'}{ES_GCC}objcopy${'$'}{ES_EXE}")
+set(CMAKE_SIZE "${'$'}{ES_GCC}size${'$'}{ES_EXE}")
+set(CMAKE_EXECUTABLE_SUFFIX ".elf")
+set(CMAKE_EXECUTABLE_SUFFIX_C ".elf")
+set(CMAKE_EXECUTABLE_SUFFIX_ASM ".elf")
+set(CMAKE_TRY_COMPILE_TARGET_TYPE STATIC_LIBRARY)
+set(CMAKE_FIND_ROOT_PATH_MODE_PROGRAM NEVER)
+set(CMAKE_FIND_ROOT_PATH_MODE_LIBRARY ONLY)
+set(CMAKE_FIND_ROOT_PATH_MODE_INCLUDE ONLY)
+`;
+}
+
+/** CMakePresets.json: her derleme tipi ayrı klasörde (build/debug, build/release …). */
+function cmakePresets() {
+  const configure = [
+    {
+      name: 'base', hidden: true, generator: 'Ninja',
+      binaryDir: '${sourceDir}/build/${presetName}',
+      toolchainFile: '${sourceDir}/cmake/arm-none-eabi.cmake',
+      cacheVariables: { CMAKE_EXPORT_COMPILE_COMMANDS: 'ON' }
+    },
+    ...BUILD_TYPES.map((t) => ({ name: presetName(t), displayName: t, inherits: 'base', cacheVariables: { CMAKE_BUILD_TYPE: t } }))
+  ];
+  return JSON.stringify({
+    version: 3,
+    cmakeMinimumRequired: { major: 3, minor: 21, patch: 0 },
+    configurePresets: configure,
+    buildPresets: BUILD_TYPES.map((t) => ({ name: presetName(t), displayName: t, configurePreset: presetName(t) }))
+  }, null, 2) + '\n';
+}
+
+/** Embedded Studio'nun yönettiği CMakeLists.txt ('user' türü: USER CODE blokları korunur). */
+function cmakeListsManaged(name, userBlock) {
+  return `# Embedded Studio tarafından üretildi. Kendi eklemelerinizi USER CODE bloklarına yazın.
+# Derleme ayarları (bayraklar, -O, -D, include, linker, FPU, araç zinciri) cmake/embedded-studio.cmake içindedir;
+# Embedded Studio > Proje Ayarları > Derleme'den değiştirin. Bu dosyayı tamamen kendiniz yönetmek için orada
+# "CMake'i ben yönetiyorum" seçin.
+cmake_minimum_required(VERSION 3.20)
+set(CMAKE_TOOLCHAIN_FILE \${CMAKE_CURRENT_SOURCE_DIR}/cmake/arm-none-eabi.cmake CACHE FILEPATH "")
+project(${name} C ASM)
+include(cmake/embedded-studio.cmake)
+
+# Ek kaynaklar: list(APPEND APP_SOURCES yol/dosya.c)
+set(APP_SOURCES "")
+${userBlock('Sources', 'cmake')}
+
+add_executable(\${PROJECT_NAME} \${APP_SOURCES})
+embedded_studio_target(\${PROJECT_NAME})
+
+${userBlock('Targets', 'cmake')}
+`;
+}
+
+/** "CMake'i ben yönetiyorum": CMakeLists.txt yoksa bir kez oluşturulan başlangıç dosyası. */
+function cmakeListsStarter(name) {
+  return `# Embedded Studio başlangıç dosyası. Bu CMakeLists.txt sizindir; Embedded Studio buna bir daha yazmaz.
+# Embedded Studio'nun ürettiği kaynaklar ve derleme ayarları cmake/embedded-studio.cmake içindedir
+# (her "Kod Üret"te yenilenir). Açıklama ve kullanım için o dosyanın başına bakın.
+cmake_minimum_required(VERSION 3.20)
+set(CMAKE_TOOLCHAIN_FILE \${CMAKE_CURRENT_SOURCE_DIR}/cmake/arm-none-eabi.cmake CACHE FILEPATH "")
+project(${name} C ASM)
+include(cmake/embedded-studio.cmake)
+
+add_executable(\${PROJECT_NAME})
+embedded_studio_target(\${PROJECT_NAME})
+`;
+}
+
+/** CMakeLists.txt'ye eklenecek satırlar (arayüzde gösterilir). */
+const includeSnippet = (name) => `include(cmake/embedded-studio.cmake)
+add_executable(\${PROJECT_NAME})   # project(${name} C ASM) sonrası
+embedded_studio_target(\${PROJECT_NAME})`;
+
+/** Derleme komutu (VS Code görevi ve README için). */
+function buildCommand(type) {
+  const p = presetName(type);
+  return `cmake -S . -B build/${p} -G Ninja -DCMAKE_TOOLCHAIN_FILE=cmake/arm-none-eabi.cmake -DCMAKE_BUILD_TYPE=${type} && cmake --build build/${p}`;
+}
+
+module.exports = {
+  BUILD_TYPES, OPT_LEVELS, WARNINGS, DEFAULT_BUILD,
+  normalizeBuild, presetName, buildDir, elfRel, gccTool, rtosPort, mcuFlags,
+  cmakeModule, toolchainFile, cmakePresets, cmakeListsManaged, cmakeListsStarter, includeSnippet, buildCommand
+};
