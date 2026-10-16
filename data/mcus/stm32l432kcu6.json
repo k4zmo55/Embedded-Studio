@@ -1,0 +1,534 @@
+{
+  "id": "stm32l432kcu6",
+  "name": "STM32L432KCU6",
+  "board": "Nucleo-L432KC",
+  "family": "STM32L4",
+  "core": "Cortex-M4F",
+  "flashKB": 256,
+  "ramKB": 64,
+  "maxClockMHz": 80,
+  "voltage": 3.3,
+  "halHeader": "stm32l4xx_hal.h",
+  "source": "STM32_open_pin_data (© STMicroelectronics, BSD-3-Clause) ve CMSIS cihaz başlıklarından tools/mcu/gen-mcus.js ile üretildi. Saat ağacı ve kart bilgisi tools/mcu/targets.js. Kartta doğrulanmadı: üretim öncesi datasheet ile kontrol edin.",
+  "peripherals": {
+    "ADC1": {
+      "type": "adc",
+      "bus": "AHB",
+      "enr": "AHB2ENR",
+      "enrBit": "RCC_AHB2ENR_ADCEN",
+      "common": "ADC1_COMMON"
+    },
+    "I2C1": {
+      "type": "i2c",
+      "bus": "APB1",
+      "enr": "APB1ENR1",
+      "enrBit": "RCC_APB1ENR1_I2C1EN"
+    },
+    "I2C3": {
+      "type": "i2c",
+      "bus": "APB1",
+      "enr": "APB1ENR1",
+      "enrBit": "RCC_APB1ENR1_I2C3EN"
+    },
+    "SPI1": {
+      "type": "spi",
+      "bus": "APB2",
+      "enr": "APB2ENR",
+      "enrBit": "RCC_APB2ENR_SPI1EN"
+    },
+    "SPI3": {
+      "type": "spi",
+      "bus": "APB1",
+      "enr": "APB1ENR1",
+      "enrBit": "RCC_APB1ENR1_SPI3EN"
+    },
+    "TIM1": {
+      "type": "pwm",
+      "bus": "APB2",
+      "enr": "APB2ENR",
+      "enrBit": "RCC_APB2ENR_TIM1EN"
+    },
+    "TIM2": {
+      "type": "pwm",
+      "bus": "APB1",
+      "enr": "APB1ENR1",
+      "enrBit": "RCC_APB1ENR1_TIM2EN"
+    },
+    "TIM15": {
+      "type": "pwm",
+      "bus": "APB2",
+      "enr": "APB2ENR",
+      "enrBit": "RCC_APB2ENR_TIM15EN"
+    },
+    "TIM16": {
+      "type": "pwm",
+      "bus": "APB2",
+      "enr": "APB2ENR",
+      "enrBit": "RCC_APB2ENR_TIM16EN"
+    },
+    "USART1": {
+      "type": "uart",
+      "bus": "APB2",
+      "enr": "APB2ENR",
+      "enrBit": "RCC_APB2ENR_USART1EN",
+      "irq": "USART1"
+    },
+    "USART2": {
+      "type": "uart",
+      "bus": "APB1",
+      "enr": "APB1ENR1",
+      "enrBit": "RCC_APB1ENR1_USART2EN",
+      "irq": "USART2"
+    }
+  },
+  "pins": [
+    {
+      "name": "PA0",
+      "side": "left",
+      "functions": [
+        {
+          "signal": "ADC1_IN5"
+        },
+        {
+          "signal": "TIM2_CH1",
+          "af": 1
+        }
+      ]
+    },
+    {
+      "name": "PA1",
+      "side": "left",
+      "functions": [
+        {
+          "signal": "ADC1_IN6"
+        },
+        {
+          "signal": "SPI1_SCK",
+          "af": 5
+        },
+        {
+          "signal": "TIM2_CH2",
+          "af": 1
+        }
+      ]
+    },
+    {
+      "name": "PA2",
+      "side": "left",
+      "functions": [
+        {
+          "signal": "ADC1_IN7"
+        },
+        {
+          "signal": "TIM15_CH1",
+          "af": 14
+        },
+        {
+          "signal": "TIM2_CH3",
+          "af": 1
+        },
+        {
+          "signal": "USART2_TX",
+          "af": 7
+        }
+      ],
+      "note": "ST-LINK VCP TX (USART2)"
+    },
+    {
+      "name": "PA3",
+      "side": "left",
+      "functions": [
+        {
+          "signal": "ADC1_IN8"
+        },
+        {
+          "signal": "TIM15_CH2",
+          "af": 14
+        },
+        {
+          "signal": "TIM2_CH4",
+          "af": 1
+        },
+        {
+          "signal": "USART2_RX",
+          "af": 7
+        }
+      ]
+    },
+    {
+      "name": "PA4",
+      "side": "left",
+      "functions": [
+        {
+          "signal": "ADC1_IN9"
+        }
+      ]
+    },
+    {
+      "name": "PA5",
+      "side": "left",
+      "functions": [
+        {
+          "signal": "ADC1_IN10"
+        },
+        {
+          "signal": "SPI1_SCK",
+          "af": 5
+        },
+        {
+          "signal": "TIM2_CH1",
+          "af": 1
+        }
+      ]
+    },
+    {
+      "name": "PA6",
+      "side": "left",
+      "functions": [
+        {
+          "signal": "ADC1_IN11"
+        },
+        {
+          "signal": "SPI1_MISO",
+          "af": 5
+        },
+        {
+          "signal": "TIM16_CH1",
+          "af": 14
+        }
+      ]
+    },
+    {
+      "name": "PA7",
+      "side": "left",
+      "functions": [
+        {
+          "signal": "ADC1_IN12"
+        },
+        {
+          "signal": "I2C3_SCL",
+          "af": 4
+        },
+        {
+          "signal": "SPI1_MOSI",
+          "af": 5
+        }
+      ]
+    },
+    {
+      "name": "PA8",
+      "side": "left",
+      "functions": [
+        {
+          "signal": "TIM1_CH1",
+          "af": 1
+        }
+      ]
+    },
+    {
+      "name": "PA9",
+      "side": "left",
+      "functions": [
+        {
+          "signal": "I2C1_SCL",
+          "af": 4
+        },
+        {
+          "signal": "TIM1_CH2",
+          "af": 1
+        },
+        {
+          "signal": "USART1_TX",
+          "af": 7
+        }
+      ]
+    },
+    {
+      "name": "PA10",
+      "side": "left",
+      "functions": [
+        {
+          "signal": "I2C1_SDA",
+          "af": 4
+        },
+        {
+          "signal": "TIM1_CH3",
+          "af": 1
+        },
+        {
+          "signal": "USART1_RX",
+          "af": 7
+        }
+      ]
+    },
+    {
+      "name": "PA11",
+      "side": "left",
+      "functions": [
+        {
+          "signal": "SPI1_MISO",
+          "af": 5
+        },
+        {
+          "signal": "TIM1_CH4",
+          "af": 1
+        }
+      ]
+    },
+    {
+      "name": "PA12",
+      "side": "left",
+      "functions": [
+        {
+          "signal": "SPI1_MOSI",
+          "af": 5
+        }
+      ]
+    },
+    {
+      "name": "PA13",
+      "side": "right",
+      "functions": [],
+      "reserved": "SWD SWDIO"
+    },
+    {
+      "name": "PA14",
+      "side": "right",
+      "functions": [],
+      "reserved": "SWD SWCLK"
+    },
+    {
+      "name": "PA15",
+      "side": "right",
+      "functions": [
+        {
+          "signal": "TIM2_CH1",
+          "af": 1
+        },
+        {
+          "signal": "USART2_RX",
+          "af": 3
+        }
+      ],
+      "note": "ST-LINK VCP RX (USART2)"
+    },
+    {
+      "name": "PB0",
+      "side": "right",
+      "functions": [
+        {
+          "signal": "ADC1_IN15"
+        }
+      ]
+    },
+    {
+      "name": "PB1",
+      "side": "right",
+      "functions": [
+        {
+          "signal": "ADC1_IN16"
+        }
+      ]
+    },
+    {
+      "name": "PB3",
+      "side": "right",
+      "functions": [
+        {
+          "signal": "SPI1_SCK",
+          "af": 5
+        },
+        {
+          "signal": "SPI3_SCK",
+          "af": 6
+        },
+        {
+          "signal": "TIM2_CH2",
+          "af": 1
+        }
+      ],
+      "note": "LD3 kart LED'i"
+    },
+    {
+      "name": "PB4",
+      "side": "right",
+      "functions": [
+        {
+          "signal": "I2C3_SDA",
+          "af": 4
+        },
+        {
+          "signal": "SPI1_MISO",
+          "af": 5
+        },
+        {
+          "signal": "SPI3_MISO",
+          "af": 6
+        }
+      ]
+    },
+    {
+      "name": "PB5",
+      "side": "right",
+      "functions": [
+        {
+          "signal": "SPI1_MOSI",
+          "af": 5
+        },
+        {
+          "signal": "SPI3_MOSI",
+          "af": 6
+        }
+      ]
+    },
+    {
+      "name": "PB6",
+      "side": "right",
+      "functions": [
+        {
+          "signal": "I2C1_SCL",
+          "af": 4
+        },
+        {
+          "signal": "USART1_TX",
+          "af": 7
+        }
+      ]
+    },
+    {
+      "name": "PB7",
+      "side": "right",
+      "functions": [
+        {
+          "signal": "I2C1_SDA",
+          "af": 4
+        },
+        {
+          "signal": "USART1_RX",
+          "af": 7
+        }
+      ]
+    },
+    {
+      "name": "PC14",
+      "side": "right",
+      "functions": [],
+      "reserved": "LSE OSC32_IN"
+    },
+    {
+      "name": "PC15",
+      "side": "right",
+      "functions": [],
+      "reserved": "LSE OSC32_OUT"
+    },
+    {
+      "name": "PH3",
+      "side": "right",
+      "functions": []
+    }
+  ],
+  "datasheet": "https://www.st.com/resource/en/datasheet/stm32l432kc.pdf",
+  "referenceManual": "https://www.st.com/resource/en/reference_manual/rm0394-stm32l41xxx42xxx43xxx44xxx45xxx46xxx-advanced-armbased-32bit-mcus-stmicroelectronics.pdf",
+  "svdUrl": "https://raw.githubusercontent.com/cmsis-svd/cmsis-svd-data/main/data/STMicro/STM32L4x2.svd",
+  "device": {
+    "define": "STM32L432xx",
+    "cmsisHeader": "stm32l4xx.h",
+    "startup": "startup_stm32l432xx.s",
+    "flashKB": 256,
+    "ramKB": 64,
+    "openocdTarget": "target/stm32l4x.cfg",
+    "family": "l4",
+    "gpioEnr": {
+      "reg": "AHB2ENR",
+      "bit": "RCC_AHB2ENR_GPIO{P}EN"
+    }
+  },
+  "clock": {
+    "model": "mnr",
+    "hsiMHz": 16,
+    "hseMHz": 8,
+    "hseRange": [
+      4,
+      48
+    ],
+    "limits": {
+      "sysclk": 80,
+      "hclk": 80,
+      "apb1": 80,
+      "apb2": 80,
+      "vcoIn": [
+        4,
+        16
+      ],
+      "vcoOut": [
+        64,
+        344
+      ]
+    },
+    "pllM": [
+      1,
+      8
+    ],
+    "pllN": [
+      8,
+      86
+    ],
+    "pllR": [
+      2,
+      4,
+      6,
+      8
+    ],
+    "ahb": [
+      1,
+      2,
+      4,
+      8,
+      16,
+      64,
+      128,
+      256,
+      512
+    ],
+    "apb": [
+      1,
+      2,
+      4,
+      8,
+      16
+    ],
+    "flashLatency": [
+      [
+        16,
+        0
+      ],
+      [
+        32,
+        1
+      ],
+      [
+        48,
+        2
+      ],
+      [
+        64,
+        3
+      ],
+      [
+        80,
+        4
+      ]
+    ],
+    "default": {
+      "pllSource": "HSI",
+      "sysclkSource": "PLL",
+      "hseMHz": 8,
+      "M": 1,
+      "N": 10,
+      "R": 2,
+      "ahb": 1,
+      "apb1": 1,
+      "apb2": 1
+    }
+  }
+}

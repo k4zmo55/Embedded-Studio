@@ -10,6 +10,7 @@
  *                               'user': kullanıcı yönetir; sadece yoksa bir başlangıç dosyası oluşturulur
  */
 const { join } = require('./layout');
+const { familyOf } = require('./families');
 
 const BUILD_TYPES = ['Debug', 'Release', 'MinSizeRel', 'RelWithDebInfo'];
 const OPT_LEVELS = ['-O0', '-Og', '-O1', '-O2', '-O3', '-Os', '-Oz'];
@@ -88,13 +89,26 @@ const fwd = (s) => String(s).replace(/\\/g, '/');
 const rootPath = (p) => (/^([A-Za-z]:)?[\\/]/.test(p) ? fwd(p) : `\${ES_ROOT}/${fwd(p).replace(/^\.\//, '')}`);
 const splitFlags = (s) => String(s || '').split(/\s+/).filter(Boolean);
 
-function mcuFlags(b) {
-  const fpu = { hard: ['-mfpu=fpv4-sp-d16', '-mfloat-abi=hard'], softfp: ['-mfpu=fpv4-sp-d16', '-mfloat-abi=softfp'], soft: ['-mfloat-abi=soft'] }[b.fpu];
-  return ['-mcpu=cortex-m4', '-mthumb', ...fpu];
+/** FPU'su olmayan çekirdekte (M0/M0+/M3) ayar ne olursa olsun yazılım float. */
+const effectiveFpu = (b, mcu) => (familyOf(mcu).fpu ? normalizeBuild(b).fpu : 'soft');
+
+function mcuFlags(b, mcu) {
+  const fam = familyOf(mcu);
+  const fpu = effectiveFpu(b, mcu);
+  return [`-mcpu=${fam.core}`, '-mthumb', ...(fpu === 'soft' ? ['-mfloat-abi=soft'] : [`-mfpu=${fam.fpu}`, `-mfloat-abi=${fpu}`])];
 }
 
-/** FreeRTOS portu: FPU kullanılmıyorsa ARM_CM4F portu derlenmez (FPU bağlamı kaydeder), ARM_CM3 kullanılır. */
-const rtosPort = (b) => (normalizeBuild(b).fpu === 'soft' ? 'ARM_CM3' : 'ARM_CM4F');
+/**
+ * FreeRTOS portu (aileye göre). FPU kullanılmıyorsa ARM_CM4F portu derlenmez (FPU bağlamı kaydeder), ARM_CM3 kullanılır.
+ * Cortex-M7 için FreeRTOS, r0p1 dışındaki çekirdeklerde ARM_CM4F portunu önerir.
+ */
+function rtosPort(b, mcu) {
+  const port = familyOf(mcu).port;
+  return port === 'ARM_CM4F' && effectiveFpu(b, mcu) === 'soft' ? 'ARM_CM3' : port;
+}
+
+/** Portun derlenecek dosyaları (CM0 ve CM33 portlarında assembler kısmı ayrı dosyada). */
+const rtosPortSources = (port) => ['port.c', ...(/ARM_CM0|ARM_CM33/.test(port) ? ['portasm.c'] : [])];
 
 /**
  * cmake/embedded-studio.cmake
@@ -104,7 +118,8 @@ function cmakeModule(o) {
   const b = normalizeBuild(o.build);
   const { P, mcu, framework } = o;
   const dev = mcu.device;
-  const port = rtosPort(b);
+  const fam = familyOf(mcu);
+  const port = rtosPort(b, mcu);
   const linker = b.linkerScript ? rootPath(b.linkerScript) : `\${ES_ROOT}/${join(P.linkerDir, `${mcu.name}_FLASH.ld`)}`;
   const defines = [dev.define, `HSE_VALUE=${o.hseHz}U`, ...(framework === 'hal' ? ['USE_HAL_DRIVER'] : []), ...b.defines];
   const warn = [...WARNINGS[b.warnings], ...(b.werror ? ['-Werror'] : [])];
@@ -134,7 +149,7 @@ endif()
 set(CMAKE_C_STANDARD 11)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
-set(ES_MCU_FLAGS ${mcuFlags(b).join(' ')})
+set(ES_MCU_FLAGS ${mcuFlags(b, mcu).join(' ')})
 
 # Uygulama kaynakları (kendi src/*.c dosyalarınız otomatik toplanır)
 file(GLOB ES_APP_SOURCES CONFIGURE_DEPENDS \${ES_ROOT}/${P.src}/*.c \${ES_ROOT}/${P.drivers}/*.c)
@@ -142,12 +157,12 @@ file(GLOB ES_APP_SOURCES CONFIGURE_DEPENDS \${ES_ROOT}/${P.src}/*.c \${ES_ROOT}/
 set(ES_VENDOR_SOURCES
   \${ES_ROOT}/${P.systemC}
   \${ES_ROOT}/${P.startupDir}/${dev.startup})
-${framework === 'hal' ? `file(GLOB ES_HAL_SOURCES \${ES_ROOT}/${P.hal}/Src/stm32f4xx_hal*.c)
+${framework === 'hal' ? `file(GLOB ES_HAL_SOURCES \${ES_ROOT}/${P.hal}/Src/${fam.prefix}_hal*.c)
 list(FILTER ES_HAL_SOURCES EXCLUDE REGEX "template")
 list(APPEND ES_VENDOR_SOURCES \${ES_HAL_SOURCES})
 ` : ''}${o.rtos ? `list(APPEND ES_VENDOR_SOURCES
   \${ES_ROOT}/${P.rtos}/tasks.c \${ES_ROOT}/${P.rtos}/queue.c \${ES_ROOT}/${P.rtos}/list.c \${ES_ROOT}/${P.rtos}/timers.c
-  \${ES_ROOT}/${P.rtos}/portable/GCC/${port}/port.c \${ES_ROOT}/${P.rtos}/portable/MemMang/heap_4.c)
+  ${rtosPortSources(port).map((f) => `\${ES_ROOT}/${P.rtos}/portable/GCC/${port}/${f}`).join(' ')} \${ES_ROOT}/${P.rtos}/portable/MemMang/heap_4.c)
 ` : ''}set(ES_SOURCES \${ES_APP_SOURCES} \${ES_VENDOR_SOURCES})
 
 set(ES_INCLUDE_DIRS
@@ -175,7 +190,9 @@ function(embedded_studio_target target)
   target_include_directories(\${target} SYSTEM PRIVATE \${ES_SYSTEM_INCLUDE_DIRS})
   target_compile_definitions(\${target} PRIVATE \${ES_DEFINES})
   target_compile_options(\${target} PRIVATE \${ES_MCU_FLAGS} \${ES_C_FLAGS} \${ES_OPT_FLAGS} \${ES_WARNINGS})
-  set_source_files_properties(\${ES_VENDOR_SOURCES} PROPERTIES COMPILE_OPTIONS "-w")
+  set_source_files_properties(\${ES_VENDOR_SOURCES} PROPERTIES COMPILE_OPTIONS "-w")${o.rtos && /ARM_CM0|ARM_CM33/.test(port) ? `
+  # ${port} portu SysTick_Handler'ı kendisi tanımlar; tick sayacıyla paylaşmak için port.c'de yeniden adlandırılır
+  set_source_files_properties(\${ES_ROOT}/${P.rtos}/portable/GCC/${port}/port.c PROPERTIES COMPILE_DEFINITIONS "SysTick_Handler=xPortSysTickHandler")` : ''}
   target_link_options(\${target} PRIVATE \${ES_MCU_FLAGS} -T\${ES_LINKER_SCRIPT} \${ES_LINK_FLAGS}
     -Wl,-Map=$<TARGET_FILE_DIR:\${target}>/\${target}.map)
   set_property(TARGET \${target} APPEND PROPERTY LINK_DEPENDS \${ES_LINKER_SCRIPT})
@@ -314,6 +331,6 @@ function buildCommand(type) {
 
 module.exports = {
   BUILD_TYPES, OPT_LEVELS, WARNINGS, DEFAULT_BUILD,
-  normalizeBuild, presetName, buildDir, elfRel, gccTool, rtosPort, mcuFlags,
+  normalizeBuild, presetName, buildDir, elfRel, gccTool, rtosPort, mcuFlags, effectiveFpu,
   cmakeModule, toolchainFile, cmakePresets, cmakeListsManaged, cmakeListsStarter, includeSnippet, buildCommand
 };

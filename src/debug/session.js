@@ -12,6 +12,7 @@ const net = require('net');
 const fs = require('fs');
 const { spawn, execFile } = require('child_process');
 const { t } = require('../i18n');
+const { familyOf, kernelClock } = require('../codegen/families');
 
 const CORE_REGS = ['r0', 'r1', 'r2', 'r3', 'r4', 'r5', 'r6', 'r7', 'r8', 'r9', 'r10', 'r11', 'r12', 'sp', 'lr', 'pc', 'xPSR'];
 
@@ -224,18 +225,24 @@ function simModel(design, lib, result, clock, peripherals) {
   const or = (addr, v) => addr !== undefined && expected.set(addr, ((expected.get(addr) || 0) | v) >>> 0);
   const set = (addr, v) => addr !== undefined && expected.set(addr, v >>> 0);
 
+  // Beklenen register değerleri F4 register haritasına göre; diğer ailelerde sadece aileden bağımsız olanlar (GPIO v2, timer, ADC DR, UART BRR)
+  const mcu = lib.mcus[design.mcuId];
+  const fam = familyOf(mcu);
+  const f4 = fam.key === 'f4';
   const c = clock.config;
+  if (f4) {
   set(reg('RCC', 'CR'), 0x00000083 | (c.pllSource === 'HSE' || c.sysclkSource === 'HSE' ? 0x30000 : 0) | (c.sysclkSource === 'PLL' ? 0x3000000 : 0));
   set(reg('RCC', 'PLLCFGR'), c.M | (c.N << 6) | ((c.P / 2 - 1) << 16) | (c.pllSource === 'HSE' ? 1 << 22 : 0) | (c.Q << 24));
   const sw = { HSI: 0, HSE: 1, PLL: 2 }[c.sysclkSource];
   const HP = { 1: 0, 2: 8, 4: 9, 8: 10, 16: 11, 64: 12, 128: 13, 256: 14, 512: 15 }, PP = { 1: 0, 2: 4, 4: 5, 8: 6, 16: 7 };
   set(reg('RCC', 'CFGR'), sw | (sw << 2) | (HP[c.ahb] << 4) | (PP[c.apb1] << 10) | (PP[c.apb2] << 13));
   set(reg('FLASH', 'ACR'), clock.latency | 0x700);
+  }
 
   const MODE = { in: 0, out: 1, af: 2, analog: 3 };
   for (const conn of result.connections) {
     const port = 'GPIO' + conn.mcuPin[1], n = Number(conn.mcuPin.slice(2));
-    if (!base[port]) continue;
+    if (!base[port] || fam.ip.gpio !== 'v2') continue;
     const kind = conn.kind === 'adc' ? 'analog' : conn.signal === 'GPIO_Output' ? 'out' : conn.signal === 'GPIO_Input' ? 'in' : 'af';
     or(reg(port, 'MODER'), MODE[kind] << (n * 2));
     if (conn.kind === 'i2c') or(reg(port, 'OTYPER'), 1 << n);
@@ -253,7 +260,7 @@ function simModel(design, lib, result, clock, peripherals) {
 
   const f = clock.freq;
   for (const [name, p] of Object.entries(result.peripherals)) {
-    if (p.type === 'i2c') {
+    if (p.type === 'i2c' && f4) {
       set(reg(name, 'CR1'), 0x1);
       set(reg(name, 'CR2'), Math.round(f.pclk1));
       set(reg(name, 'CCR'), p.speedHz > 100000 ? 0x8000 | Math.ceil((f.pclk1 * 1e6) / (3 * p.speedHz)) : Math.ceil((f.pclk1 * 1e6) / (2 * p.speedHz)));
@@ -261,15 +268,15 @@ function simModel(design, lib, result, clock, peripherals) {
       const sr2 = reg(name, 'SR2');
       if (sr2 !== undefined) dynamic.set(sr2, (ms) => (ms % 1000 < 60 ? 0x3 : 0));
     }
-    if (p.type === 'spi') set(reg(name, 'CR1'), 0x344 | (3 << 3)), set(reg(name, 'SR'), 0x2);
+    if (p.type === 'spi' && f4) set(reg(name, 'CR1'), 0x344 | (3 << 3)), set(reg(name, 'SR'), 0x2);
     if (p.type === 'uart') {
-      const pclk = name === 'USART1' || name === 'USART6' ? f.pclk2 : f.pclk1;
+      const pclk = mcu.peripherals[name] ? f[kernelClock(mcu, name)] : f.pclk1;
       set(reg(name, 'BRR'), Math.round((pclk * 1e6) / p.baud));
-      set(reg(name, 'CR1'), 0x200c | (p.telemetry ? 0 : 0x20));
-      set(reg(name, 'SR'), 0xc0);
+      if (f4) set(reg(name, 'CR1'), 0x200c | (p.telemetry ? 0 : 0x20));
+      if (f4) set(reg(name, 'SR'), 0xc0);
     }
     if (p.type === 'adc') {
-      set(reg(name, 'CR2'), 1);
+      if (f4) set(reg(name, 'CR2'), 1);
       const dr = reg(name, 'DR');
       if (dr !== undefined) dynamic.set(dr, (ms) => Math.round(2048 + 1500 * Math.sin(ms / 2400)));
     }
@@ -300,7 +307,7 @@ function simModel(design, lib, result, clock, peripherals) {
   const bits = { I2C1: ['APB1ENR', 21], I2C2: ['APB1ENR', 22], I2C3: ['APB1ENR', 23], SPI2: ['APB1ENR', 14], USART2: ['APB1ENR', 17], TIM2: ['APB1ENR', 0], TIM3: ['APB1ENR', 1], TIM4: ['APB1ENR', 2], USART1: ['APB2ENR', 4], USART6: ['APB2ENR', 5], ADC1: ['APB2ENR', 8], SPI1: ['APB2ENR', 12] };
   for (const name of Object.keys(result.peripherals)) if (bits[name]) en[bits[name][0]] |= 1 << bits[name][1];
   en.APB1ENR |= 1 << 28;
-  for (const [k, v] of Object.entries(en)) set(reg('RCC', k), v);
+  if (f4) for (const [k, v] of Object.entries(en)) set(reg('RCC', k), v);
   return { peripherals, expected, dynamic };
 }
 

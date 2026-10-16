@@ -13,10 +13,11 @@
  *  Middlewares/FreeRTOS                       rtos/FreeRTOS
  */
 
-/** @param {'hal'|'register'} framework */
-function layout(framework) {
-  const family = 'STM32F4xx'; // ES-106 ile MCU tanımından gelecek
-  const system = 'system_stm32f4xx.c';
+/** @param {'hal'|'register'} framework @param {string} [familyKey] f0, f1 … (mcu.device.family; varsayılan f4) */
+function layout(framework, familyKey = 'f4') {
+  const fam = require('./families').family(familyKey);
+  const family = fam.series; // STM32F4xx
+  const system = fam.systemC; // system_stm32f4xx.c
   if (framework === 'hal') {
     const dev = `Drivers/CMSIS/Device/ST/${family}`;
     return {

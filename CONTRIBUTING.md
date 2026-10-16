@@ -49,8 +49,8 @@ VS Code'da **F5** tuşuna bas. Eklentinin yüklü olduğu yeni bir pencere açı
 | Komut | Ne yapar | Gerekenler |
 |---|---|---|
 | `node test/smoke.js` | Pin atama, saat ağacı, kod üretimi, kullanıcı kodu birleştirme, komponent doğrulama | Node 22+ |
-| `node test/build.js <önbellek> <çıktı>` | HAL/CMSIS/FreeRTOS'u indirir, 4 proje varyantını gerçekten derler | git, cmake, ninja, arm-none-eabi-gcc |
-| `node test/ui-e2e.js <çalışma> <önbellek>` | Gerçek arayüzü headless tarayıcıda açar, 28 adımlık kullanıcı senaryosunu çalıştırır. `ES_THEME=light`, `ES_SIZE=1100x700` ve `ES_SLOW=6` (işlemciyi yavaşlatır) ile açık tema, dar pencere ve zamanlama hataları da denenebilir | Edge veya Chrome + yukarıdakiler |
+| `node test/build.js <önbellek> <çıktı> [filtre]` | HAL/CMSIS/FreeRTOS'u indirir, 15 işlemci için HAL ve bare-metal projeleri (53 varyant) gerçekten derler. Filtre düzenli ifadedir, ör. `stm32g0` | git, cmake, ninja, arm-none-eabi-gcc |
+| `node test/ui-e2e.js <çalışma> <önbellek>` | Gerçek arayüzü headless tarayıcıda açar, 33 adımlık kullanıcı senaryosunu çalıştırır. `ES_THEME=light`, `ES_SIZE=1100x700` ve `ES_SLOW=6` (işlemciyi yavaşlatır) ile açık tema, dar pencere ve zamanlama hataları da denenebilir | Edge veya Chrome + yukarıdakiler |
 
 PR açmadan önce en azından `node test/smoke.js` çalıştır. Kod üretimini değiştirdiysen `test/build.js` de geçmeli.
 GitHub Actions her push'ta bu testleri otomatik çalıştırır.
@@ -65,17 +65,20 @@ src/
   extension.js          VS Code tarafı: panel, proje, kayıt, kod üretimi, debug, görevler
   library.js            Komponent kütüphanesi + doğrulama (validateComponent)
   engine/pinAssigner.js Pin/çevre birimi atama (kısıt çözücü)
-  engine/clock.js       Saat ağacı modeli + otomatik çözücü
-  codegen/              generator · layout (HAL / bare-metal klasör yapısı) · bsp · drivers · merge (USER CODE) · packs
+  engine/clock.js       Saat ağacı modeli (f4 / mul / mnr / h7) + otomatik çözücü
+  codegen/              generator · layout · bsp · drivers · merge (USER CODE) · packs · build (CMake)
+  codegen/families.js   STM32 aileleri: çekirdek, FPU, FreeRTOS portu, çevre birimi IP sürümleri
+  codegen/regcode.js    Bare-metal kod (RCC, GPIO, I2C, SPI, USART, ADC) aileye göre
+  codegen/halcode.js    HAL kodunun aileye göre değişen kısımları (SystemClock_Config, I2C, ADC)
   i18n.js               Arayüz dili (t() + i18n/en.json)
   debug/                OpenOCD TCL istemcisi, simülasyon, register/SVD tanımları
   monitor/telemetry.js  Telemetri protokolü + simülatör
   ai/advisor.js         Asistan (şimdilik kural tabanlı)
 media/                  Webview arayüzü (her sekme ayrı dosya)
 data/components/        Hazır komponentler (JSON)
-data/mcus/              Mikrodenetleyici tanımları (JSON)
+data/mcus/              Mikrodenetleyici tanımları (JSON; F411 dışındakiler tools/mcu ile üretilir)
 test/                   smoke, build ve arayüz testleri
-tools/                  .vsix paketleyici, README görsel üreticisi
+tools/                  .vsix paketleyici, README görsel üreticisi, mcu/ (işlemci tanımı üretici)
 ```
 
 Temel ilke: **yapay zekâ (asistan) önerir, kural motoru doğrular.** Pin ve saat ataması her zaman `pinAssigner` ve `clock`
@@ -125,18 +128,29 @@ Kurallar:
 
 ## Yeni mikrodenetleyici eklemek
 
-**Aynı aileden bir STM32F4** (F401, F407, F446…) için `data/mcus/` altına yeni bir JSON yeterli; kod değişikliği gerekmez.
-`stm32f411ceu6.json` örneğini kopyala ve şunları güncelle:
+İşlemci tanımları (`data/mcus/*.json`) elle yazılmaz, üretilir. Pinler ve alternatif fonksiyonlar ST'nin açık pin
+veritabanından, saat açma bitleri ve kesme adları CMSIS cihaz başlıklarından gelir.
 
-- `pins`: her pinin alternatif fonksiyonları (`signal` + `af` numarası). Kaynak: datasheet'teki
-  *Alternate function mapping* tablosu ya da ST'nin açık pin verisi.
-- `peripherals`: hangi çevre biriminin hangi bus'ta (APB1/APB2) olduğu.
-- `clock`: HSE aralığı, en yüksek frekanslar, PLL sınırları, flash bekleme durumları.
-- `device`: `define` (ör. `STM32F446xx`), `startup` dosya adı, flash/RAM boyutu.
+**Desteklenen bir ailedeki** (F0, F1, F3, F4, F7, G0, G4, H7, L4, U5) yeni bir işlemci için:
 
-**Başka bir STM32 ailesi** (G4, L4, F1, H7…) daha fazla iş ister: saat ağacı modeli (`engine/clock.js`), register
-altyapısındaki I2C/UART kodu (`codegen/bsp.js`), paket indirme (`codegen/packs.js`) ve debug register tanımları
-aileye göre değişir. Böyle bir işe başlamadan önce yaklaşımı konuşmak için lütfen bir issue aç.
+1. `tools/mcu/targets.js` dosyasına bir giriş ekle: `ref` (açık pin verisindeki XML adı, ör. `STM32F401C(B-C)Ux`),
+   CMSIS `define`, `startup` dosyası, flash/RAM, kart adı ve saat ağacı (`clock`: model, sınırlar, PLL aralıkları,
+   flash bekleme tablosu, varsayılan ayar). Aynı aileden bir girişi kopyalamak en kolayı.
+2. Verileri indir ve üret:
+
+   ```
+   git clone --depth 1 https://github.com/STMicroelectronics/STM32_open_pin_data
+   git clone --depth 1 https://github.com/STMicroelectronics/cmsis-device-f4   # gerekli aileler
+   node tools/mcu/gen-mcus.js STM32_open_pin_data .
+   ```
+
+   Araç, elle doğrulanmış `stm32f411ceu6.json` ile karşılaştırarak kendini de sınar.
+3. `node test/smoke.js` ve `node test/build.js <önbellek> <çıktı> <işlemci>` geçmeli (HAL + bare-metal, FreeRTOS, `-Werror`).
+   Mümkünse gerçek bir kartta dene ve PR'da belirt.
+
+**Yeni bir aile** (ör. C0, WB, H5) daha fazla iş ister: `codegen/families.js` (çekirdek, FPU, FreeRTOS portu, çevre birimi
+IP sürümleri), `engine/clock.js` (saat modeli), `codegen/regcode.js` ve `codegen/halcode.js` (aileye özgü saat ve
+çevre birimi kodu). Böyle bir işe başlamadan önce yaklaşımı konuşmak için lütfen bir issue aç.
 
 ## Kod kuralları
 

@@ -113,7 +113,7 @@ Kütüphanede olmayan bir sensörü JSON yazmadan ekleyin. Form solda, canlı ş
 
 <p align="center"><img src="docs/images/clock.png" width="900" alt="Clock sekmesi"></p>
 
-HSI/HSE, PLL (M/N/P/Q), AHB/APB bölücüleri. **Otomatik çöz** hedef frekans için geçerli ayarı bulur; çevre birimi tablosu UART
+HSI/HSE, PLL, AHB/APB bölücüleri; PLL bölümü işlemcinin saat ağacına göre çizilir (F4/F7 `M/N/P/Q`, F0/F1/F3 `PREDIV × PLLMUL`, G0/G4/L4/U5 `M/N/R`, H7 `DIVM1/N1/P1/Q1`). Yüksek frekans modları (F4/F7 over-drive, G4 boost, U5 EPOD) kendiliğinden açılır. **Otomatik çöz** hedef frekans için geçerli ayarı bulur; çevre birimi tablosu UART
 baud hatasını, SPI hızını ve timer ön bölücüsünü gösterir. Ayarlar üretilen `SystemClock_Config` / `clock_init` koduna yansır.
 
 ### Kod üretimi
@@ -127,9 +127,9 @@ Klasör yapısı kod altyapısına göre değişir:
 | Saat, GPIO, çevre birimi init / ortak donanım API'si | `Core/Src/board.c`, `Core/Src/bsp.c` | `src/board.c`, `src/bsp.c` |
 | Sadece seçilen sensör sürücüleri | `Drivers/Components/` | `drivers/` |
 | CMSIS çekirdek ve cihaz başlıkları | `Drivers/CMSIS/` | `cmsis/core/`, `cmsis/device/` |
-| Startup ve `system_stm32f4xx.c` | `Drivers/CMSIS/Device/…/Templates/` | `startup/` |
+| Startup ve `system_stm32<aile>xx.c` | `Drivers/CMSIS/Device/…/Templates/` | `startup/` |
 | Linker script | `STM32F411CEU6_FLASH.ld` | `linker/STM32F411CEU6_FLASH.ld` |
-| HAL sürücüleri | `Drivers/STM32F4xx_HAL_Driver/` | — |
+| HAL sürücüleri | `Drivers/STM32<aile>xx_HAL_Driver/` | — |
 | FreeRTOS (açıksa) | `Middlewares/FreeRTOS/` | `rtos/FreeRTOS/` |
 
 Her iki yapıda da: CMake projesi (`CMakeLists.txt`, `CMakePresets.json`, `cmake/`), yapay zekâ ajanları için `AGENTS.md` / `CLAUDE.md` ve son tasarım değişikliğini anlatan `.embedded-studio/LAST_CHANGES.md`.
@@ -181,17 +181,45 @@ Okuması bayrak temizleyen register'lar (ör. `USART->DR`) sadece hedef durduğu
 
 | | |
 |---|---|
-| **Mikrodenetleyici** | STM32F411CEU6 (WeAct Black Pill). Diğer STM32F4'ler bir JSON dosyasıyla eklenebilir. |
+| **Mikrodenetleyici** | 15 STM32, 10 aile (aşağıdaki tablo) |
 | **Komponentler** | BME280, MPU-6050, SSD1306 OLED, W25Q32 SPI flash, u-blox NEO-6M GPS, USB-UART, LED, buton, potansiyometre, SG90 servo |
 | **Kod altyapısı** | STM32 HAL · bare-metal (CMSIS register) · isteğe bağlı FreeRTOS |
 | **Programlayıcı** | ST-Link (OpenOCD) |
+
+### Desteklenen işlemciler
+
+| İşlemci | Çekirdek | Kart | Saat (en fazla) |
+|---|---|---|---|
+| STM32F030C8T6 | Cortex-M0 | LQFP48 | 48 MHz |
+| STM32F103C8T6 | Cortex-M3 | Blue Pill | 72 MHz |
+| STM32F303RET6 | Cortex-M4F | Nucleo-F303RE | 72 MHz |
+| STM32F407VGT6 | Cortex-M4F | STM32F4-Discovery | 168 MHz |
+| **STM32F411CEU6** | Cortex-M4F | WeAct Black Pill | 100 MHz |
+| STM32F429ZIT6 | Cortex-M4F | Nucleo-F429ZI | 180 MHz |
+| STM32F446RET6 | Cortex-M4F | Nucleo-F446RE | 180 MHz |
+| STM32F767ZIT6 | Cortex-M7F | Nucleo-F767ZI | 216 MHz |
+| STM32G071RBT6 | Cortex-M0+ | Nucleo-G071RB | 64 MHz |
+| STM32G474RET6 | Cortex-M4F | Nucleo-G474RE | 170 MHz |
+| STM32H723ZGT6 | Cortex-M7F | Nucleo-H723ZG | 400 MHz¹ |
+| STM32H743ZIT6 | Cortex-M7F | Nucleo-H743ZI2 | 400 MHz¹ |
+| STM32L432KCU6 | Cortex-M4F | Nucleo-L432KC | 80 MHz |
+| STM32L476RGT6 | Cortex-M4F | Nucleo-L476RG | 80 MHz |
+| STM32U575ZIT6Q | Cortex-M33F | Nucleo-U575ZI-Q | 160 MHz |
+
+Pinler ve alternatif fonksiyonlar ST'nin açık pin veritabanından ([STM32_open_pin_data](https://github.com/STMicroelectronics/STM32_open_pin_data),
+BSD-3-Clause), saat açma bitleri ve kesme adları CMSIS cihaz başlıklarından `tools/mcu/gen-mcus.js` ile üretilir. Her işlemci
+her push'ta HAL ve bare-metal, FreeRTOS'lu, sıkı uyarı + `-Werror` ile ve en yüksek saatte derlenir. **STM32F411 dışındakiler
+henüz gerçek kartta denenmedi**; üretim öncesi pin ve saat ayarlarını datasheet ile kontrol edin.
+
+¹ H7'de şimdilik VOS1 (400 MHz) desteklenir; 480/550 MHz için VOS0 ileride. Besleme LDO olarak ayarlanır (Nucleo varsayılanı).
 
 ## 🗺️ Yol haritası
 
 - [x] Pin ve saat ataması, HAL / bare-metal + FreeRTOS kod üretimi
 - [x] Monitör, debug, komponent oluşturucu
 - [ ] Monitörde seri port üzerinden gerçek kart verisi
-- [ ] Yeni MCU'lar: STM32F4 ailesinin geri kalanı, STM32G4/L4, ESP32, RP2040
+- [x] 15 STM32 (F0, F1, F3, F4, F7, G0, G4, H7, L4, U5)
+- [ ] Yeni MCU'lar: ESP32, RP2040
 - [ ] LLM destekli asistan ve datasheet'ten komponent taslağı çıkarma
 - [x] İngilizce arayüz (VS Code dili İngilizceyse kendiliğinden; ayar: `embeddedStudio.language`)
 
@@ -228,7 +256,8 @@ node test/smoke.js             # birim testleri
 Embedded Studio is a VS Code extension for visually designing STM32 firmware. Pick the sensors you need and it wires them to
 the microcontroller in a KiCad-style schematic, assigns pins and peripherals (alternate functions, conflicts, I2C address
 clashes), builds a valid clock tree, and generates a CMake + ARM GCC project using **STM32 HAL** or **bare-metal register**
-code, optionally with **FreeRTOS**. Your code inside `USER CODE` blocks is preserved across regenerations, and generated
+code, optionally with **FreeRTOS**, for 15 STM32 parts across the F0, F1, F3, F4, F7, G0, G4, H7, L4 and U5 families
+(pin data generated from ST's open pin database; only the STM32F411 has been tried on real hardware so far). Your code inside `USER CODE` blocks is preserved across regenerations, and generated
 `AGENTS.md` / `CLAUDE.md` / `GEMINI.md` files tell AI coding agents which files they may edit.
 
 It also includes a live monitor (3D IMU, GPS track, gauges, RTOS task table), a debugger front-end for OpenOCD + ST-Link

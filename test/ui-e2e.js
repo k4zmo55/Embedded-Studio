@@ -807,6 +807,45 @@ async function until(fn, ms = 8000, what = 'koşul') {
     await until(() => design().mode === 'beginner', 4000, 'acemi kaydedildi');
     await until(() => cdp.eval(`!document.body.classList.contains('mode-pro') && document.querySelector('#design').classList.contains('active')`), 3000, 'acemi: tasarım ana sekme');
   });
+  await step('Başka işlemci (ES-106): Nucleo-G474RE seçilir, saat ağacı M/N/R, kod G4 dosyalarıyla üretilir ve derlenir; F411\'e dönülür', async () => {
+    const P = (p) => path.join(PROJECT, p);
+    const setMcu = async (id) => {
+      await cdp.click('#tab-settings');
+      await cdp.eval(`(() => { const e = document.querySelector('#set-mcu'); e.value = '${id}'; e.dispatchEvent(new Event('change')); })()`);
+      await until(() => cdp.eval(`!document.querySelector('#set-apply').disabled`), 15000, 'önizleme');
+      return cdp.eval(`document.querySelector('#set-preview').textContent`);
+    };
+    const preview = await setMcu('stm32g474ret6');
+    assert.ok(preview.includes('STM32F4xx → STM32G4xx') && preview.includes('stm32g4xx_it.c'), 'aile değişikliği notu: ' + preview.slice(0, 300));
+    assert.ok(preview.includes('gerçek kartta doğrulanmadı'), 'doğrulanmadı uyarısı');
+    await cdp.shot('27-islemci-degisikligi');
+    await cdp.click('#set-apply');
+    await until(() => design().mcuId === 'stm32g474ret6', 4000, 'G474 uygulandı');
+    // Saat ağacı: M/N/R modeli, varsayılan 170 MHz (boost)
+    await cdp.click('#tab-clock');
+    await until(() => cdp.eval(`document.querySelector('#clk-summary').textContent.startsWith('SYSCLK 170 MHz')`), 4000, '170 MHz');
+    assert.ok(await cdp.eval(`[...document.querySelectorAll('#clock .ck-title')].some((e) => e.textContent === '/ R') && ![...document.querySelectorAll('#clock .ck-title')].some((e) => e.textContent === '/ Q')`), 'G4: /R var, /Q yok');
+    assert.strictEqual(await cdp.eval(`document.querySelector('#clk-target').max`), '170');
+    await cdp.shot('28-g474-saat-agaci');
+    await cdp.click('#tab-design');
+    await sleep(600);
+    await cdp.shot('29-g474-sema');
+    // Kod üret: G4 paketleri indirilir (testte önbellekten), G4 dosyaları, kullanıcı kesme kodu taşınır
+    await cdp.click('#generate');
+    await until(() => fs.existsSync(P('Core/Src/stm32g4xx_it.c')) && fs.existsSync(P('Core/Inc/stm32g4xx_hal_conf.h')), 120000, 'G4 dosyaları');
+    assert.ok(!fs.existsSync(P('Core/Src/stm32f4xx_it.c')), 'F4 kesme dosyası taşınmalı');
+    const cmake = fs.readFileSync(P('cmake/embedded-studio.cmake'), 'utf8');
+    assert.ok(cmake.includes('STM32G474xx') && cmake.includes('startup_stm32g474xx.s') && cmake.includes('stm32g4xx_hal*.c'), 'CMake G4');
+    execSync('cmake --preset debug && cmake --build --preset debug', { cwd: PROJECT, stdio: 'pipe', shell: process.platform === 'win32' ? 'cmd.exe' : undefined });
+    assert.ok(fs.existsSync(P('build/debug/demo_proje.elf')), 'G474 derlendi');
+    // F411'e geri dön
+    await setMcu('stm32f411ceu6');
+    await cdp.click('#set-apply');
+    await until(() => design().mcuId === 'stm32f411ceu6', 4000, 'F411 geri geldi');
+    await cdp.click('#generate');
+    await until(() => fs.existsSync(P('Core/Src/stm32f4xx_it.c')) && !fs.existsSync(P('Core/Src/stm32g4xx_it.c')), 60000, 'F4 dosyaları');
+    await cdp.click('#tab-design');
+  });
   await step('İngilizce arayüz: ayar değişince yeniden yüklenir, ekranda Türkçe metin kalmaz', async () => {
     settings.language = 'en';
     configListeners.forEach((fn) => fn({ affectsConfiguration: (s) => s === 'embeddedStudio.language' }));

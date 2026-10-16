@@ -267,6 +267,29 @@ function relocateLayout(root, framework, genFiles) {
 }
 
 /**
+ * İşlemci ailesi değişince (ör. STM32F4 → STM32G4) kesme dosyasının adı da değişir (stm32f4xx_it.c → stm32g4xx_it.c).
+ * Eski dosya yeni adıyla taşınır; böylece writeProject içindeki USER CODE blokları yeni dosyaya geçer.
+ * @returns {{ from: string, to: string }[]}
+ */
+function relocateFamilyFiles(root, genFiles) {
+  const manifest = readJson(path.join(root, STATE_DIR, 'manifest.json'));
+  if (!manifest) return [];
+  const moved = [];
+  for (const f of genFiles.filter((g) => /\/stm32\w+_it\.c$/.test(g.path))) {
+    const dir = path.posix.dirname(f.path);
+    const dest = path.join(root, f.path);
+    if (fs.existsSync(dest)) continue;
+    const old = Object.keys(manifest.files || {}).find((p) => path.posix.dirname(p) === dir && /\/stm32\w+_it\.c$/.test(p) && p !== f.path && fs.existsSync(path.join(root, p)));
+    // 'once' (profesyonel bare-metal) dosyalar manifestte yok: klasörde başka stm32*_it.c varsa onu al
+    const candidate = old || (fs.existsSync(path.join(root, dir)) ? fs.readdirSync(path.join(root, dir)).map((n) => `${dir}/${n}`).find((p) => /\/stm32\w+_it\.c$/.test(p) && p !== f.path) : undefined);
+    if (!candidate) continue;
+    fs.renameSync(path.join(root, candidate), dest);
+    moved.push({ from: candidate, to: f.path });
+  }
+  return moved;
+}
+
+/**
  * 0.4.x ile oluşturulan .vscode/tasks.json ve launch.json tek bir build/ klasörünü kullanıyordu; artık her derleme tipi
  * build/<preset>/ altında. Bu dosyalar kullanıcınındır, sadece eski üretilmiş metin aynen duruyorsa güncellenir.
  * @returns {string[]} güncellenen dosyalar
@@ -298,4 +321,4 @@ function removeEmptyDirs(root, rels) {
   }
 }
 
-module.exports = { writeProject, mergeUserBlocks, extractBlocks, designFingerprint, diffSnapshots, relocateLayout, removeEmptyDirs, upgradeLegacyVscode, STATE_DIR };
+module.exports = { writeProject, mergeUserBlocks, extractBlocks, designFingerprint, diffSnapshots, relocateLayout, relocateFamilyFiles, removeEmptyDirs, upgradeLegacyVscode, STATE_DIR };

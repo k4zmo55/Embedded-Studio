@@ -1,11 +1,12 @@
 // Entegrasyon testi: paketleri indirir, HAL ve register projelerini üretir, arm-none-eabi-gcc ile derler.
-// Gerekenler: git, cmake, ninja, arm-none-eabi-gcc. Çalıştırma: node test/build.js [önbellek klasörü] [çıktı klasörü]
+// Gerekenler: git, cmake, ninja, arm-none-eabi-gcc.
+// Çalıştırma: node test/build.js [önbellek klasörü] [çıktı klasörü] [filtre: düzenli ifade, ör. "stm32g0|stm32g4" ya da "f411"]
 const path = require('path');
 const fs = require('fs');
 const { execSync } = require('child_process');
 const { loadLibrary } = require('../src/library');
 const { assign } = require('../src/engine/pinAssigner');
-const { computeClock } = require('../src/engine/clock');
+const { computeClock, solveClock } = require('../src/engine/clock');
 const { generate, GENERATOR_VERSION } = require('../src/codegen/generator');
 const { writeProject, designFingerprint } = require('../src/codegen/merge');
 const packs = require('../src/codegen/packs');
@@ -14,23 +15,33 @@ const cm = require('../src/codegen/build');
 const os = require('os');
 const cache = process.argv[2] || path.join(os.tmpdir(), 'es-packs');
 const outRoot = process.argv[3] || path.join(os.tmpdir(), 'es-build');
+const filter = process.argv[4] || '';
 const lib = loadLibrary(path.join(__dirname, '..'));
-const ids = ['usb_uart', 'bme280', 'mpu6050', 'ssd1306', 'w25q32', 'neo6m', 'led', 'button', 'potentiometer', 'servo_sg90'];
+// Tüm IP'leri kapsar: UART (2), I2C (3 cihaz), SPI + CS, ADC, PWM, GPIO giriş/çıkış
+const ALL = ['usb_uart', 'bme280', 'mpu6050', 'ssd1306', 'w25q32', 'neo6m', 'led', 'button', 'potentiometer', 'servo_sg90'];
 
 (async () => {
-  await packs.ensurePacks(cache, ['core', 'device', 'hal', 'freertos'], (m) => console.log('  ' + m));
-  // [altyapı, RTOS, mod, derleme ayarları, ad eki]: Profesyonel bare-metal'de main.c/app.c kullanıcının (araç sadece başlangıç main.c'si yazar)
+  // { mcu, framework, rtos, mode, build, suffix, ids, maxClock }
   const strict = { warnings: 'strict', werror: true };
+  const f411 = 'stm32f411ceu6';
   const variants = [
-    ['hal', true], ['hal', false], ['register', true], ['register', false], ['register', true, 'pro'], ['register', false, 'pro'],
+    ...[['hal', true], ['hal', false], ['register', true], ['register', false], ['register', true, 'pro'], ['register', false, 'pro']]
+      .map(([framework, rtos, mode]) => ({ mcu: f411, framework, rtos, mode })),
     // ES-105: derleme tipleri, sıkı uyarı + -Werror (üretilen kod uyarısız olmalı), FPU seçenekleri
-    ['hal', true, 'beginner', { ...strict, type: 'Release' }, 'release_strict'],
-    ['register', true, 'beginner', { ...strict, type: 'MinSizeRel' }, 'minsize_strict'],
-    ['register', true, 'pro', { fpu: 'soft', type: 'Release', ...strict }, 'softfloat'],
-    ['hal', false, 'beginner', { fpu: 'softfp', type: 'RelWithDebInfo', defines: ['APP_VER="1.2"'], cflags: '-fstack-usage', ldflags: '-Wl,--cref', specs: { nano: false, nosys: true } }, 'flags'],
+    { mcu: f411, framework: 'hal', rtos: true, build: { ...strict, type: 'Release' }, suffix: 'release_strict' },
+    { mcu: f411, framework: 'register', rtos: true, build: { ...strict, type: 'MinSizeRel' }, suffix: 'minsize_strict' },
+    { mcu: f411, framework: 'register', rtos: true, mode: 'pro', build: { fpu: 'soft', type: 'Release', ...strict }, suffix: 'softfloat' },
+    { mcu: f411, framework: 'hal', rtos: false, build: { fpu: 'softfp', type: 'RelWithDebInfo', defines: ['APP_VER="1.2"'], cflags: '-fstack-usage', ldflags: '-Wl,--cref', specs: { nano: false, nosys: true } }, suffix: 'flags' },
     // "CMake'i ben yönetiyorum": kullanıcının kendi CMakeLists.txt'si, kaynakları kendisi veriyor (NO_SOURCES)
-    ['register', false, 'pro', { cmake: 'user' }, 'usercmake']
+    { mcu: f411, framework: 'register', rtos: false, mode: 'pro', build: { cmake: 'user' }, suffix: 'usercmake' }
   ];
+  // ES-106: diğer işlemciler — her biri HAL ve bare-metal, RTOS'lu, sıkı uyarı + -Werror; ayrıca en yüksek saat
+  for (const id of Object.keys(lib.mcus).filter((m) => m !== f411)) {
+    const small = lib.mcus[id].ramKB < 16; // F030: 8 KB RAM, FreeRTOS + 10 sensör sığmaz
+    const ids = small ? ['usb_uart', 'bme280', 'w25q32', 'led', 'button', 'potentiometer', 'servo_sg90'] : ALL;
+    for (const framework of ['hal', 'register']) variants.push({ mcu: id, framework, rtos: !small, build: strict, ids, maxClock: true });
+    variants.push({ mcu: id, framework: 'register', rtos: false, mode: 'pro', build: strict, ids, suffix: 'pro' });
+  }
   const userCmake = (name) => `cmake_minimum_required(VERSION 3.20)
 set(CMAKE_TOOLCHAIN_FILE \${CMAKE_CURRENT_SOURCE_DIR}/cmake/arm-none-eabi.cmake CACHE FILEPATH "")
 project(${name} C ASM)
@@ -39,28 +50,40 @@ add_executable(\${PROJECT_NAME} \${ES_SOURCES} extra/version.c)
 target_compile_definitions(\${PROJECT_NAME} PRIVATE BENIM_PROJEM=1)
 embedded_studio_target(\${PROJECT_NAME} NO_SOURCES)
 `;
+  const re = new RegExp(filter);
+  const selected = variants.filter((v) => re.test(`${v.mcu}_${v.framework}_${v.suffix || ''}`));
+  const mcusUsed = [...new Set(selected.map((v) => v.mcu))];
+  const need = [...new Set(mcusUsed.flatMap((id) => packs.packsFor(lib.mcus[id], 'hal', true)))];
+  await packs.ensurePacks(cache, need, (m) => console.log('  ' + m));
+
   let failed = 0;
-  for (const [framework, rtos, mode = 'beginner', build = {}, suffix] of variants) {
-    const name = `t_${framework}_${rtos ? 'rtos' : 'bare'}${mode === 'pro' ? '_pro' : ''}${suffix ? '_' + suffix : ''}`;
+  for (const v of selected) {
+    const { framework, rtos, mode = 'beginner', build = {}, suffix, ids = ALL } = v;
+    const short = v.mcu === f411 ? '' : `${v.mcu.replace(/^stm32/, '').slice(0, 6)}_`;
+    const name = `t_${short}${framework}_${rtos ? 'rtos' : 'bare'}${mode === 'pro' ? '_pro' : ''}${suffix && suffix !== 'pro' ? '_' + suffix : ''}`;
     const root = path.join(outRoot, name);
     fs.rmSync(root, { recursive: true, force: true });
+    const mcu = lib.mcus[v.mcu];
     const design = {
-      mcuId: 'stm32f411ceu6', framework, rtos, mode, project: { name }, build,
+      mcuId: v.mcu, framework, rtos, mode, project: { name }, build,
       instances: ids.map((c, i) => ({ id: 'i' + i, componentId: c, label: `${c.toUpperCase()}_1` })), locks: {}
     };
-    const mcu = lib.mcus[design.mcuId];
+    // En yüksek saat: over-drive / boost / EPOD yollarını da derle
+    if (v.maxClock) design.clock = solveClock(mcu, mcu.clock.default, mcu.clock.limits.sysclk);
     const result = assign(design, lib);
     const clock = computeClock(mcu, design.clock);
-    packs.installIntoProject(cache, root, mcu, packs.missingInProject(root, mcu, framework, rtos, cm.rtosPort(build)), framework);
+    const errors = [...result.messages.filter((m) => m.level === 'error'), ...clock.issues.filter((m) => m.level === 'error')];
+    packs.installIntoProject(cache, root, mcu, packs.missingInProject(root, mcu, framework, rtos, cm.rtosPort(build, mcu)), framework);
     if (build.cmake === 'user') {
       fs.mkdirSync(path.join(root, 'extra'), { recursive: true });
       fs.writeFileSync(path.join(root, 'extra/version.c'), '#ifndef BENIM_PROJEM\n#error "kullanıcı tanımı yok"\n#endif\nconst char *app_version(void) { return "1.0"; }\n');
       fs.writeFileSync(path.join(root, 'CMakeLists.txt'), userCmake(name));
     }
-    const gen = generate(design, lib, result, clock, { halConfTemplate: packs.halConfTemplate(cache, root) });
+    const gen = generate(design, lib, result, clock, { halConfTemplate: packs.halConfTemplate(cache, root, mcu) });
     writeProject(root, gen, { fingerprint: designFingerprint(design, GENERATOR_VERSION), snapshot: { instances: [], connections: [] } });
     const preset = cm.presetName(cm.normalizeBuild(build).type);
     try {
+      if (errors.length) throw new Error(`tasarım hatası: ${errors.map((e) => e.text).join('; ')}`);
       if (build.cmake === 'user' && fs.readFileSync(path.join(root, 'CMakeLists.txt'), 'utf8') !== userCmake(name)) throw new Error('kullanıcının CMakeLists.txt dosyası değişti');
       execSync(`cmake --preset ${preset}`, { cwd: root, stdio: 'pipe' });
       const out = execSync(`cmake --build --preset ${preset}`, { cwd: root, stdio: 'pipe' }).toString();
@@ -68,12 +91,13 @@ embedded_studio_target(\${PROJECT_NAME} NO_SOURCES)
       if (missing.length) throw new Error(`build/${preset}/ altında eksik çıktı: ${missing.join(', ')}`);
       const warn = out.split('\n').filter((l) => /warning:/.test(l) && /Core|Components|src|drivers/.test(l));
       const size = out.split('\n').filter((l) => /FLASH:|RAM:/.test(l)).map((l) => l.trim().replace(/\s+/g, ' ')).join(' | ');
-      console.log(`OK   ${name} [${preset}]  ${size}${warn.length ? `\n     ${warn.length} uyarı:\n     ` + warn.slice(0, 8).join('\n     ') : ''}`);
+      console.log(`OK   ${name} [${preset}, ${clock.freq.sysclk} MHz]  ${size}${warn.length ? `\n     ${warn.length} uyarı:\n     ` + warn.slice(0, 8).join('\n     ') : ''}`);
     } catch (e) {
       failed++;
       const text = (e.stdout || '').toString() + (e.stderr || '').toString() || e.message;
-      console.log(`FAIL ${name}\n` + text.split('\n').filter((l) => /error|undefined|Error/.test(l)).slice(0, 25).join('\n'));
+      console.log(`FAIL ${name}\n` + text.split('\n').filter((l) => /error|undefined|Error|overflow/.test(l)).slice(0, 25).join('\n'));
     }
   }
+  console.log(`\n${selected.length - failed}/${selected.length} varyant derlendi.`);
   process.exit(failed ? 1 : 0);
 })().catch((e) => { console.error(e); process.exit(1); });

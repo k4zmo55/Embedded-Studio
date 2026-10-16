@@ -1,10 +1,13 @@
 // @ts-check
 /**
- * BSP (board support) katmanı üretimi: board.h, bsp.h, bsp.c, board.c, stm32f4xx_it.c
+ * BSP (board support) katmanı üretimi: board.h, bsp.h, bsp.c, board.c, <aile>_it.c
  * İki altyapı: 'hal' (STM32 HAL) ve 'register' (CMSIS başlıklarıyla doğrudan register erişimi).
- * Sürücüler ve uygulama kodu sadece bsp.h API'sini görür.
+ * Sürücüler ve uygulama kodu sadece bsp.h API'sini görür. Aileye göre değişen kod: halcode.js, regcode.js.
  */
 const { parseSignal } = require('../engine/pinAssigner');
+const { familyOf, kernelClock, timerClock } = require('./families');
+const reg = require('./regcode');
+const hal = require('./halcode');
 
 const HANDLE_PREFIX = { I2C: 'hi2c', SPI: 'hspi', USART: 'huart', UART: 'huart', ADC: 'hadc', TIM: 'htim' };
 const HAL_TYPE = { i2c: 'I2C_HandleTypeDef', spi: 'SPI_HandleTypeDef', uart: 'UART_HandleTypeDef', adc: 'ADC_HandleTypeDef', pwm: 'TIM_HandleTypeDef' };
@@ -25,8 +28,10 @@ function makeContext(design, lib, result, clock) {
   const buses = { i2c: byType('i2c'), spi: byType('spi'), uart: byType('uart'), pwm: byType('pwm'), adc: byType('adc') };
   const busId = (periph) => `BSP_${periph}`;
   const f = clock.freq;
-  const pclkOf = (periph) => (mcu.peripherals[periph].bus === 'APB2' ? f.pclk2 : f.pclk1);
-  const timclkOf = (periph) => (mcu.peripherals[periph].bus === 'APB2' ? f.tim2 : f.tim1);
+  const fam = familyOf(mcu);
+  /** Çevre biriminin çekirdek saati (MHz): APB saati ya da aileye özgü kaynak (F0/F3 I2C → HSI, H7 SPI1-3 → PLL1Q) */
+  const pclkOf = (periph) => f[kernelClock(mcu, periph)];
+  const timclkOf = (periph) => f[timerClock(mcu, periph)];
 
   // Pin isimleri: bus pinleri sinyal adıyla (I2C1_SCL), GPIO pinleri komponent adıyla (LED_1_A).
   const label = (id) => design.instances.find((i) => i.id === id)?.label ?? id;
@@ -65,10 +70,12 @@ function makeContext(design, lib, result, clock) {
     const tick = clk / (psc + 1);
     return { psc, arr: Math.max(1, Math.round(tick / freqHz) - 1), tick };
   };
-  // ADC saati en fazla 36 MHz.
-  const adcDiv = [2, 4, 6, 8].find((d) => f.pclk2 / d <= 36) || 8;
+  // ADC saati (PCLK2 bölücüsü): F4/F7 en fazla 36 MHz, F1 en fazla 14 MHz.
+  const adcMax = fam.ip.adc === 'f1' ? 14 : 36;
+  const adcDiv = [2, 4, 6, 8].find((d) => f.pclk2 / d <= adcMax) || 8;
+  const adcChannels = [...new Set(result.connections.filter((c) => c.kind === 'adc').map((c) => Number(parseSignal(c.signal).fn.replace('IN', ''))))].sort((a, b) => a - b);
 
-  return { mcu, periphs, buses, busId, pclkOf, timclkOf, pins, ports, spiDiv, timTiming, adcDiv, clock, label, pinName };
+  return { mcu, fam, periphs, buses, busId, pclkOf, timclkOf, pins, ports, spiDiv, timTiming, adcDiv, adcChannels, clock, label, pinName };
 }
 
 // ------------------------------------------------------------------ board.h
@@ -240,18 +247,7 @@ void bsp_gpio_toggle(GPIO_TypeDef *port, uint16_t pin)
 
 uint16_t bsp_adc_read(uint8_t channel)
 {
-${adc ? `  /* RTOS'ta birden çok task ADC okuyorsa bu fonksiyonu bir mutex ile koruyun. */
-  extern ADC_HandleTypeDef ${handleOf(adc)};
-  ADC_ChannelConfTypeDef c = {0};
-  uint16_t v = 0;
-  c.Channel = channel;
-  c.Rank = 1;
-  c.SamplingTime = ADC_SAMPLETIME_84CYCLES;
-  if (HAL_ADC_ConfigChannel(&${handleOf(adc)}, &c) != HAL_OK) return 0;
-  HAL_ADC_Start(&${handleOf(adc)});
-  if (HAL_ADC_PollForConversion(&${handleOf(adc)}, 10) == HAL_OK) v = (uint16_t)HAL_ADC_GetValue(&${handleOf(adc)});
-  HAL_ADC_Stop(&${handleOf(adc)});
-  return v;` : '  (void)channel;\n  return 0;'}
+${adc ? hal.adcRead(x, handleOf(adc), x.adcChannels) : '  (void)channel;\n  return 0;'}
 }
 
 void bsp_pwm_set(uint8_t timer, uint8_t channel, uint32_t compare)
@@ -262,52 +258,32 @@ ${x.buses.pwm.length ? '  /* TIM_CHANNEL_1..4 = 0x0, 0x4, 0x8, 0xC */\n  __HAL_T
 }
 
 function halBoardSource(x, design, stamp) {
-  const c = x.clock.config;
-  const f = x.clock.freq;
-  const ahbDiv = c.ahb === 1 ? 'RCC_SYSCLK_DIV1' : `RCC_SYSCLK_DIV${c.ahb}`;
-  const osc = c.sysclkSource === 'HSI' && c.pllSource !== 'HSE'
-    ? `osc.OscillatorType = RCC_OSCILLATORTYPE_HSI;
-  osc.HSIState = RCC_HSI_ON;
-  osc.HSICalibrationValue = RCC_HSICALIBRATION_DEFAULT;`
-    : `osc.OscillatorType = RCC_OSCILLATORTYPE_${c.pllSource === 'HSE' || c.sysclkSource === 'HSE' ? 'HSE' : 'HSI'};
-  ${c.pllSource === 'HSE' || c.sysclkSource === 'HSE' ? 'osc.HSEState = RCC_HSE_ON;' : 'osc.HSIState = RCC_HSI_ON;\n  osc.HSICalibrationValue = RCC_HSICALIBRATION_DEFAULT;'}`;
-  const pll = c.sysclkSource === 'PLL'
-    ? `osc.PLL.PLLState = RCC_PLL_ON;
-  osc.PLL.PLLSource = RCC_PLLSOURCE_${c.pllSource};
-  osc.PLL.PLLM = ${c.M};
-  osc.PLL.PLLN = ${c.N};
-  osc.PLL.PLLP = RCC_PLLP_DIV${c.P};
-  osc.PLL.PLLQ = ${c.Q};`
-    : 'osc.PLL.PLLState = RCC_PLL_NONE;';
-
+  const v1 = x.fam.ip.gpio === 'v1';
   const gpio = x.pins.map((p) => {
-    const mode = { af: p.otype === 'od' ? 'GPIO_MODE_AF_OD' : 'GPIO_MODE_AF_PP', analog: 'GPIO_MODE_ANALOG', out: 'GPIO_MODE_OUTPUT_PP', in: 'GPIO_MODE_INPUT' }[p.mode];
+    // F1'de alternatif fonksiyonun giriş tarafı (RX, MISO) giriş olarak yapılandırılır
+    const afIn = v1 && p.mode === 'af' && /_(RX|MISO)$/.test(p.conn.signal);
+    const mode = afIn ? 'GPIO_MODE_INPUT' : { af: p.otype === 'od' ? 'GPIO_MODE_AF_OD' : 'GPIO_MODE_AF_PP', analog: 'ES_GPIO_MODE_ADC', out: 'GPIO_MODE_OUTPUT_PP', in: 'GPIO_MODE_INPUT' }[p.mode];
     const pull = { none: 'GPIO_NOPULL', up: 'GPIO_PULLUP' }[p.pull];
     const init = p.mode === 'out' ? `  HAL_GPIO_WritePin(GPIO${p.port}, GPIO_PIN_${p.n}, ${p.initHigh ? 'GPIO_PIN_SET' : 'GPIO_PIN_RESET'});\n` : '';
+    const alt = v1 ? '' : `\n  g.Alternate = ${p.af !== undefined ? `${p.af}; /* AF${p.af}: ${p.conn.peripheral} */` : '0;'}`;
     return `  /* P${p.port}${p.n}: ${p.conn.signal} */
 ${init}  g.Pin = GPIO_PIN_${p.n};
   g.Mode = ${mode};
   g.Pull = ${pull};
-  g.Speed = GPIO_SPEED_FREQ_VERY_HIGH;
-  g.Alternate = ${p.af !== undefined ? `GPIO_AF${p.af}_${p.conn.peripheral}` : '0'};
+  g.Speed = ${x.fam.halSpeed};${alt}
   HAL_GPIO_Init(GPIO${p.port}, &g);`;
   });
 
   const inits = x.periphs.map(([name, p]) => {
     const h = handleOf(name);
-    const clk = `__HAL_RCC_${name}_CLK_ENABLE();`;
+    // Saat makrosu RCC bitinin adından: ADC1 → __HAL_RCC_ADC12_CLK_ENABLE (G4/H7/U5), __HAL_RCC_ADC_CLK_ENABLE (G0/L4)
+    const enrName = p.type === 'adc' && x.mcu.peripherals[name].enrBit ? x.mcu.peripherals[name].enrBit.replace(/^RCC_\w+?_(\w+)EN$/, '$1') : name;
+    const clk = `__HAL_RCC_${enrName}_CLK_ENABLE();`;
     let body;
     if (p.type === 'i2c') {
       body = `${clk}
 ${h}.Instance = ${name};
-${h}.Init.ClockSpeed = ${p.speedHz};
-${h}.Init.DutyCycle = I2C_DUTYCYCLE_2;
-${h}.Init.OwnAddress1 = 0;
-${h}.Init.AddressingMode = I2C_ADDRESSINGMODE_7BIT;
-${h}.Init.DualAddressMode = I2C_DUALADDRESS_DISABLE;
-${h}.Init.OwnAddress2 = 0;
-${h}.Init.GeneralCallMode = I2C_GENERALCALL_DISABLE;
-${h}.Init.NoStretchMode = I2C_NOSTRETCH_DISABLE;
+${hal.i2cInit(x, name, p, h)}
 if (HAL_I2C_Init(&${h}) != HAL_OK) Error_Handler();`;
     } else if (p.type === 'spi') {
       const div = x.spiDiv(name, p.speedHz);
@@ -323,10 +299,14 @@ ${h}.Init.BaudRatePrescaler = SPI_BAUDRATEPRESCALER_${div}; /* ${(x.pclkOf(name)
 ${h}.Init.FirstBit = SPI_FIRSTBIT_MSB;
 ${h}.Init.TIMode = SPI_TIMODE_DISABLE;
 ${h}.Init.CRCCalculation = SPI_CRCCALCULATION_DISABLE;
-${h}.Init.CRCPolynomial = 10;
+${h}.Init.CRCPolynomial = 7;${x.fam.ip.spi === 'v2' ? `
+${h}.Init.NSSPMode = SPI_NSS_PULSE_DISABLE;
+${h}.Init.MasterKeepIOState = SPI_MASTER_KEEP_IO_STATE_ENABLE;` : x.fam.ip.spi === 'fifo' ? `
+${h}.Init.NSSPMode = SPI_NSS_PULSE_DISABLE;` : ''}
 if (HAL_SPI_Init(&${h}) != HAL_OK) Error_Handler();`;
     } else if (p.type === 'uart') {
       const mode = p.pins.TX && p.pins.RX ? 'UART_MODE_TX_RX' : p.pins.TX ? 'UART_MODE_TX' : 'UART_MODE_RX';
+      const irq = reg.irqOf(x, name);
       body = `${clk}
 ${h}.Instance = ${name};
 ${h}.Init.BaudRate = ${p.baud};
@@ -335,26 +315,17 @@ ${h}.Init.StopBits = UART_STOPBITS_1;
 ${h}.Init.Parity = UART_PARITY_NONE;
 ${h}.Init.Mode = ${mode};
 ${h}.Init.HwFlowCtl = UART_HWCONTROL_NONE;
+#if defined(USART_CR1_OVER8)
 ${h}.Init.OverSampling = UART_OVERSAMPLING_16;
+#endif
 if (HAL_UART_Init(&${h}) != HAL_OK) Error_Handler();
 /* FreeRTOS uyumlu öncelik (configMAX_SYSCALL_INTERRUPT_PRIORITY = 5) */
-HAL_NVIC_SetPriority(${name}_IRQn, 6, 0);
-HAL_NVIC_EnableIRQ(${name}_IRQn);`;
+HAL_NVIC_SetPriority(${irq}_IRQn, 6, 0);
+HAL_NVIC_EnableIRQ(${irq}_IRQn);`;
     } else if (p.type === 'adc') {
       body = `${clk}
 ${h}.Instance = ${name};
-${h}.Init.ClockPrescaler = ADC_CLOCK_SYNC_PCLK_DIV${x.adcDiv}; /* ${(x.clock.freq.pclk2 / x.adcDiv).toFixed(2)} MHz */
-${h}.Init.Resolution = ADC_RESOLUTION_12B;
-${h}.Init.ScanConvMode = DISABLE;
-${h}.Init.ContinuousConvMode = DISABLE;
-${h}.Init.DiscontinuousConvMode = DISABLE;
-${h}.Init.ExternalTrigConvEdge = ADC_EXTERNALTRIGCONVEDGE_NONE;
-${h}.Init.ExternalTrigConv = ADC_SOFTWARE_START;
-${h}.Init.DataAlign = ADC_DATAALIGN_RIGHT;
-${h}.Init.NbrOfConversion = 1;
-${h}.Init.DMAContinuousRequests = DISABLE;
-${h}.Init.EOCSelection = ADC_EOC_SINGLE_CONV;
-if (HAL_ADC_Init(&${h}) != HAL_OK) Error_Handler();`;
+${hal.adcInit(x, name, h)}`;
     } else if (p.type === 'pwm') {
       const t = x.timTiming(name, p.frequencyHz);
       const chans = p.channels.map((ch) => `TIM_CHANNEL_${ch.channel.replace('CH', '')}`);
@@ -373,40 +344,30 @@ oc.OCPolarity = TIM_OCPOLARITY_HIGH;
 oc.OCFastMode = TIM_OCFAST_DISABLE;
 ${chans.map((ch) => `if (HAL_TIM_PWM_ConfigChannel(&${h}, &oc, ${ch}) != HAL_OK) Error_Handler();\nHAL_TIM_PWM_Start(&${h}, ${ch});`).join('\n')}`;
     }
-    return { fn: `MX_${name}_Init`, code: `static void MX_${name}_Init(void)\n{\n${indent(body)}\n}` };
+    // Kenar durumu: bodyde #if satırları girintisiz kalmalı
+    return { fn: `MX_${name}_Init`, code: `static void MX_${name}_Init(void)\n{\n${indent(body).replace(/^ +#/gm, '#')}\n}` };
   });
 
+  const oscPort = x.mcu.device.oscPort || 'H';
   return `${stamp}#include "board.h"
+
+/* L47x: ADC pinleri analog anahtarla bağlanır */
+#if defined(GPIO_MODE_ANALOG_ADC_CONTROL)
+#define ES_GPIO_MODE_ADC GPIO_MODE_ANALOG_ADC_CONTROL
+#else
+#define ES_GPIO_MODE_ADC GPIO_MODE_ANALOG
+#endif
 
 ${x.periphs.map(([n, p]) => `${HAL_TYPE[p.type]} ${handleOf(n)};`).join('\n')}
 
-/* SYSCLK ${f.sysclk} MHz, HCLK ${f.hclk} MHz, APB1 ${f.pclk1} MHz, APB2 ${f.pclk2} MHz, Flash ${x.clock.latency} WS */
-static void SystemClock_Config(void)
-{
-  RCC_OscInitTypeDef osc = {0};
-  RCC_ClkInitTypeDef clk = {0};
-
-  __HAL_RCC_PWR_CLK_ENABLE();
-  __HAL_PWR_VOLTAGESCALING_CONFIG(PWR_REGULATOR_VOLTAGE_SCALE1);
-
-  ${osc}
-  ${pll}
-  if (HAL_RCC_OscConfig(&osc) != HAL_OK) Error_Handler();
-
-  clk.ClockType = RCC_CLOCKTYPE_HCLK | RCC_CLOCKTYPE_SYSCLK | RCC_CLOCKTYPE_PCLK1 | RCC_CLOCKTYPE_PCLK2;
-  clk.SYSCLKSource = RCC_SYSCLKSOURCE_${c.sysclkSource === 'PLL' ? 'PLLCLK' : c.sysclkSource};
-  clk.AHBCLKDivider = ${ahbDiv};
-  clk.APB1CLKDivider = RCC_HCLK_DIV${c.apb1};
-  clk.APB2CLKDivider = RCC_HCLK_DIV${c.apb2};
-  if (HAL_RCC_ClockConfig(&clk, FLASH_LATENCY_${x.clock.latency}) != HAL_OK) Error_Handler();
-}
+${hal.systemClock(x)}
 
 static void MX_GPIO_Init(void)
 {
   GPIO_InitTypeDef g = {0};
 
-${[...new Set(['H', ...x.ports])].sort().map((p) => `  __HAL_RCC_GPIO${p}_CLK_ENABLE();`).join('\n')}
-
+${[...new Set([oscPort, ...x.ports])].sort().map((p) => `  __HAL_RCC_GPIO${p}_CLK_ENABLE();`).join('\n')}
+${v1 ? '  __HAL_RCC_AFIO_CLK_ENABLE();\n  __HAL_AFIO_REMAP_SWJ_NOJTAG(); /* SWD kalır; PA15, PB3, PB4 serbest */\n' : ''}
 ${gpio.join('\n\n')}
 }
 
@@ -430,18 +391,13 @@ void Error_Handler(void)
 }
 
 // ------------------------------------------------------------------ Register (bare-metal)
-const HPRE = { 1: 0, 2: 8, 4: 9, 8: 10, 16: 11, 64: 12, 128: 13, 256: 14, 512: 15 };
-const PPRE = { 1: 0, 2: 4, 4: 5, 8: 6, 16: 7 };
-const ENR = (periph, mcu) => {
-  const bus = mcu.peripherals[periph].bus;
-  return `RCC->${bus}ENR |= RCC_${bus}ENR_${periph}EN;`;
-};
-
 function regBspSource(x, stamp) {
   const list = (t) => x.buses[t].join(', ');
   const i2c = x.buses.i2c.length, spi = x.buses.spi.length, uart = x.buses.uart.length, pwm = x.buses.pwm.length;
+  const u = reg.uartFunctions(x);
   return `${stamp}#include "bsp.h"
 
+${reg.COMPAT}
 #define BSP_TIMEOUT_MS 10U
 
 volatile uint32_t bsp_ticks; /* SysTick_Handler her 1 ms'de artırır */
@@ -459,135 +415,15 @@ void bsp_delay_ms(uint32_t ms)
   while ((bsp_ticks - start) < ms) {
   }
 }
-${i2c ? `
-/* ---- I2C (F4 eski tip I2C çevre birimi, yoklamalı) ---- */
-static int i2c_wait(I2C_TypeDef *i2c, uint32_t flag)
-{
-  uint32_t start = bsp_ticks;
-  while (!(i2c->SR1 & flag)) {
-    if (i2c->SR1 & (I2C_SR1_AF | I2C_SR1_BERR | I2C_SR1_ARLO)) {
-      i2c->SR1 &= ~(I2C_SR1_AF | I2C_SR1_BERR | I2C_SR1_ARLO);
-      i2c->CR1 |= I2C_CR1_STOP;
-      return -1;
-    }
-    if ((bsp_ticks - start) > BSP_TIMEOUT_MS) {
-      i2c->CR1 |= I2C_CR1_STOP;
-      return -1;
-    }
-  }
-  return 0;
-}
-
-static int i2c_idle(I2C_TypeDef *i2c)
-{
-  uint32_t start = bsp_ticks;
-  while ((i2c->SR2 & I2C_SR2_BUSY) || (i2c->CR1 & I2C_CR1_STOP)) {
-    if ((bsp_ticks - start) > BSP_TIMEOUT_MS) return -1;
-  }
-  return 0;
-}
-
-static int i2c_start(I2C_TypeDef *i2c, uint8_t addr8)
-{
-  i2c->CR1 |= I2C_CR1_START;
-  if (i2c_wait(i2c, I2C_SR1_SB)) return -1;
-  i2c->DR = addr8;
-  return i2c_wait(i2c, I2C_SR1_ADDR);
-}
-
-int bsp_i2c_write(uint8_t bus, uint8_t addr7, uint8_t reg, const uint8_t *buf, uint16_t len)
-{
-  I2C_TypeDef *i2c = i2c_bus[bus];
-  if (i2c_idle(i2c) || i2c_start(i2c, (uint8_t)(addr7 << 1))) return -1;
-  (void)i2c->SR2; /* ADDR temizle */
-  i2c->DR = reg;
-  for (uint16_t i = 0; i < len; i++) {
-    if (i2c_wait(i2c, I2C_SR1_TXE)) return -1;
-    i2c->DR = buf[i];
-  }
-  if (i2c_wait(i2c, I2C_SR1_BTF)) return -1;
-  i2c->CR1 |= I2C_CR1_STOP;
-  return 0;
-}
-
-int bsp_i2c_read(uint8_t bus, uint8_t addr7, uint8_t reg, uint8_t *buf, uint16_t len)
-{
-  I2C_TypeDef *i2c = i2c_bus[bus];
-  if (len == 0) return 0;
-  if (i2c_idle(i2c) || i2c_start(i2c, (uint8_t)(addr7 << 1))) return -1;
-  (void)i2c->SR2;
-  i2c->DR = reg;
-  if (i2c_wait(i2c, I2C_SR1_BTF)) return -1;
-  i2c->CR1 |= I2C_CR1_ACK;
-  if (i2c_start(i2c, (uint8_t)((addr7 << 1) | 1U))) return -1; /* tekrarlı START */
-  if (len == 1) {
-    i2c->CR1 &= ~I2C_CR1_ACK;
-    __disable_irq();
-    (void)i2c->SR2;
-    i2c->CR1 |= I2C_CR1_STOP;
-    __enable_irq();
-    if (i2c_wait(i2c, I2C_SR1_RXNE)) return -1;
-    buf[0] = (uint8_t)i2c->DR;
-    return 0;
-  }
-  (void)i2c->SR2;
-  for (uint16_t i = 0; i < len; i++) {
-    if (i2c_wait(i2c, I2C_SR1_RXNE)) return -1;
-    if (i == len - 2U) {
-      /* Sondan bir önceki byte: son byte'ı NACK + STOP ile bitir. Kesme araya girmesin. */
-      __disable_irq();
-      buf[i] = (uint8_t)i2c->DR;
-      i2c->CR1 &= ~I2C_CR1_ACK;
-      i2c->CR1 |= I2C_CR1_STOP;
-      __enable_irq();
-    } else {
-      buf[i] = (uint8_t)i2c->DR;
-    }
-  }
-  return 0;
-}
-
-int bsp_i2c_probe(uint8_t bus, uint8_t addr7)
-{
-  I2C_TypeDef *i2c = i2c_bus[bus];
-  if (i2c_idle(i2c)) return -1;
-  int r = i2c_start(i2c, (uint8_t)(addr7 << 1));
-  (void)i2c->SR2;
-  i2c->CR1 |= I2C_CR1_STOP;
-  return r;
-}
-` : `
-int bsp_i2c_read(uint8_t bus, uint8_t addr7, uint8_t reg, uint8_t *buf, uint16_t len) { (void)bus; (void)addr7; (void)reg; (void)buf; (void)len; return -1; }
-int bsp_i2c_write(uint8_t bus, uint8_t addr7, uint8_t reg, const uint8_t *buf, uint16_t len) { (void)bus; (void)addr7; (void)reg; (void)buf; (void)len; return -1; }
-int bsp_i2c_probe(uint8_t bus, uint8_t addr7) { (void)bus; (void)addr7; return -1; }
-`}
+${reg.i2cFunctions(x)}
 int bsp_spi_transfer(uint8_t bus, const uint8_t *tx, uint8_t *rx, uint16_t len)
 {
-${spi ? `  SPI_TypeDef *spi = spi_bus[bus];
-  for (uint16_t i = 0; i < len; i++) {
-    uint32_t start = bsp_ticks;
-    while (!(spi->SR & SPI_SR_TXE)) if ((bsp_ticks - start) > BSP_TIMEOUT_MS) return -1;
-    *(volatile uint8_t *)&spi->DR = tx ? tx[i] : 0xFF;
-    while (!(spi->SR & SPI_SR_RXNE)) if ((bsp_ticks - start) > BSP_TIMEOUT_MS) return -1;
-    uint8_t b = *(volatile uint8_t *)&spi->DR;
-    if (rx) rx[i] = b;
-  }
-  while (spi->SR & SPI_SR_BSY) {
-  }
-  return 0;` : '  (void)bus; (void)tx; (void)rx; (void)len;\n  return -1;'}
+${reg.spiFunction(x)}
 }
 
 int bsp_uart_write(uint8_t bus, const uint8_t *data, uint16_t len)
 {
-${uart ? `  USART_TypeDef *u = uart_bus[bus];
-  for (uint16_t i = 0; i < len; i++) {
-    uint32_t start = bsp_ticks;
-    while (!(u->SR & USART_SR_TXE)) if ((bsp_ticks - start) > BSP_TIMEOUT_MS) return -1;
-    u->DR = data[i];
-  }
-  while (!(u->SR & USART_SR_TC)) {
-  }
-  return 0;` : '  (void)bus; (void)data; (void)len;\n  return -1;'}
+${u.write}
 }
 
 void bsp_uart_start_rx(uint8_t bus)
@@ -597,12 +433,7 @@ ${uart ? '  uart_bus[bus]->CR1 |= USART_CR1_RXNEIE;' : '  (void)bus;'}
 
 void bsp_uart_irq(uint8_t bus)
 {
-${uart ? `  USART_TypeDef *u = uart_bus[bus];
-  uint32_t sr = u->SR;
-  if (sr & (USART_SR_RXNE | USART_SR_ORE)) {
-    uint8_t b = (uint8_t)u->DR; /* SR sonra DR okumak ORE bayrağını da temizler */
-    if (sr & USART_SR_RXNE) bsp_uart_rx_callback(bus, b);
-  }` : '  (void)bus;'}
+${u.irq}
 }
 
 __attribute__((weak)) void bsp_uart_rx_callback(uint8_t bus, uint8_t byte)
@@ -629,11 +460,7 @@ void bsp_gpio_toggle(GPIO_TypeDef *port, uint16_t pin)
 
 uint16_t bsp_adc_read(uint8_t channel)
 {
-${x.buses.adc.length ? `  uint32_t start = bsp_ticks;
-  ADC1->SQR3 = channel;
-  ADC1->CR2 |= ADC_CR2_SWSTART;
-  while (!(ADC1->SR & ADC_SR_EOC)) if ((bsp_ticks - start) > BSP_TIMEOUT_MS) return 0;
-  return (uint16_t)ADC1->DR;` : '  (void)channel;\n  return 0;'}
+${reg.adcFunction(x)}
 }
 
 void bsp_pwm_set(uint8_t timer, uint8_t channel, uint32_t compare)
@@ -644,114 +471,14 @@ ${pwm ? '  (&pwm_bus[timer]->CCR1)[channel - 1U] = compare;' : '  (void)timer; (
 }
 
 function regBoardSource(x, design, stamp) {
-  const c = x.clock.config;
-  const f = x.clock.freq;
-  const mcu = x.mcu;
-  const useHse = c.pllSource === 'HSE' || c.sysclkSource === 'HSE';
-  const sw = { HSI: 'RCC_CFGR_SW_HSI', HSE: 'RCC_CFGR_SW_HSE', PLL: 'RCC_CFGR_SW_PLL' }[c.sysclkSource];
-  const sws = { HSI: 'RCC_CFGR_SWS_HSI', HSE: 'RCC_CFGR_SWS_HSE', PLL: 'RCC_CFGR_SWS_PLL' }[c.sysclkSource];
-  const MODE = { in: 0, out: 1, af: 2, analog: 3 };
-  const gpio = x.pins.map((p) => {
-    const pre = p.mode === 'out' ? `  GPIO${p.port}->BSRR = ${p.initHigh ? `1U << ${p.n}` : `1U << (${p.n} + 16)`};\n` : '';
-    return `${pre}  gpio_config(GPIO${p.port}, ${p.n}, ${MODE[p.mode]}U, ${p.otype === 'od' ? 1 : 0}U, ${p.pull === 'up' ? 1 : 0}U, ${p.af ?? 0}U); /* ${p.conn.signal} */`;
-  });
-
-  const inits = x.periphs.map(([name, p]) => {
-    let body;
-    if (p.type === 'i2c') {
-      const pclk = Math.round(x.pclkOf(name));
-      const fast = p.speedHz > 100000;
-      const ccr = fast ? Math.max(1, Math.ceil((x.pclkOf(name) * 1e6) / (3 * p.speedHz))) : Math.max(4, Math.ceil((x.pclkOf(name) * 1e6) / (2 * p.speedHz)));
-      const trise = fast ? Math.floor((pclk * 300) / 1000) + 1 : pclk + 1;
-      body = `${ENR(name, mcu)}
-${name}->CR1 = I2C_CR1_SWRST;
-${name}->CR1 = 0;
-${name}->CR2 = ${pclk}U; /* PCLK1 MHz */
-${name}->CCR = ${fast ? 'I2C_CCR_FS | ' : ''}${ccr}U; /* ${p.speedHz / 1000} kHz */
-${name}->TRISE = ${trise}U;
-${name}->CR1 = I2C_CR1_PE;`;
-    } else if (p.type === 'spi') {
-      const div = x.spiDiv(name, p.speedHz);
-      body = `${ENR(name, mcu)}
-${name}->CR1 = SPI_CR1_MSTR | SPI_CR1_SSM | SPI_CR1_SSI | (${Math.log2(div) - 1}U << SPI_CR1_BR_Pos); /* /${div} = ${(x.pclkOf(name) / div).toFixed(3)} MHz, mod 0 */
-${name}->CR1 |= SPI_CR1_SPE;`;
-    } else if (p.type === 'uart') {
-      const brr = Math.round((x.pclkOf(name) * 1e6) / p.baud);
-      body = `${ENR(name, mcu)}
-${name}->BRR = ${brr}U; /* ${p.baud} baud @ ${x.pclkOf(name)} MHz */
-${name}->CR1 = ${p.pins.TX ? 'USART_CR1_TE | ' : ''}${p.pins.RX ? 'USART_CR1_RE | ' : ''}USART_CR1_UE;
-NVIC_SetPriority(${name}_IRQn, 6); /* FreeRTOS: configMAX_SYSCALL_INTERRUPT_PRIORITY (5) altı */
-NVIC_EnableIRQ(${name}_IRQn);`;
-    } else if (p.type === 'adc') {
-      const pre = { 2: 0, 4: 1, 6: 2, 8: 3 }[x.adcDiv];
-      body = `${ENR(name, mcu)}
-ADC1_COMMON->CCR = (ADC1_COMMON->CCR & ~ADC_CCR_ADCPRE) | (${pre}U << ADC_CCR_ADCPRE_Pos); /* PCLK2/${x.adcDiv} */
-${name}->CR1 = 0; /* 12 bit */
-${name}->SMPR2 = 0x24924924U; /* kanal 0-9: 84 döngü örnekleme */
-${name}->SMPR1 = 0x00924924U; /* kanal 10-17: 84 döngü örnekleme */
-${name}->CR2 = ADC_CR2_ADON;`;
-    } else if (p.type === 'pwm') {
-      const t = x.timTiming(name, p.frequencyHz);
-      const lines = p.channels.map((ch) => {
-        const n = Number(ch.channel.replace('CH', ''));
-        const reg = n <= 2 ? 'CCMR1' : 'CCMR2';
-        const shift = n % 2 === 1 ? 0 : 8;
-        return `${name}->${reg} |= (6U << ${shift + 4}) | (1U << ${shift + 3}); /* CH${n}: PWM mod 1, önyükleme */
-${name}->CCER |= 1U << ${(n - 1) * 4};`;
-      });
-      body = `${ENR(name, mcu)}
-${name}->PSC = ${t.psc}U; /* ${(t.tick / 1e6).toFixed(3)} MHz sayaç */
-${name}->ARR = ${t.arr}U; /* ${p.frequencyHz} Hz */
-${lines.join('\n')}
-${name}->CR1 = TIM_CR1_ARPE;
-${name}->EGR = TIM_EGR_UG;
-${name}->CR1 |= TIM_CR1_CEN;`;
-    }
-    return { fn: `init_${name.toLowerCase()}`, code: `static void init_${name.toLowerCase()}(void)\n{\n${indent(body)}\n}` };
-  });
-
-  const ports = [...new Set(x.ports)];
+  const inits = x.periphs.map(([name, p]) => ({ fn: `init_${name.toLowerCase()}`, code: `static void init_${name.toLowerCase()}(void)\n{\n${indent(reg.periphInit(x, name, p)).replace(/^ +#/gm, '#')}\n}` }));
   return `${stamp}#include "board.h"
 
-/* SYSCLK ${f.sysclk} MHz, HCLK ${f.hclk} MHz, APB1 ${f.pclk1} MHz, APB2 ${f.pclk2} MHz, Flash ${x.clock.latency} WS */
-static void clock_init(void)
-{
-  uint32_t start;
-  RCC->APB1ENR |= RCC_APB1ENR_PWREN;
-  PWR->CR |= PWR_CR_VOS; /* Ölçek 1: en yüksek frekans */
-${useHse ? `  RCC->CR |= RCC_CR_HSEON;
-  for (start = 0; !(RCC->CR & RCC_CR_HSERDY); start++) {
-    if (start > 1000000U) Error_Handler(); /* kristal başlamadı */
-  }
-` : ''}  FLASH->ACR = FLASH_ACR_PRFTEN | FLASH_ACR_ICEN | FLASH_ACR_DCEN | (${x.clock.latency}U << FLASH_ACR_LATENCY_Pos);
-  RCC->CFGR = (${HPRE[c.ahb]}U << RCC_CFGR_HPRE_Pos) | (${PPRE[c.apb1]}U << RCC_CFGR_PPRE1_Pos) | (${PPRE[c.apb2]}U << RCC_CFGR_PPRE2_Pos);
-${c.sysclkSource === 'PLL' ? `  RCC->PLLCFGR = (${c.M}U << RCC_PLLCFGR_PLLM_Pos) | (${c.N}U << RCC_PLLCFGR_PLLN_Pos) | (${c.P / 2 - 1}U << RCC_PLLCFGR_PLLP_Pos) |
-                 (${c.Q}U << RCC_PLLCFGR_PLLQ_Pos)${c.pllSource === 'HSE' ? ' | RCC_PLLCFGR_PLLSRC_HSE' : ''};
-  RCC->CR |= RCC_CR_PLLON;
-  while (!(RCC->CR & RCC_CR_PLLRDY)) {
-  }
-` : ''}  RCC->CFGR = (RCC->CFGR & ~RCC_CFGR_SW) | ${sw};
-  while ((RCC->CFGR & RCC_CFGR_SWS) != ${sws}) {
-  }
-  SystemCoreClockUpdate();
-}
+${reg.clockInit(x)}
 
-/* mode: 0 giriş, 1 çıkış, 2 alternatif, 3 analog | od: open-drain | pullup | af: alternatif fonksiyon */
-static void gpio_config(GPIO_TypeDef *p, uint32_t pin, uint32_t mode, uint32_t od, uint32_t pullup, uint32_t af)
-{
-  p->AFR[pin >> 3] = (p->AFR[pin >> 3] & ~(0xFU << ((pin & 7U) * 4U))) | (af << ((pin & 7U) * 4U));
-  p->OTYPER = (p->OTYPER & ~(1U << pin)) | (od << pin);
-  p->OSPEEDR |= 3U << (pin * 2U);
-  p->PUPDR = (p->PUPDR & ~(3U << (pin * 2U))) | (pullup << (pin * 2U));
-  p->MODER = (p->MODER & ~(3U << (pin * 2U))) | (mode << (pin * 2U));
-}
+${reg.gpioConfig(x)}
 
-static void gpio_init(void)
-{
-  RCC->AHB1ENR |= ${ports.length ? ports.map((p) => `RCC_AHB1ENR_GPIO${p}EN`).join(' | ') : '0'};
-  (void)RCC->AHB1ENR; /* saat açıldıktan sonra kısa gecikme */
-${gpio.join('\n')}
-}
+${reg.gpioInit(x)}
 
 ${inits.map((i) => i.code).join('\n\n')}
 
@@ -773,8 +500,18 @@ void Error_Handler(void)
 }
 
 // ------------------------------------------------------------------ kesmeler
+/** UART kesme işleyicileri; aynı IRQ'yu paylaşan birimler (ör. G0 USART3_4_LPUART1) tek işleyicide. */
+function uartHandlers(x) {
+  const groups = new Map();
+  for (const p of x.buses.uart) {
+    const irq = reg.irqOf(x, p);
+    groups.set(irq, [...(groups.get(irq) || []), p]);
+  }
+  return [...groups].map(([irq, list]) => `void ${irq}_IRQHandler(void)\n{\n${list.map((p) => `  bsp_uart_irq(${x.busId(p)});`).join('\n')}\n}`);
+}
+
 function itSource(x, design, framework, stamp, user) {
-  const uartIrqs = x.buses.uart.map((p) => `void ${p}_IRQHandler(void)\n{\n  bsp_uart_irq(${x.busId(p)});\n}`);
+  const uartIrqs = uartHandlers(x);
   const tick = framework === 'hal' ? '  HAL_IncTick();' : '  bsp_ticks++;';
   return `${stamp}#include "bsp.h"
 ${design.rtos ? '#include "FreeRTOS.h"\n#include "task.h"\n\nextern void xPortSysTickHandler(void);\n' : ''}${framework === 'register' ? 'extern volatile uint32_t bsp_ticks;\n' : ''}${user('Includes')}
@@ -804,7 +541,7 @@ ${user('Handlers')}
  * kullanıcıya ait stm32f4xx_it.c (faultStarter) sadece hata işleyicilerini içerir ve bir daha yazılmaz.
  */
 function irqSource(x, design, stamp) {
-  const uartIrqs = x.buses.uart.map((p) => `void ${p}_IRQHandler(void)\n{\n  bsp_uart_irq(${x.busId(p)});\n}`);
+  const uartIrqs = uartHandlers(x);
   return `${stamp}#include "bsp.h"
 ${design.rtos ? '#include "FreeRTOS.h"\n#include "task.h"\n\nextern void xPortSysTickHandler(void);\n' : ''}extern volatile uint32_t bsp_ticks;
 

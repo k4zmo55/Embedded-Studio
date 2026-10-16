@@ -584,7 +584,6 @@
   "CMakeLists.txt yoksa bir kez başlangıç dosyası oluşturulur. Değişkenler (ES_SOURCES, ES_DEFINES …) dosyanın başında açıklanır.": "If there is no CMakeLists.txt, a starter file is created once. The variables (ES_SOURCES, ES_DEFINES …) are described at the top of the file.",
   "Derleme tipi": "Build type",
   "FPU / float ABI": "FPU / float ABI",
-  "Donanım (hard, fpv4-sp-d16)": "Hardware (hard, fpv4-sp-d16)",
   "softfp (FPU, yazılım ABI)": "softfp (FPU, software ABI)",
   "Yazılım (FPU yok)": "Software (no FPU)",
   "Uyarı seviyesi": "Warning level",
@@ -608,5 +607,18 @@
   "Clang C kodunu derler; assembler, bağlayıcı ve newlib arm-none-eabi-gcc'den gelir, bu yüzden GCC de kurulu olmalı.": "Clang compiles the C code; the assembler, linker and newlib come from arm-none-eabi-gcc, so GCC must be installed too.",
   "Takımda herkesin yolu farklıysa klasörü boş bırakıp PATH kullanın ya da ES_GCC_DIR ortam değişkenini ayarlayın.": "If paths differ across your team, leave the folder empty and use PATH, or set the ES_GCC_DIR environment variable.",
   "Son derleme ({0}): {1}": "Last build ({0}): {1}",
-  "Ayarlar hemen kaydedilir; dosyalar (cmake/embedded-studio.cmake, araç zinciri) \"Kod Üret\" ile güncellenir. Derle/Yükle seçili tipi kullanır: build/{0}/": "Settings are saved immediately; the files (cmake/embedded-studio.cmake, toolchain) are updated by \"Generate Code\". Build/Flash use the selected type: build/{0}/"
+  "Ayarlar hemen kaydedilir; dosyalar (cmake/embedded-studio.cmake, araç zinciri) \"Kod Üret\" ile güncellenir. Derle/Yükle seçili tipi kullanır: build/{0}/": "Settings are saved immediately; the files (cmake/embedded-studio.cmake, toolchain) are updated by \"Generate Code\". Build/Flash use the selected type: build/{0}/",
+  "{0} SVD dosyası indirilemedi: {1}": "Could not download the {0} SVD file: {1}",
+  "{0} için register tanımı yok: SVD indirilemedi.": "No register definitions for {0}: the SVD file could not be downloaded.",
+  "PLL çıkışı {0} MHz; {1}-{2} MHz olmalı.": "PLL output is {0} MHz; it must be {1}-{2} MHz.",
+  "R şu değerlerden biri olmalı: {0}.": "R must be one of: {0}.",
+  "P şu değerlerden biri olmalı: {0}.": "P must be one of: {0}.",
+  "PLL1Q {0} MHz; SPI1-3 çekirdek saati en fazla {1} MHz.": "PLL1Q is {0} MHz; the SPI1-3 kernel clock can be at most {1} MHz.",
+  "PLL giriş {0} MHz": "PLL input {0} MHz",
+  "SPI1-3 çekirdek": "SPI1-3 kernel",
+  "SYSCLK {0} MHz · HCLK {1} · APB {2} MHz · Flash {3} bekleme durumu": "SYSCLK {0} MHz · HCLK {1} · APB {2} MHz · Flash {3} wait states",
+  "{0} çekirdeğinde FPU yok.": "The {0} core has no FPU.",
+  "Donanım (hard, {0})": "Hardware (hard, {0})",
+  "İşlemci ailesi değişiyor ({0} → {1}): CMSIS ve HAL paketleri yeni aileye göre indirilir, kesme dosyası {2} olur ve içindeki USER CODE taşınır. Eski ailenin paket klasörleri derlenmez ama silinmez.": "The MCU family changes ({0} → {1}): CMSIS and HAL packages for the new family are downloaded, the interrupt file becomes {2} and its USER CODE is moved. The old family's package folders are no longer compiled but are not deleted.",
+  "{0} tanımı ST'nin açık pin veritabanından üretildi ve derleme testlerinden geçti, ancak gerçek kartta doğrulanmadı. Üretim öncesi pin ve saat ayarlarını datasheet ile kontrol edin.": "The {0} definition was generated from ST's open pin database and passes the build tests, but it has not been verified on real hardware. Check pin and clock settings against the datasheet before production."
 }

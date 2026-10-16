@@ -145,7 +145,10 @@
         h('div', { class: 'field' }, h('label', { for: 'set-build-type', text: t('Derleme tipi') }),
           select('set-build-type', b.type, BUILD_TYPES.map((x) => [x, x]), (v) => setBuild((x) => { x.type = v; }))),
         h('div', { class: 'field' }, h('label', { for: 'set-fpu', text: t('FPU / float ABI') }),
-          select('set-fpu', b.fpu, [['hard', t('Donanım (hard, fpv4-sp-d16)')], ['softfp', t('softfp (FPU, yazılım ABI)')], ['soft', t('Yazılım (FPU yok)')]], (v) => setBuild((x) => { x.fpu = v; }))),
+          // FPU'su olmayan çekirdek (Cortex-M0/M0+/M3): seçim kapalı, her zaman yazılım float
+          mcu.fpu === null
+            ? h('select', { id: 'set-fpu', disabled: true, title: t('{0} çekirdeğinde FPU yok.', mcu.core) }, h('option', { text: t('Yazılım (FPU yok)') }))
+            : select('set-fpu', b.fpu, [['hard', t('Donanım (hard, {0})', mcu.fpu || 'fpv4-sp-d16')], ['softfp', t('softfp (FPU, yazılım ABI)')], ['soft', t('Yazılım (FPU yok)')]], (v) => setBuild((x) => { x.fpu = v; }))),
         h('div', { class: 'field' }, h('label', { for: 'set-warn', text: t('Uyarı seviyesi') }),
           select('set-warn', b.warnings, [['off', t('Kapalı')], ['normal', '-Wall -Wextra'], ['strict', t('Sıkı (+ -Wshadow -Wundef …)')]], (v) => setBuild((x) => { x.warnings = v; })),
           h('label', { class: 'check' }, h('input', { type: 'checkbox', id: 'set-werror', checked: b.werror, onchange: (e) => setBuild((x) => { x.werror = e.target.checked; }) }), h('span', { text: t('Uyarıları hata say (-Werror)') })))),

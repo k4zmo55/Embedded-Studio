@@ -17,8 +17,22 @@ jobs:
       - run: node test/smoke.js
 
   build:
-    name: Üretilen kodu derle (HAL / register × RTOS × derleme ayarları)
+    name: Derle (${{ matrix.group }})
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - group: F411 + derleme ayarları
+            filter: stm32f411
+          - group: F0 F1 F3
+            filter: stm32f0|stm32f1|stm32f3
+          - group: F4 F7
+            filter: stm32f40|stm32f42|stm32f44|stm32f7
+          - group: G0 G4 L4
+            filter: stm32g|stm32l
+          - group: H7 U5
+            filter: stm32h|stm32u
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -30,5 +44,5 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/es-packs
-          key: es-packs-v2
-      - run: node test/build.js ~/es-packs ~/es-build
+          key: es-packs-v3-${{ strategy.job-index }}
+      - run: node test/build.js ~/es-packs ~/es-build "${{ matrix.filter }}"

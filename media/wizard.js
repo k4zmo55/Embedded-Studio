@@ -80,7 +80,7 @@
   on('welcome', (m) => {
     info = m;
     form.name = m.defaultName || form.name;
-    form.mcuId = m.mcus[0] && m.mcus[0].id;
+    form.mcuId = (m.mcus.find((x) => x.id === 'stm32f411ceu6') || m.mcus[0] || {}).id; // varsayılan: Black Pill (elle doğrulanmış tanım)
     form.location = m.here ? 'here' : '';
     ES.showWelcome(true);
     render();

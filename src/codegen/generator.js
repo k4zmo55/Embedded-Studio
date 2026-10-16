@@ -14,9 +14,10 @@ const { parseSignal } = require('../engine/pinAssigner');
 const bsp = require('./bsp');
 const { layout, join } = require('./layout');
 const cm = require('./build');
+const { familyOf } = require('./families');
 const { cIdent, indent } = bsp;
 
-const GENERATOR_VERSION = 4; // 3: bare-metal sade klasör yapısı; 4: derleme ayarları cmake/embedded-studio.cmake'te, CMakePresets.json
+const GENERATOR_VERSION = 5; // 3: bare-metal sade klasör yapısı; 4: cmake/embedded-studio.cmake + CMakePresets.json; 5: çoklu aile (ES-106)
 
 /** Hazır sürücüsü olmayan (kullanıcının yüklediği) komponentler: pinler ve bus hazır, okuma kodu kullanıcıda. */
 const GENERIC_DRIVER = {
@@ -69,7 +70,8 @@ function generate(design, lib, result, clock, opts = {}) {
   const framework = design.framework === 'register' ? 'register' : 'hal';
   const name = (design.project && design.project.name) || 'embedded_app';
   const mcu = lib.mcus[design.mcuId];
-  const P = layout(framework);
+  const fam = familyOf(mcu);
+  const P = layout(framework, fam.key);
   // Profesyonel + bare-metal: main.c / app.c kullanıcının; araç sadece sürücü, BSP, kesme, derleme dosyalarını yazar
   const owned = framework === 'register' && design.mode === 'pro';
   const build = cm.normalizeBuild(design.build);
@@ -92,9 +94,9 @@ function generate(design, lib, result, clock, opts = {}) {
   if (owned) {
     add(`${P.src}/bsp_irq.c`, bsp.irqSource(x, design, stamp));
     // USER CODE bloklu: Acemi moddan geçişte eski SysTick/UART işleyicileri (artık bsp_irq.c'de) çakışmasın, kullanıcı kodu korunsun
-    add(`${P.src}/stm32f4xx_it.c`, bsp.faultStarter(userStamp, (n) => userBlock(n)), 'user');
+    add(`${P.src}/${fam.itFile}`, bsp.faultStarter(userStamp, (n) => userBlock(n)), 'user');
   } else {
-    add(`${P.src}/stm32f4xx_it.c`, bsp.itSource(x, design, framework, userStamp, (n) => userBlock(n)), 'user');
+    add(`${P.src}/${fam.itFile}`, bsp.itSource(x, design, framework, userStamp, (n) => userBlock(n)), 'user');
   }
 
   // ---- Komponent bağlamları ----
@@ -284,17 +286,23 @@ static void Task_Monitor(void *arg)
   }
 }
 
-/* configGENERATE_RUN_TIME_STATS için DWT döngü sayacı */
+/* configGENERATE_RUN_TIME_STATS için DWT döngü sayacı (Cortex-M0/M0+'da DWT yok: 1 ms çözünürlüklü tick) */
 void vConfigureRunTimeCounter(void)
 {
+#if defined(DWT)
   CoreDebug->DEMCR |= CoreDebug_DEMCR_TRCENA_Msk;
   DWT->CYCCNT = 0;
   DWT->CTRL |= DWT_CTRL_CYCCNTENA_Msk;
+#endif
 }
 
 uint32_t ulGetRunTimeCounter(void)
 {
+#if defined(DWT)
   return DWT->CYCCNT;
+#else
+  return bsp_millis();
+#endif
 }
 
 void vApplicationStackOverflowHook(TaskHandle_t task, char *task_name)
@@ -321,7 +329,7 @@ ${indent(userBlock('Tasks'))}
   vTaskStartScheduler();
   Error_Handler(); /* buraya gelinirse heap yetersizdir */
 }`;
-    add(`${P.inc}/FreeRTOSConfig.h`, freertosConfig(plan, owned ? starterStamp : userStamp, !owned), owned ? 'once' : 'user');
+    add(`${P.inc}/FreeRTOSConfig.h`, freertosConfig(plan, owned ? starterStamp : userStamp, !owned, { fpu: cm.effectiveFpu(design.build, mcu) !== 'soft', itFile: fam.itFile }), owned ? 'once' : 'user');
   } else {
     start = `/* ---- Süper döngü (RTOS yok) ---- */
 void App_Start(void)
@@ -396,7 +404,7 @@ ${indent(userBlock('PostInit'))}
 `, 'user');
 
   // ---- HAL yapılandırması ----
-  if (framework === 'hal') add(`${P.inc}/stm32f4xx_hal_conf.h`, halConf(opts.halConfTemplate, x, stamp));
+  if (framework === 'hal') add(`${P.inc}/${fam.halConf}`, halConf(opts.halConfTemplate, x, stamp, fam));
 
   // ---- Derleme sistemi ----
   // Ayarlar cmake/embedded-studio.cmake'te; CMakeLists.txt ya Embedded Studio'nun (USER CODE bloklu) ya da kullanıcının
@@ -478,7 +486,7 @@ void vApplicationMallocFailedHook(void)
 
 const mdStamp = () => '<!-- Embedded Studio tarafından üretildi. Kendi notlarınızı USER CODE bloğuna yazın. -->\n';
 
-function halConf(template, x, stamp) {
+function halConf(template, x, stamp, fam) {
   const enabled = new Set(['HAL_MODULE_ENABLED', 'HAL_CORTEX_MODULE_ENABLED', 'HAL_RCC_MODULE_ENABLED', 'HAL_GPIO_MODULE_ENABLED',
     'HAL_PWR_MODULE_ENABLED', 'HAL_FLASH_MODULE_ENABLED', 'HAL_DMA_MODULE_ENABLED', 'HAL_EXTI_MODULE_ENABLED']);
   if (x.buses.i2c.length) enabled.add('HAL_I2C_MODULE_ENABLED');
@@ -487,15 +495,16 @@ function halConf(template, x, stamp) {
   if (x.buses.adc.length) enabled.add('HAL_ADC_MODULE_ENABLED');
   if (x.buses.pwm.length) enabled.add('HAL_TIM_MODULE_ENABLED');
   if (!template) {
-    return `${stamp}#error "STM32F4 HAL paketi bulunamadı. Embedded Studio > Kod Üret, HAL paketini indirmeyi önerecektir."\n`;
+    return `${stamp}#error "${fam.series} HAL paketi bulunamadı. Embedded Studio > Kod Üret, HAL paketini indirmeyi önerecektir."\n`;
   }
   const body = template.replace(/^[ \t]*(?:\/\*\s*)?#define\s+(HAL_\w*MODULE_ENABLED)\s*(?:\*\/)?[ \t]*$/gm, (_, mod) =>
     enabled.has(mod) ? `#define ${mod}` : `/* #define ${mod} */`);
-  return `${stamp}/* STM32CubeF4 stm32f4xx_hal_conf_template.h tabanlıdır; sadece kullanılan modüller açık. */\n${body}`;
+  return `${stamp}/* ${fam.halConfTemplate} tabanlıdır; sadece kullanılan modüller açık. */\n${body}`;
 }
 
 /** stats=false: çalışma zamanı istatistikleri kapalı (profesyonel modda sayaç fonksiyonlarını kullanıcı yazmaz). */
-function freertosConfig(plan, stamp, stats = true) {
+/** opts.fpu: FPU kullanılıyor mu (CM33 portu configENABLE_FPU ister) */
+function freertosConfig(plan, stamp, stats = true, opts = { fpu: true, itFile: 'stm32f4xx_it.c' }) {
   return `${stamp}#ifndef FREERTOS_CONFIG_H
 #define FREERTOS_CONFIG_H
 
@@ -535,7 +544,7 @@ ${stats ? `/* Embedded Studio task monitörü için */
 #define INCLUDE_uxTaskGetStackHighWaterMark     1
 #define INCLUDE_xTaskGetSchedulerState          1
 
-/* Cortex-M4 kesme öncelikleri (4 bit) */
+/* Kesme öncelikleri: Cortex-M3/M4/M7/M33 STM32'lerde 4 bit (M0/M0+'da BASEPRI yok, bu değerler kullanılmaz) */
 #define configPRIO_BITS                         4
 #define configLIBRARY_LOWEST_INTERRUPT_PRIORITY 15
 #define configLIBRARY_MAX_SYSCALL_INTERRUPT_PRIORITY 5
@@ -544,7 +553,12 @@ ${stats ? `/* Embedded Studio task monitörü için */
 
 #define configASSERT(x) if ((x) == 0) { taskDISABLE_INTERRUPTS(); for (;;); }
 
-/* Port kesmeleri. SysTick_Handler stm32f4xx_it.c içinde tick sayacıyla paylaşılıyor. */
+/* Cortex-M33 (ARM_CM33_NTZ) portu için */
+#define configENABLE_FPU                        ${opts.fpu ? 1 : 0}
+#define configENABLE_MPU                        0
+#define configENABLE_TRUSTZONE                  0
+
+/* Port kesmeleri. SysTick_Handler ${opts.itFile} içinde tick sayacıyla paylaşılıyor. */
 #define vPortSVCHandler    SVC_Handler
 #define xPortPendSVHandler PendSV_Handler
 
@@ -729,14 +743,14 @@ ${generated}
 ${userFiles}
 3. **Yeni sensör eklemek / çıkarmak / pin değiştirmek için kodu elle değiştirmeyin.** Kullanıcıdan bunu Embedded Studio
    tasarımcısında yapmasını ve "Kod Üret" demesini isteyin. Eklenti sürücüyü ekler/kaldırır, pinleri ve init kodunu günceller.
-4. Yeni, tamamen size ait dosyalar (ör. \`${layout(framework).src}/control.c\`) serbestçe eklenebilir; CMake \`${layout(framework).src}/*.c\` dosyalarını otomatik toplar.
+4. Yeni, tamamen size ait dosyalar (ör. \`${layout(framework, familyOf(mcu).key).src}/control.c\`) serbestçe eklenebilir; CMake \`${layout(framework, familyOf(mcu).key).src}/*.c\` dosyalarını otomatik toplar.
 5. Donanıma erişim için \`bsp.h\` API'sini kullanın (\`bsp_i2c_read\`, \`bsp_gpio_write\`, ...). ${framework === 'hal' ? 'HAL fonksiyonları da kullanılabilir.' : 'Bu proje bare-metal (register) altyapısındadır; HAL yoktur, CMSIS register tanımlarını kullanın.'}
 6. Telemetri için \`telemetry.h\`: \`Telemetry_Value("KANAL.ad", deger)\`. Embedded Studio monitörü bu kanalları otomatik çizer.
 7. Son tasarım değişikliği ve hangi dosyaların etkilendiği: \`.embedded-studio/LAST_CHANGES.md\`. Bir göreve başlamadan önce okuyun.
 
 ## Nereye ne yazılır
 
-${framework === 'register' && design.mode === 'pro' ? `Bu proje **profesyonel bare-metal** modunda: uygulama kodunu kullanıcı yazar. \`src/main.c\`, \`src/stm32f4xx_it.c\`${design.rtos ? ', `inc/FreeRTOSConfig.h`' : ''} bir kez
+${framework === 'register' && design.mode === 'pro' ? `Bu proje **profesyonel bare-metal** modunda: uygulama kodunu kullanıcı yazar. \`src/main.c\`, \`src/${familyOf(mcu).itFile}\`${design.rtos ? ', `inc/FreeRTOSConfig.h`' : ''} bir kez
 başlangıç olarak oluşturuldu ve artık tamamen kullanıcınındır; Embedded Studio bunlara ve \`src/\` altındaki diğer kullanıcı dosyalarına yazmaz.
 
 | Amaç | Dosya |
@@ -745,14 +759,14 @@ başlangıç olarak oluşturuldu ve artık tamamen kullanıcınındır; Embedded
 | Sensör sürücüsünü kullanmak | \`drivers/<sürücü>.h\` başındaki "Kullanım örneği" (bu projenin bus/adres/pinleriyle) |
 | 1 ms periyodik iş | Kendi dosyanızda \`void bsp_systick_hook(void)\` tanımlayın (weak) |
 | UART'tan gelen byte | Kendi dosyanızda \`void bsp_uart_rx_callback(uint8_t bus, uint8_t byte)\` tanımlayın (weak) |
-| Hata işleyicileri | \`src/stm32f4xx_it.c\` (SysTick ve UART kesmeleri üretilen \`src/bsp_irq.c\`'de) |
+| Hata işleyicileri | \`src/${familyOf(mcu).itFile}\` (SysTick ve UART kesmeleri üretilen \`src/bsp_irq.c\`'de) |
 ${cmakeRow}` : `| Amaç | Dosya / blok |
 |---|---|
 | Sensör verisini işlemek | \`app.c\` → \`Poll_<SENSÖR>()\` içindeki \`USER CODE BEGIN <SENSÖR>\` (okunan değişkenler kapsamda) |
 | Global değişken / yardımcı fonksiyon | \`app.c\` → \`Globals\`, \`Functions\` |
 | Başlangıç kodu | \`app.c\` → \`Init\`; \`main.c\` → \`PreInit\` / \`PostInit\` |
 | ${design.rtos ? 'Kendi FreeRTOS task\'ları | `app.c` → `Tasks` (vTaskStartScheduler öncesi xTaskCreate)' : 'Ana döngü işi | `app.c` → `Loop`'} |
-| Kesme işleyicileri | \`stm32f4xx_it.c\` → \`Handlers\` |
+| Kesme işleyicileri | \`${familyOf(mcu).itFile}\` → \`Handlers\` |
 ${cmakeRow}`}
 
 ## Donanım özeti

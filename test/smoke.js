@@ -305,6 +305,132 @@ test('boyut özeti: arm-none-eabi-size çıktısı → flash = text+data, RAM = 
   assert.strictEqual(parseSize('arm-none-eabi-size: x.elf: file format not recognized'), null);
 });
 
+console.log('İşlemci aileleri (ES-106)');
+const { familyOf } = require('../src/codegen/families');
+const mcuIds = Object.keys(lib.mcus);
+test('15 işlemci tanımlı; her pin fonksiyonunun çevre birimi var, saat açma biti ve UART kesmesi tanımlı', () => {
+  assert.strictEqual(mcuIds.length, 15);
+  for (const id of mcuIds) {
+    const m = lib.mcus[id];
+    familyOf(m); // bilinmeyen aile hata verir
+    for (const k of ['define', 'startup', 'openocdTarget', 'family']) assert.ok(m.device[k], `${id}: device.${k}`);
+    for (const p of m.pins) {
+      assert.ok(/^P[A-K]\d+$/.test(p.name), `${id}: pin adı ${p.name}`);
+      for (const f of p.functions) assert.ok(m.peripherals[f.signal.split('_')[0]], `${id}: ${p.name} ${f.signal} çevre birimi yok`);
+    }
+    assert.ok(m.pins.find((p) => p.name === 'PA13').reserved && m.pins.find((p) => p.name === 'PA14').reserved, `${id}: SWD pinleri rezerve`);
+    if (id === 'stm32f411ceu6') continue; // elle girilmiş ilk tanım
+    for (const [n, p] of Object.entries(m.peripherals)) {
+      assert.ok(/^RCC_\w+EN$/.test(p.enrBit), `${id}: ${n} enrBit`);
+      if (p.type === 'uart') assert.ok(p.irq, `${id}: ${n} irq`);
+    }
+    assert.ok(m.device.gpioEnr && m.device.gpioEnr.bit.includes('{P}'), `${id}: gpioEnr`);
+  }
+});
+test('her işlemcide varsayılan ve en yüksek saat ayarı geçerli', () => {
+  for (const id of mcuIds) {
+    const m = lib.mcus[id];
+    const d = computeClock(m, undefined);
+    assert.ok(d.ok, `${id} varsayılan: ${JSON.stringify(d.issues)}`);
+    const top = computeClock(m, solveClock(m, m.clock.default, m.clock.limits.sysclk));
+    assert.ok(top.ok && top.freq.sysclk === m.clock.limits.sysclk, `${id} en yüksek: ${top.freq.sysclk} ${JSON.stringify(top.issues)}`);
+  }
+  // Yüksek frekans modları
+  const at = (id, mhz) => computeClock(lib.mcus[id], solveClock(lib.mcus[id], lib.mcus[id].clock.default, mhz));
+  assert.ok(at('stm32f429zit6', 180).overdrive && !at('stm32f429zit6', 168).overdrive, 'F429 over-drive > 168 MHz');
+  assert.ok(at('stm32f767zit6', 216).overdrive, 'F767 over-drive');
+  assert.ok(at('stm32g474ret6', 170).boost && !at('stm32g474ret6', 150).boost, 'G474 boost > 150 MHz');
+  assert.ok(at('stm32u575zit6q', 160).epod, 'U575 EPOD');
+  const h7 = computeClock(lib.mcus.stm32h743zit6, undefined);
+  assert.strictEqual(h7.freq.pllq, 200, 'H743 SPI1-3 çekirdek saati');
+  const f1 = computeClock(lib.mcus.stm32f103c8t6, undefined);
+  assert.deepStrictEqual([f1.freq.sysclk, f1.freq.pclk1, f1.latency], [72, 36, 2], 'Blue Pill 8 MHz × 9');
+});
+test('her işlemcide pin atama: sensör seti çakışmasız yerleşir', () => {
+  const ids = ['usb_uart', 'bme280', 'mpu6050', 'w25q32', 'neo6m', 'led', 'button', 'potentiometer', 'servo_sg90'];
+  for (const id of mcuIds) {
+    const d = { ...design(ids.map((c) => inst(c))), mcuId: id };
+    const r = assign(d, lib);
+    assert.deepStrictEqual(r.messages.filter((m) => m.level === 'error').map((m) => m.text), [], id);
+    const pins = r.connections.map((c) => c.mcuPin);
+    assert.strictEqual(new Set(pins).size, new Set(r.connections.map((c) => `${c.mcuPin}:${c.signal}`)).size, `${id}: bir pine iki sinyal`);
+  }
+});
+test('üretilen proje aileye uyar: kesme dosyası, HAL conf, -mcpu/FPU, FreeRTOS portu', () => {
+  const gen = (id, extra = {}) => {
+    const d = { ...design([inst('usb_uart'), inst('bme280')], { rtos: true, ...extra }), mcuId: id };
+    return generate(d, lib, assign(d, lib), computeClock(lib.mcus[id], d.clock), {}).files;
+  };
+  const file = (files, p) => (files.find((f) => f.path === p) || {}).content || '';
+  const g0 = gen('stm32g071rbt6');
+  assert.ok(file(g0, 'Core/Src/stm32g0xx_it.c') && file(g0, 'Core/Inc/stm32g0xx_hal_conf.h'), 'G0 dosya adları');
+  const g0cmake = file(g0, 'cmake/embedded-studio.cmake');
+  assert.ok(/-mcpu=cortex-m0plus -mthumb -mfloat-abi=soft/.test(g0cmake), 'M0+ yazılım float');
+  assert.ok(g0cmake.includes('ARM_CM0/portasm.c') && g0cmake.includes('SysTick_Handler=xPortSysTickHandler'), 'CM0 portu: portasm.c ve SysTick yeniden adlandırma');
+  assert.ok(g0cmake.includes('Drivers/STM32G0xx_HAL_Driver/Src/stm32g0xx_hal*.c') && g0cmake.includes('startup_stm32g071xx.s'));
+  const u5 = gen('stm32u575zit6q', { framework: 'register' });
+  assert.ok(/-mcpu=cortex-m33 -mthumb -mfpu=fpv5-sp-d16 -mfloat-abi=hard/.test(file(u5, 'cmake/embedded-studio.cmake')));
+  assert.ok(file(u5, 'cmake/embedded-studio.cmake').includes('ARM_CM33_NTZ/non_secure/port.c'));
+  assert.ok(/configENABLE_FPU\s+1/.test(file(u5, 'inc/FreeRTOSConfig.h')) && /configENABLE_TRUSTZONE\s+0/.test(file(u5, 'inc/FreeRTOSConfig.h')));
+  assert.ok(file(u5, 'src/board.c').includes('PWR_VOSR_BOOSTEN'), 'U5 160 MHz: EPOD');
+  const f7 = gen('stm32f767zit6', { framework: 'register' });
+  assert.ok(/-mcpu=cortex-m7 .*-mfpu=fpv5-d16/.test(file(f7, 'cmake/embedded-studio.cmake')));
+  const f1 = gen('stm32f103c8t6', { framework: 'register' });
+  assert.ok(file(f1, 'src/board.c').includes('AFIO_MAPR_SWJ_CFG_JTAGDISABLE') && file(f1, 'src/board.c').includes('->CRL'), 'F1: CRL/CRH ve JTAG kapalı');
+  assert.ok(/-mcpu=cortex-m3 .*-mfloat-abi=soft/.test(file(f1, 'cmake/embedded-studio.cmake')) && file(f1, 'cmake/embedded-studio.cmake').includes('ARM_CM3/port.c'));
+  const f1hal = gen('stm32f103c8t6');
+  assert.ok(!file(f1hal, 'Core/Src/board.c').includes('g.Alternate'), 'F1 HAL GPIO yapısında Alternate yok');
+  // G0 USART3/4 tek kesmeyi paylaşır
+  const d = { ...design([inst('usb_uart', 1), inst('usb_uart', 2), inst('neo6m', 1)], { framework: 'register' }), mcuId: 'stm32g071rbt6', locks: { 'usb_uart1.TXD': 'PB10', 'usb_uart2.TXD': 'PA0' } };
+  const files = generate(d, lib, assign(d, lib), computeClock(lib.mcus.stm32g071rbt6, d.clock), {}).files;
+  const it = file(files, 'src/stm32g0xx_it.c');
+  assert.strictEqual((it.match(/USART3_4_LPUART1_IRQHandler/g) || []).length, 1, it);
+});
+test('işlemci ailesi değişince kesme dosyası yeni adına taşınır, USER CODE korunur', () => {
+  const { relocateFamilyFiles } = require('../src/codegen/merge');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'es-family-'));
+  const run = (id) => {
+    const d = { ...design([inst('usb_uart'), inst('led')]), mcuId: id };
+    const g = generate(d, lib, assign(d, lib), computeClock(lib.mcus[id], d.clock), {});
+    const moved = relocateFamilyFiles(dir, g.files);
+    writeProject(dir, g, { fingerprint: designFingerprint(d, GENERATOR_VERSION), snapshot: { instances: [], connections: [] } });
+    return moved;
+  };
+  run('stm32f411ceu6');
+  const f4 = path.join(dir, 'Core/Src/stm32f4xx_it.c');
+  fs.writeFileSync(f4, fs.readFileSync(f4, 'utf8').replace('/* USER CODE BEGIN Handlers */\n', '/* USER CODE BEGIN Handlers */\nvoid EXTI0_IRQHandler(void) { benim(); }\n'));
+  assert.deepStrictEqual(run('stm32g474ret6'), [{ from: 'Core/Src/stm32f4xx_it.c', to: 'Core/Src/stm32g4xx_it.c' }]);
+  assert.ok(!fs.existsSync(f4));
+  assert.ok(fs.readFileSync(path.join(dir, 'Core/Src/stm32g4xx_it.c'), 'utf8').includes('void EXTI0_IRQHandler(void) { benim(); }'));
+  assert.ok(fs.existsSync(path.join(dir, 'Core/Inc/stm32g4xx_hal_conf.h')) && !fs.existsSync(path.join(dir, 'Core/Inc/stm32f4xx_hal_conf.h')), 'HAL conf yeni aileye göre');
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+test('I2C TIMINGR: ST referans değerleri (8 MHz, 100/400 kHz)', () => {
+  const { i2cTiming } = require('../src/codegen/regcode');
+  assert.strictEqual(i2cTiming(8, 400000), '0x00310309'); // RM/AN4235 örneği ile aynı
+  assert.strictEqual(i2cTiming(8, 100000), '0x10420F12');
+});
+test('paketler aileye göre: F4 eski önbellek klasörü, diğerleri device-/hal-<aile>', () => {
+  const packs = require('../src/codegen/packs');
+  assert.deepStrictEqual(packs.packsFor(lib.mcus.stm32f411ceu6, 'hal', true), ['core', 'device', 'hal', 'freertos']);
+  assert.deepStrictEqual(packs.packsFor(lib.mcus.stm32h743zit6, 'register', false), ['core', 'device-h7']);
+  assert.ok(packs.repoOf('hal-g0').url.endsWith('stm32g0xx-hal-driver.git') && packs.repoOf('device-u5').url.endsWith('cmsis-device-u5.git'));
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'es-packs-'));
+  assert.deepStrictEqual(packs.missingInProject(dir, lib.mcus.stm32g071rbt6, 'hal', true, 'ARM_CM0'), ['core', 'device-g0', 'hal-g0', 'freertos']);
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+test('çevre birimi saatleri: H7 SPI1-3 PLL1Q, F0 I2C HSI, tek APB', () => {
+  const { periphClockTable } = require('../src/engine/periphclock');
+  const row = (id, comps, name) => {
+    const d = { ...design(comps.map((c) => inst(c))), mcuId: id };
+    return periphClockTable(lib.mcus[id], assign(d, lib), computeClock(lib.mcus[id], undefined)).find((r) => r.name.startsWith(name));
+  };
+  const spi = row('stm32h743zit6', ['w25q32'], 'SPI');
+  assert.ok(['SPI1', 'SPI2', 'SPI3'].includes(spi.name) ? spi.source === 'PLL1Q' && spi.mhz === 200 : spi.source.startsWith('APB'), JSON.stringify(spi));
+  const i2c = row('stm32f030c8t6', ['bme280'], 'I2C');
+  assert.deepStrictEqual([i2c.source, i2c.mhz], ['HSI', 8]);
+});
+
 console.log('Kütüphane, telemetri, debug');
 test('tüm hazır komponentler doğrulamadan geçer', () => {
   for (const c of Object.values(lib.components)) assert.deepStrictEqual(validateComponent(c), [], c.id);

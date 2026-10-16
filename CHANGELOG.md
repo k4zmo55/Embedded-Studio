@@ -1,5 +1,20 @@
 # Değişiklik günlüğü
 
+## 0.4.6 (önizleme)
+
+- **15 STM32, 10 aile:** STM32F030C8, F103C8 (Blue Pill), F303RE, F407VG (Discovery), F411CE (Black Pill), F429ZI, F446RE, F767ZI, G071RB, G474RE, H723ZG, H743ZI, L432KC, L476RG, U575ZI-Q. Proje oluştururken ya da Ayarlar'dan seçilir.
+- **İşlemci tanımları üretilir:** pinler ve alternatif fonksiyonlar ST'nin açık pin veritabanından (STM32_open_pin_data, BSD-3-Clause), saat açma bitleri ve kesme adları CMSIS cihaz başlıklarından `tools/mcu/gen-mcus.js` ile. Araç, elle doğrulanmış F411 tanımıyla karşılaştırarak kendini sınar (55/55 uyuşuyor).
+- **Kod üretimi aileye göre** (`codegen/families.js`): çekirdek ve FPU bayrakları (`-mcpu=cortex-m0 … m33`, `fpv4-sp-d16` / `fpv5-d16` / `fpv5-sp-d16`), FreeRTOS portu (CM0, CM3, CM4F, CM33_NTZ), `stm32<aile>xx_it.c`, HAL conf, startup ve system dosyaları, HAL ya da CMSIS paketleri.
+  - Bare-metal: aileye özgü saat kurulumu (RCC/PWR/FLASH), F1 GPIO (CRL/CRH, JTAG kapalı/SWD açık), TIMINGR tipi I2C (255 byte üstü dahil), FIFO'lu USART, H7/U5 SPI (TSIZE/CSTART), dört farklı ADC tipi, break'li timer'larda MOE.
+  - HAL: aileye göre `SystemClock_Config` (PREDIV × PLLMUL, M/N/R, H7 PLL1 ve alan bölücüleri, U5 PLLMBOOST), I2C `Timing`, ADC başlatma ve kalibrasyon.
+  - Yüksek frekans modları kendiliğinden: F429/F446/F767 over-drive, G474 boost, U575 EPOD. G0'da paylaşılan UART kesmesi (USART3_4) tek işleyicide.
+- **Saat sekmesi aileye göre çizilir:** F4/F7 M/N/P/Q, F0/F1/F3 PREDIV × PLLMUL (F303xE'de HSI de PREDIV'den geçer), G0/G4/L4/U5 M/N/R, H7 DIVM1/N1/P1/Q1 (SPI1-3 çekirdek saati); F0/G0'da tek APB. Otomatik çözücü tüm modellerde çalışır. Çevre birimi tablosu çekirdek saatlerini doğru gösterir (F0/F3 I2C → HSI, H7 SPI1-3 → PLL1Q).
+- **İşlemci ailesi değişince** kesme dosyası yeni adına taşınır ve içindeki USER CODE korunur; Ayarlar önizlemesi aile değişikliğini ve kartta doğrulanmamış tanımları belirtir.
+- Derleme ayarlarında FPU seçimi işlemciye göre (M0/M0+/M3'te kapalı).
+- Debug: F411 dışındaki işlemcilerde register görünümü için SVD dosyası bağlanınca otomatik indirilir; simülasyon F4'e özgü değerleri sadece F4'te gösterir.
+- Derleme testi 53 varyant: 15 işlemcinin her biri HAL ve bare-metal, FreeRTOS'lu, sıkı uyarı + `-Werror` ile, en yüksek saatte. CI aile gruplarına bölünüp paralel çalışır.
+- Bilinen sınırlar: F411 dışındaki işlemciler **gerçek kartta denenmedi**. H7 şimdilik VOS1 (400 MHz) ve LDO beslemesiyle. Nucleo kartlarında ST-LINK sanal seri portu (USART2/USART3) otomatik seçilmez.
+
 ## 0.4.5 (önizleme)
 
 - **Derleme ayarları arayüzü** (Ayarlar > Derleme): derleme tipi ve her tip için optimizasyon (`-O0/-Og/-O1/-O2/-O3/-Os/-Oz`), `-D` tanımları, ek include klasörleri, ek derleyici ve bağlayıcı bayrakları, linker script, `--specs` (nano / nosys), FPU / float ABI (hard, softfp, yazılım), uyarı seviyesi (kapalı / `-Wall -Wextra` / sıkı) ve `-Werror`.

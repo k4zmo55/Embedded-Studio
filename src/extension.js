@@ -9,10 +9,12 @@ const { assign } = require('./engine/pinAssigner');
 const { computeClock, solveClock } = require('./engine/clock');
 const { analyze, ruleBasedProvider } = require('./ai/advisor');
 const { generate, GENERATOR_VERSION } = require('./codegen/generator');
-const { writeProject, designFingerprint, relocateLayout, removeEmptyDirs, upgradeLegacyVscode, STATE_DIR } = require('./codegen/merge');
+const { writeProject, designFingerprint, relocateLayout, relocateFamilyFiles, removeEmptyDirs, upgradeLegacyVscode, STATE_DIR } = require('./codegen/merge');
 const { layout } = require('./codegen/layout');
 const cm = require('./codegen/build');
 const { detectToolchains, elfSize } = require('./toolchain');
+const { familyOf } = require('./codegen/families');
+const { periphClockTable } = require('./engine/periphclock');
 const packs = require('./codegen/packs');
 const { parseLine, Simulator } = require('./monitor/telemetry');
 const { OpenOcdTarget, SimTarget, simModel, elfSymbols } = require('./debug/session');
@@ -83,7 +85,7 @@ function migrate(design, lib) {
   d.instances = d.instances || [];
   d.locks = d.locks || {};
   d.build = cm.normalizeBuild(d.build);
-  if (!lib.mcus[d.mcuId]) d.mcuId = Object.keys(lib.mcus)[0];
+  if (!lib.mcus[d.mcuId]) d.mcuId = lib.mcus.stm32f411ceu6 ? 'stm32f411ceu6' : Object.keys(lib.mcus)[0];
   d.clock = { ...lib.mcus[d.mcuId].clock.default, ...(d.clock || {}) };
   return d;
 }
@@ -123,7 +125,8 @@ class Studio {
     this.saveTimer = undefined;
     /** @type {any} */
     this.target = null;
-    this.peripheralDefs = builtinStm32f4();
+    /** Register tanımları: F411 için yerleşik, diğerlerinde SVD (bağlanınca indirilir) */
+    this.peripheralDefs = [];
     this.svdName = '';
 
     panel.iconPath = vscode.Uri.joinPath(context.extensionUri, 'media', 'icon.svg');
@@ -181,7 +184,12 @@ class Studio {
       for (const k of shown) if (copy[k]) copy[k] = t(copy[k]);
       comps[id] = copy;
     }
-    return { mcus: this.lib.mcus, components: comps };
+    // Arayüz için aile bilgisi: FPU (yoksa derleme ayarlarında FPU seçimi kapalı) ve APB sayısı
+    const mcus = Object.fromEntries(Object.entries(this.lib.mcus).map(([id, m]) => {
+      const fam = familyOf(m);
+      return [id, { ...m, fpu: fam.fpu, apbCount: fam.apbCount, series: fam.series }];
+    }));
+    return { mcus, components: comps };
   }
 
   compute() {
@@ -190,6 +198,7 @@ class Studio {
     const notes = analyze(this.design, this.lib, result);
     const clock = computeClock(mcu, this.design.clock);
     for (const i of clock.issues) notes.unshift({ level: i.level === 'error' ? 'error' : 'warn', text: t('Saat: {0}', i.text) });
+    clock.periphs = periphClockTable(mcu, result, clock);
     return { result, notes, clock };
   }
 
@@ -224,6 +233,7 @@ class Studio {
       case 'update': {
         const hw = (d) => d && JSON.stringify([d.mcuId, d.rtos, d.framework, d.clock, d.locks, d.instances.map((i) => [i.id, i.componentId, i.label, i.options])]);
         const changed = hw(this.design) !== hw(m.design);
+        if (this.design && this.design.mcuId !== m.design.mcuId) this.resetRegisterDefs();
         this.design = migrate(m.design, this.lib);
         this.pushState();
         this.scheduleSave();
@@ -378,7 +388,7 @@ class Studio {
 
     if (m.downloadPacks) {
       const mcu = this.lib.mcus[design.mcuId];
-      const ok = await this.installPacks(dir, mcu, design.framework, design.rtos);
+      const ok = await this.installPacks(dir, mcu, design.framework, design.rtos, cm.rtosPort(design.build, mcu));
       if (!ok) this.toast('warn', t('Paketler indirilemedi; Kod Üret sırasında tekrar denenecek.'));
     }
     if (dir === this.root) {
@@ -417,10 +427,10 @@ class Studio {
     const mcuChanged = s.mcuId !== cur.mcuId;
     const next = migrate({ ...cur, mcuId: s.mcuId, framework: s.framework, rtos: !!s.rtos, locks: mcuChanged ? {} : cur.locks, clock: mcuChanged ? undefined : cur.clock }, this.lib);
     const cache = path.join(this.context.globalStorageUri.fsPath, 'packs');
-    const halConfTemplate = this.root ? packs.halConfTemplate(cache, this.root) : undefined;
+    const halConfTemplate = (d) => (this.root ? packs.halConfTemplate(cache, this.root, this.lib.mcus[d.mcuId]) : undefined);
     const filesOf = (d) => {
       const mcu = this.lib.mcus[d.mcuId];
-      const gen = generate(d, this.lib, assign(d, this.lib), computeClock(mcu, d.clock), { halConfTemplate });
+      const gen = generate(d, this.lib, assign(d, this.lib), computeClock(mcu, d.clock), { halConfTemplate: halConfTemplate(d) });
       return new Map(gen.files.map((f) => [f.path, f.content]));
     };
     const notes = [];
@@ -433,6 +443,13 @@ class Studio {
     }
     const locks = Object.keys(cur.locks || {}).length;
     if (mcuChanged) notes.push({ level: 'warn', text: t('MCU değişince elle seçilmiş pin kilitleri ({0}) ve saat ayarları sıfırlanır; pinler yeniden atanır.', locks) });
+    const famCur = familyOf(this.lib.mcus[cur.mcuId]), famNext = familyOf(this.lib.mcus[next.mcuId]);
+    if (famCur.key !== famNext.key) {
+      notes.push({ level: 'info', text: t('İşlemci ailesi değişiyor ({0} → {1}): CMSIS ve HAL paketleri yeni aileye göre indirilir, kesme dosyası {2} olur ve içindeki USER CODE taşınır. Eski ailenin paket klasörleri derlenmez ama silinmez.', famCur.series, famNext.series, famNext.itFile) });
+    }
+    if (!this.lib.mcus[next.mcuId].source.includes('DS10314') && mcuChanged) {
+      notes.push({ level: 'warn', text: t('{0} tanımı ST\'nin açık pin veritabanından üretildi ve derleme testlerinden geçti, ancak gerçek kartta doğrulanmadı. Üretim öncesi pin ve saat ayarlarını datasheet ile kontrol edin.', this.lib.mcus[next.mcuId].name) });
+    }
     if (s.framework !== cur.framework) {
       notes.push({ level: 'info', text: s.framework === 'hal'
         ? t('Proje STM32CubeMX klasör yapısına geçer (Core/, Drivers/) ve STM32 HAL sürücüleri eklenir. Kendi dosyalarınız ve USER CODE blokları yeni klasörlere taşınır.')
@@ -451,7 +468,7 @@ class Studio {
       added: [...b.keys()].filter((p) => !a.has(p)).sort(),
       removed: [...a.keys()].filter((p) => !b.has(p)).sort(),
       changed: [...b.keys()].filter((p) => a.has(p) && a.get(p) !== b.get(p)).sort(),
-      packs: this.root ? packs.missingInProject(this.root, mcuNext, next.framework, next.rtos, cm.rtosPort(next.build)).map((k) => names[k]) : [],
+      packs: this.root ? packs.missingInProject(this.root, mcuNext, next.framework, next.rtos, cm.rtosPort(next.build, mcuNext)).map((k) => names[packs.parseKey(k).kind]) : [],
       notes
     };
   }
@@ -472,15 +489,15 @@ class Studio {
       if (go !== t('Yine de üret')) return;
     }
     const mcu = this.lib.mcus[this.design.mcuId];
-    const missing = packs.missingInProject(this.root, mcu, this.design.framework, this.design.rtos, cm.rtosPort(this.design.build));
+    const missing = packs.missingInProject(this.root, mcu, this.design.framework, this.design.rtos, cm.rtosPort(this.design.build, mcu));
     if (missing.length) {
       const names = { hal: 'STM32 HAL', device: t('CMSIS cihaz'), core: t('CMSIS çekirdek'), freertos: 'FreeRTOS' };
       const go = await vscode.window.showInformationMessage(
-        t('Derleme için şu paketler gerekiyor: {0}. İndirilsin mi? (git, bir kez ~30 MB)', missing.map((k) => names[k]).join(', ')), t('İndir'), t('Şimdilik atla'));
-      if (go === t('İndir')) await this.installPacks(this.root, mcu, this.design.framework, this.design.rtos, cm.rtosPort(this.design.build));
+        t('Derleme için şu paketler gerekiyor: {0}. İndirilsin mi? (git, bir kez ~30 MB)', missing.map((k) => names[packs.parseKey(k).kind]).join(', ')), t('İndir'), t('Şimdilik atla'));
+      if (go === t('İndir')) await this.installPacks(this.root, mcu, this.design.framework, this.design.rtos, cm.rtosPort(this.design.build, mcu));
     }
     const cache = path.join(this.context.globalStorageUri.fsPath, 'packs');
-    const gen = generate(this.design, this.lib, result, clock, { halConfTemplate: packs.halConfTemplate(cache, this.root) });
+    const gen = generate(this.design, this.lib, result, clock, { halConfTemplate: packs.halConfTemplate(cache, this.root, mcu) });
     const label = (id) => this.design.instances.find((i) => i.id === id)?.label ?? id;
     const snapshot = {
       framework: this.design.framework, rtos: !!this.design.rtos, clock: { sysclk: clock.freq.sysclk },
@@ -503,6 +520,7 @@ class Studio {
     this.preview = null;
     // Klasör yapısı değiştiyse (HAL ↔ bare-metal) kullanıcı dosyalarını yeni yerlerine taşı
     const moved = relocateLayout(this.root, this.design.framework, gen.files);
+    relocateFamilyFiles(this.root, gen.files); // işlemci ailesi değiştiyse <aile>_it.c ve USER CODE blokları
     const report = writeProject(this.root, gen, info);
     report.updated.push(...upgradeLegacyVscode(this.root, this.design.project.name));
     this.checkUserCmake();
@@ -662,11 +680,27 @@ class Studio {
   }
 
   // ------------------------------------------------------------------ debug
+  /** MCU değişince register tanımlarını sıfırla (F411: yerleşik, diğerleri: SVD bekleniyor) */
+  resetRegisterDefs() {
+    this.svdName = '';
+    this.peripheralDefs = [];
+  }
+
+  /** Yerleşik tanım sadece STM32F411 için; diğer işlemcilerde register görünümü SVD dosyasıyla çalışır. */
+  builtinDefs() {
+    return this.design && this.design.mcuId === 'stm32f411ceu6' ? builtinStm32f4() : [];
+  }
+
   async loadSvd(download) {
     const mcu = this.lib.mcus[this.design.mcuId];
+    if (!this.svdName) this.peripheralDefs = this.builtinDefs();
     const file = this.root && path.join(this.root, STATE_DIR, `${mcu.name}.svd`);
     if (download && file && !fs.existsSync(file) && mcu.svdUrl) {
-      await vscode.window.withProgress({ location: vscode.ProgressLocation.Notification, title: t('SVD indiriliyor...') }, () => download_(mcu.svdUrl, file));
+      try {
+        await vscode.window.withProgress({ location: vscode.ProgressLocation.Notification, title: t('SVD indiriliyor...') }, () => download_(mcu.svdUrl, file));
+      } catch (e) {
+        this.toast('warn', t('{0} SVD dosyası indirilemedi: {1}', mcu.name, e.message));
+      }
     }
     if (file && fs.existsSync(file)) {
       const svd = parseSvd(fs.readFileSync(file, 'utf8'));
@@ -680,7 +714,7 @@ class Studio {
   postRegs() {
     const used = Object.keys(this.compute().result.peripherals);
     const ports = new Set(this.compute().result.connections.map((c) => 'GPIO' + c.mcuPin[1]));
-    this.post({ type: 'debug.regs', peripherals: this.peripheralDefs, used: [...used, ...ports, 'RCC'], source: this.svdName || t('Yerleşik STM32F411 tanımları') });
+    this.post({ type: 'debug.regs', peripherals: this.peripheralDefs, used: [...used, ...ports, 'RCC'], source: this.svdName || (this.peripheralDefs.length ? t('Yerleşik STM32F411 tanımları') : t('{0} için register tanımı yok: SVD indirilemedi.', this.lib.mcus[this.design.mcuId].name)) });
   }
 
   async connectDebug(mode) {
@@ -689,6 +723,7 @@ class Studio {
     const mcu = this.lib.mcus[this.design.mcuId];
     if (mode === 'sim') {
       const { result, clock } = this.compute();
+      if (!this.svdName && !this.peripheralDefs.length) await this.loadSvd(this.design.mcuId !== 'stm32f411ceu6');
       this.target = new SimTarget(simModel(this.design, this.lib, result, clock, this.peripheralDefs));
     } else {
       this.post({ type: 'debug.status', connected: false, connecting: true });
@@ -702,7 +737,8 @@ class Studio {
       this.post({ type: 'debug.status', connected: false, error: e.message });
       return;
     }
-    if (!this.svdName) await this.loadSvd(false);
+    // F411 dışındaki işlemcilerde register görünümü için SVD gerekir: yoksa indir
+    if (!this.svdName) await this.loadSvd(this.design.mcuId !== 'stm32f411ceu6');
     else this.postRegs();
     this.post({ type: 'debug.status', connected: true, mode, state: await this.target.state() });
   }

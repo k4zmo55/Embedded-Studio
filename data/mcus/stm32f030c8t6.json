@@ -1,0 +1,616 @@
+{
+  "id": "stm32f030c8t6",
+  "name": "STM32F030C8T6",
+  "board": "LQFP48 (generic)",
+  "family": "STM32F0",
+  "core": "Cortex-M0",
+  "flashKB": 64,
+  "ramKB": 8,
+  "maxClockMHz": 48,
+  "voltage": 3.3,
+  "halHeader": "stm32f0xx_hal.h",
+  "source": "STM32_open_pin_data (© STMicroelectronics, BSD-3-Clause) ve CMSIS cihaz başlıklarından tools/mcu/gen-mcus.js ile üretildi. Saat ağacı ve kart bilgisi tools/mcu/targets.js. Kartta doğrulanmadı: üretim öncesi datasheet ile kontrol edin.",
+  "peripherals": {
+    "ADC1": {
+      "type": "adc",
+      "bus": "APB1",
+      "enr": "APB2ENR",
+      "enrBit": "RCC_APB2ENR_ADC1EN",
+      "common": "ADC1_COMMON"
+    },
+    "I2C1": {
+      "type": "i2c",
+      "bus": "APB1",
+      "enr": "APB1ENR",
+      "enrBit": "RCC_APB1ENR_I2C1EN",
+      "clock": "hsi"
+    },
+    "I2C2": {
+      "type": "i2c",
+      "bus": "APB1",
+      "enr": "APB1ENR",
+      "enrBit": "RCC_APB1ENR_I2C2EN",
+      "clock": "hsi"
+    },
+    "SPI1": {
+      "type": "spi",
+      "bus": "APB1",
+      "enr": "APB2ENR",
+      "enrBit": "RCC_APB2ENR_SPI1EN"
+    },
+    "SPI2": {
+      "type": "spi",
+      "bus": "APB1",
+      "enr": "APB1ENR",
+      "enrBit": "RCC_APB1ENR_SPI2EN"
+    },
+    "TIM1": {
+      "type": "pwm",
+      "bus": "APB1",
+      "enr": "APB2ENR",
+      "enrBit": "RCC_APB2ENR_TIM1EN"
+    },
+    "TIM3": {
+      "type": "pwm",
+      "bus": "APB1",
+      "enr": "APB1ENR",
+      "enrBit": "RCC_APB1ENR_TIM3EN"
+    },
+    "TIM14": {
+      "type": "pwm",
+      "bus": "APB1",
+      "enr": "APB1ENR",
+      "enrBit": "RCC_APB1ENR_TIM14EN"
+    },
+    "TIM15": {
+      "type": "pwm",
+      "bus": "APB1",
+      "enr": "APB2ENR",
+      "enrBit": "RCC_APB2ENR_TIM15EN"
+    },
+    "TIM16": {
+      "type": "pwm",
+      "bus": "APB1",
+      "enr": "APB2ENR",
+      "enrBit": "RCC_APB2ENR_TIM16EN"
+    },
+    "TIM17": {
+      "type": "pwm",
+      "bus": "APB1",
+      "enr": "APB2ENR",
+      "enrBit": "RCC_APB2ENR_TIM17EN"
+    },
+    "USART1": {
+      "type": "uart",
+      "bus": "APB1",
+      "enr": "APB2ENR",
+      "enrBit": "RCC_APB2ENR_USART1EN",
+      "irq": "USART1"
+    },
+    "USART2": {
+      "type": "uart",
+      "bus": "APB1",
+      "enr": "APB1ENR",
+      "enrBit": "RCC_APB1ENR_USART2EN",
+      "irq": "USART2"
+    }
+  },
+  "pins": [
+    {
+      "name": "PA0",
+      "side": "left",
+      "functions": [
+        {
+          "signal": "ADC1_IN0"
+        }
+      ]
+    },
+    {
+      "name": "PA1",
+      "side": "left",
+      "functions": [
+        {
+          "signal": "ADC1_IN1"
+        }
+      ]
+    },
+    {
+      "name": "PA2",
+      "side": "left",
+      "functions": [
+        {
+          "signal": "ADC1_IN2"
+        },
+        {
+          "signal": "TIM15_CH1",
+          "af": 0
+        },
+        {
+          "signal": "USART2_TX",
+          "af": 1
+        }
+      ]
+    },
+    {
+      "name": "PA3",
+      "side": "left",
+      "functions": [
+        {
+          "signal": "ADC1_IN3"
+        },
+        {
+          "signal": "TIM15_CH2",
+          "af": 0
+        },
+        {
+          "signal": "USART2_RX",
+          "af": 1
+        }
+      ]
+    },
+    {
+      "name": "PA4",
+      "side": "left",
+      "functions": [
+        {
+          "signal": "ADC1_IN4"
+        },
+        {
+          "signal": "TIM14_CH1",
+          "af": 4
+        }
+      ]
+    },
+    {
+      "name": "PA5",
+      "side": "left",
+      "functions": [
+        {
+          "signal": "ADC1_IN5"
+        },
+        {
+          "signal": "SPI1_SCK",
+          "af": 0
+        }
+      ]
+    },
+    {
+      "name": "PA6",
+      "side": "left",
+      "functions": [
+        {
+          "signal": "ADC1_IN6"
+        },
+        {
+          "signal": "SPI1_MISO",
+          "af": 0
+        },
+        {
+          "signal": "TIM16_CH1",
+          "af": 5
+        },
+        {
+          "signal": "TIM3_CH1",
+          "af": 1
+        }
+      ]
+    },
+    {
+      "name": "PA7",
+      "side": "left",
+      "functions": [
+        {
+          "signal": "ADC1_IN7"
+        },
+        {
+          "signal": "SPI1_MOSI",
+          "af": 0
+        },
+        {
+          "signal": "TIM14_CH1",
+          "af": 4
+        },
+        {
+          "signal": "TIM17_CH1",
+          "af": 5
+        },
+        {
+          "signal": "TIM3_CH2",
+          "af": 1
+        }
+      ]
+    },
+    {
+      "name": "PA8",
+      "side": "left",
+      "functions": [
+        {
+          "signal": "TIM1_CH1",
+          "af": 2
+        }
+      ]
+    },
+    {
+      "name": "PA9",
+      "side": "left",
+      "functions": [
+        {
+          "signal": "TIM1_CH2",
+          "af": 2
+        },
+        {
+          "signal": "USART1_TX",
+          "af": 1
+        }
+      ]
+    },
+    {
+      "name": "PA10",
+      "side": "left",
+      "functions": [
+        {
+          "signal": "TIM1_CH3",
+          "af": 2
+        },
+        {
+          "signal": "USART1_RX",
+          "af": 1
+        }
+      ]
+    },
+    {
+      "name": "PA11",
+      "side": "left",
+      "functions": [
+        {
+          "signal": "TIM1_CH4",
+          "af": 2
+        }
+      ]
+    },
+    {
+      "name": "PA12",
+      "side": "left",
+      "functions": []
+    },
+    {
+      "name": "PA13",
+      "side": "left",
+      "functions": [],
+      "reserved": "SWD SWDIO"
+    },
+    {
+      "name": "PA14",
+      "side": "left",
+      "functions": [
+        {
+          "signal": "USART2_TX",
+          "af": 1
+        }
+      ],
+      "reserved": "SWD SWCLK"
+    },
+    {
+      "name": "PA15",
+      "side": "left",
+      "functions": [
+        {
+          "signal": "USART2_RX",
+          "af": 1
+        }
+      ]
+    },
+    {
+      "name": "PB0",
+      "side": "left",
+      "functions": [
+        {
+          "signal": "ADC1_IN8"
+        },
+        {
+          "signal": "TIM3_CH3",
+          "af": 1
+        }
+      ]
+    },
+    {
+      "name": "PB1",
+      "side": "left",
+      "functions": [
+        {
+          "signal": "ADC1_IN9"
+        },
+        {
+          "signal": "TIM14_CH1",
+          "af": 0
+        },
+        {
+          "signal": "TIM3_CH4",
+          "af": 1
+        }
+      ]
+    },
+    {
+      "name": "PB2",
+      "side": "left",
+      "functions": []
+    },
+    {
+      "name": "PB3",
+      "side": "left",
+      "functions": [
+        {
+          "signal": "SPI1_SCK",
+          "af": 0
+        }
+      ]
+    },
+    {
+      "name": "PB4",
+      "side": "right",
+      "functions": [
+        {
+          "signal": "SPI1_MISO",
+          "af": 0
+        },
+        {
+          "signal": "TIM3_CH1",
+          "af": 1
+        }
+      ]
+    },
+    {
+      "name": "PB5",
+      "side": "right",
+      "functions": [
+        {
+          "signal": "SPI1_MOSI",
+          "af": 0
+        },
+        {
+          "signal": "TIM3_CH2",
+          "af": 1
+        }
+      ]
+    },
+    {
+      "name": "PB6",
+      "side": "right",
+      "functions": [
+        {
+          "signal": "I2C1_SCL",
+          "af": 1
+        },
+        {
+          "signal": "USART1_TX",
+          "af": 0
+        }
+      ]
+    },
+    {
+      "name": "PB7",
+      "side": "right",
+      "functions": [
+        {
+          "signal": "I2C1_SDA",
+          "af": 1
+        },
+        {
+          "signal": "USART1_RX",
+          "af": 0
+        }
+      ]
+    },
+    {
+      "name": "PB8",
+      "side": "right",
+      "functions": [
+        {
+          "signal": "I2C1_SCL",
+          "af": 1
+        },
+        {
+          "signal": "TIM16_CH1",
+          "af": 2
+        }
+      ]
+    },
+    {
+      "name": "PB9",
+      "side": "right",
+      "functions": [
+        {
+          "signal": "I2C1_SDA",
+          "af": 1
+        },
+        {
+          "signal": "TIM17_CH1",
+          "af": 2
+        }
+      ]
+    },
+    {
+      "name": "PB10",
+      "side": "right",
+      "functions": [
+        {
+          "signal": "I2C2_SCL",
+          "af": 1
+        }
+      ]
+    },
+    {
+      "name": "PB11",
+      "side": "right",
+      "functions": [
+        {
+          "signal": "I2C2_SDA",
+          "af": 1
+        }
+      ]
+    },
+    {
+      "name": "PB12",
+      "side": "right",
+      "functions": []
+    },
+    {
+      "name": "PB13",
+      "side": "right",
+      "functions": [
+        {
+          "signal": "SPI2_SCK",
+          "af": 0
+        }
+      ]
+    },
+    {
+      "name": "PB14",
+      "side": "right",
+      "functions": [
+        {
+          "signal": "SPI2_MISO",
+          "af": 0
+        },
+        {
+          "signal": "TIM15_CH1",
+          "af": 1
+        }
+      ]
+    },
+    {
+      "name": "PB15",
+      "side": "right",
+      "functions": [
+        {
+          "signal": "SPI2_MOSI",
+          "af": 0
+        },
+        {
+          "signal": "TIM15_CH2",
+          "af": 1
+        }
+      ]
+    },
+    {
+      "name": "PC13",
+      "side": "right",
+      "functions": []
+    },
+    {
+      "name": "PC14",
+      "side": "right",
+      "functions": [],
+      "reserved": "LSE OSC32_IN"
+    },
+    {
+      "name": "PC15",
+      "side": "right",
+      "functions": [],
+      "reserved": "LSE OSC32_OUT"
+    },
+    {
+      "name": "PF0",
+      "side": "right",
+      "functions": [],
+      "reserved": "HSE OSC_IN"
+    },
+    {
+      "name": "PF1",
+      "side": "right",
+      "functions": [],
+      "reserved": "HSE OSC_OUT"
+    },
+    {
+      "name": "PF6",
+      "side": "right",
+      "functions": []
+    },
+    {
+      "name": "PF7",
+      "side": "right",
+      "functions": []
+    }
+  ],
+  "datasheet": "https://www.st.com/resource/en/datasheet/stm32f030c8.pdf",
+  "referenceManual": "https://www.st.com/resource/en/reference_manual/rm0360-stm32f030x4x6x8xc-and-stm32f070x6xb-advanced-armbased-32bit-mcus-stmicroelectronics.pdf",
+  "svdUrl": "https://raw.githubusercontent.com/cmsis-svd/cmsis-svd-data/main/data/STMicro/STM32F030.svd",
+  "device": {
+    "define": "STM32F030x8",
+    "cmsisHeader": "stm32f0xx.h",
+    "startup": "startup_stm32f030x8.s",
+    "flashKB": 64,
+    "ramKB": 8,
+    "openocdTarget": "target/stm32f0x.cfg",
+    "family": "f0",
+    "oscPort": "F",
+    "gpioEnr": {
+      "reg": "AHBENR",
+      "bit": "RCC_AHBENR_GPIO{P}EN"
+    }
+  },
+  "clock": {
+    "model": "mul",
+    "hsiMHz": 8,
+    "hsiPllDiv": 2,
+    "hseMHz": 8,
+    "hseRange": [
+      4,
+      32
+    ],
+    "limits": {
+      "sysclk": 48,
+      "hclk": 48,
+      "apb1": 48,
+      "pllOut": [
+        16,
+        48
+      ]
+    },
+    "pllM": [
+      1,
+      16
+    ],
+    "pllN": [
+      2,
+      16
+    ],
+    "ahb": [
+      1,
+      2,
+      4,
+      8,
+      16,
+      64,
+      128,
+      256,
+      512
+    ],
+    "apb": [
+      1,
+      2,
+      4,
+      8,
+      16
+    ],
+    "flashLatency": [
+      [
+        24,
+        0
+      ],
+      [
+        48,
+        1
+      ]
+    ],
+    "default": {
+      "pllSource": "HSI",
+      "sysclkSource": "PLL",
+      "hseMHz": 8,
+      "M": 1,
+      "N": 12,
+      "ahb": 1,
+      "apb1": 1
+    }
+  }
+}
