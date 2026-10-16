@@ -431,6 +431,64 @@ test('çevre birimi saatleri: H7 SPI1-3 PLL1Q, F0 I2C HSI, tek APB', () => {
   assert.deepStrictEqual([i2c.source, i2c.mhz], ['HSI', 8]);
 });
 
+console.log('Örnek register sürücüleri (ES-107)');
+const rd = require('../src/codegen/regdrivers');
+const regFiles = (id, ids, extra = {}) => {
+  const d = { ...design([inst('usb_uart')], { framework: 'register', regDrivers: ids, ...extra }), mcuId: id };
+  return generate(d, lib, assign(d, lib), computeClock(lib.mcus[id], d.clock), {}).files.filter((f) => f.path.startsWith('drivers/reg/'));
+};
+test('bağımlılıklar çözülür; işlemcide olmayan sürücü (DAC) atlanır', () => {
+  assert.deepStrictEqual(rd.resolveDrivers(lib.mcus.stm32f411ceu6, ['uart', 'dac']), ['uart', 'dma'], 'F411: DAC yok, UART DMA ister');
+  assert.deepStrictEqual(rd.resolveDrivers(lib.mcus.stm32g474ret6, ['exti', 'dac']), ['gpio', 'exti', 'dac']);
+  assert.strictEqual(rd.resolveDrivers(lib.mcus.stm32h743zit6, rd.DRIVERS.map((d) => d.id)).length, 14);
+});
+test('sadece bare-metal\'de, bir kez (once) üretilir; her dosya kaynak RM ve kullanım örneği taşır, iç içe yorum yok', () => {
+  assert.strictEqual(regFiles('stm32f411ceu6', ['gpio'], { framework: 'hal' }).length, 0, 'HAL projesinde üretilmez');
+  for (const id of mcuIds) {
+    const files = regFiles(id, rd.DRIVERS.map((d) => d.id));
+    assert.ok(files.length >= 26, `${id}: ${files.length}`);
+    for (const f of files) {
+      assert.strictEqual(f.kind, 'once', f.path);
+      assert.ok(f.content.includes(`Kaynak: ${lib.mcus[id].referenceManual.match(/rm\d+/i)[0].toUpperCase()}`), `${id} ${f.path}: RM`);
+      const head = f.content.slice(0, f.content.indexOf('*/') + 2);
+      assert.ok(!/\/\*[\s\S]*\/\*/.test(head), `${id} ${f.path}: iç içe yorum`);
+      assert.ok(!/bsp_|Error_Handler|HAL_/.test(f.content), `${id} ${f.path}: BSP/HAL bağımlılığı`);
+    }
+  }
+});
+test('aile farkları: F1 CRL/AFIO, G0 EXTICR ve paylaşılan kesme, H7 DMAMUX + AXI tamponu, U5 GPDMA ve NSCR', () => {
+  const get = (id, file) => (regFiles(id, rd.DRIVERS.map((d) => d.id)).find((f) => f.path.endsWith(file)) || {}).content || '';
+  assert.ok(get('stm32f103c8t6', 'es_gpio.c').includes('&port->CRL') && get('stm32f103c8t6', 'es_exti.c').includes('AFIO->EXTICR'));
+  assert.ok(get('stm32g071rbt6', 'es_exti.c').includes('EXTI->EXTICR') && get('stm32g071rbt6', 'es_exti.c').includes('EXTI4_15_IRQn'));
+  assert.ok(get('stm32f411ceu6', 'es_exti.c').includes('SYSCFG->EXTICR') && get('stm32f411ceu6', 'es_exti.c').includes('EXTI15_10_IRQn'));
+  assert.ok(get('stm32h743zit6', 'es_dma.c').includes('ES_DMA_USART1_TX = { DMA1, DMA1_Stream1, 1, DMAMUX1_Channel1, 42 }'));
+  assert.ok(get('stm32h743zit6', 'es_dma.h').includes('section(".dma_buffer")'));
+  const d = { ...design([inst('usb_uart')], { framework: 'register' }), mcuId: 'stm32h743zit6' };
+  const ld = generate(d, lib, assign(d, lib), computeClock(lib.mcus.stm32h743zit6, d.clock), {}).files.find((f) => f.path.endsWith('_FLASH.ld')).content;
+  assert.ok(ld.includes('RAM_D1') && ld.includes('.dma_buffer'), 'H7 linker: AXI SRAM bölümü');
+  assert.ok(get('stm32f411ceu6', 'es_dma.c').includes('ES_DMA_USART1_TX = { DMA2, DMA2_Stream7, 7, 4 }'), 'F4: DMA2 stream 7 kanal 4');
+  assert.ok(get('stm32f103c8t6', 'es_dma.c').includes('ES_DMA_USART1_TX = { DMA1, DMA1_Channel4, 4 }'), 'F1: DMA1 kanal 4');
+  assert.ok(get('stm32l476rgt6', 'es_dma.c').includes('ES_DMA_USART2_TX = { DMA1, DMA1_Channel7, 7, DMA1_CSELR, 2 }'), 'L4: CSELR');
+  assert.ok(get('stm32u575zit6q', 'es_dma.c').includes('GPDMA1_Channel1, 25') && get('stm32u575zit6q', 'es_flash.c').includes('FLASH->NSCR'));
+  assert.ok(get('stm32g071rbt6', 'es_dma.c').includes('DMAMUX1_Channel1, 51'), 'G0: USART1_TX = 0x33');
+});
+test('arayüzdeki sürücü listesi ve bağımlılıklar üreticiyle aynı', () => {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'media', 'settings.js'), 'utf8');
+  const ui = [...src.slice(src.indexOf('const REG_DRIVERS')).matchAll(/^\s*\['(\w+)',/gm)].map((m) => m[1]);
+  assert.deepStrictEqual(ui, rd.DRIVERS.map((d) => d.id));
+  const req = eval(`(${src.match(/const REG_REQUIRES = (\{[^}]*\})/)[1]})`);
+  assert.deepStrictEqual(req, Object.fromEntries(rd.DRIVERS.filter((d) => d.requires).map((d) => [d.id, d.requires])));
+});
+test('flash düzeni: F429 çift banka SNB, F767 sektörleri, G474/L476 BKER, U5 8 KB sayfa', () => {
+  const get = (id) => (regFiles(id, ['flash']).find((f) => f.path.endsWith('es_flash.c')) || {}).content;
+  const f429 = get('stm32f429zit6');
+  assert.ok(f429.includes('{ 0x100000U, 16384U, 16, 2 }') && f429.includes('{ 0xE0000U, 131072U, 11, 1 }'), 'F429: banka 2 SNB 16');
+  assert.ok(get('stm32f767zit6').includes('{ 0x40000U, 262144U, 5, 1 }'), 'F767: sektör 5 = 256 KB');
+  assert.ok(get('stm32g474ret6').includes('FLASH_CR_BKER') && get('stm32l476rgt6').includes('ES_FLASH_PAGES_PER_BANK 256U'));
+  assert.ok(get('stm32u575zit6q').includes('ES_FLASH_PAGE_SIZE 8192U'));
+  assert.ok(regFiles('stm32h743zit6', ['flash'])[0].content.includes('ES_FLASH_ALIGN 32U'), 'H7: 256 bit flash kelimesi');
+});
+
 console.log('Kütüphane, telemetri, debug');
 test('tüm hazır komponentler doğrulamadan geçer', () => {
   for (const c of Object.values(lib.components)) assert.deepStrictEqual(validateComponent(c), [], c.id);

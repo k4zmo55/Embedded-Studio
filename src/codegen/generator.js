@@ -15,9 +15,10 @@ const bsp = require('./bsp');
 const { layout, join } = require('./layout');
 const cm = require('./build');
 const { familyOf } = require('./families');
+const { regDriverFiles } = require('./regdrivers');
 const { cIdent, indent } = bsp;
 
-const GENERATOR_VERSION = 5; // 3: bare-metal sade klasör yapısı; 4: cmake/embedded-studio.cmake + CMakePresets.json; 5: çoklu aile (ES-106)
+const GENERATOR_VERSION = 6; // 3: bare-metal sade klasör yapısı; 4: cmake/embedded-studio.cmake + CMakePresets.json; 5: çoklu aile (ES-106); 6: örnek register sürücüleri, H7 .dma_buffer
 
 /** Hazır sürücüsü olmayan (kullanıcının yüklediği) komponentler: pinler ve bus hazır, okuma kodu kullanıcıda. */
 const GENERIC_DRIVER = {
@@ -214,6 +215,11 @@ void Telemetry_Task(const char *name, const char *state, unsigned prio, unsigned
   const usageFor = {};
   for (const c of ctxs) for (const p of Object.keys(c.driver.files || {})) if (p.endsWith('.h') && !usageFor[p]) usageFor[p] = usageComment(c);
   for (const [p, content] of Object.entries(driverFiles)) add(p.replace(/^Drivers\/Components\//, `${P.drivers}/`), `${usageFor[p] || ''}/* Embedded Studio sürücüsü. Komponent tasarımdan çıkarılırsa bu dosya da kaldırılır. */\n${content}`);
+
+  // ---- Örnek register sürücüleri (ES-107): bare-metal, bir kez oluşturulur, sonra kullanıcınındır ----
+  if (framework === 'register' && (design.regDrivers || []).length) {
+    for (const [n, content] of Object.entries(regDriverFiles(mcu, design.regDrivers, clock))) add(`${P.drivers}/reg/${n}`, content, 'once');
+  }
 
   // ---- Uygulama ----
   const includes = [...new Set(ctxs.map((c) => c.driver.include).filter(Boolean))];
@@ -569,6 +575,7 @@ ${userBlock('Config')}
 }
 
 function linkerScript(mcu) {
+  const h7 = familyOf(mcu).key === 'h7';
   return `/* Embedded Studio: ${mcu.name} bağlayıcı betiği (${mcu.device.flashKB} KB flash, ${mcu.device.ramKB} KB RAM) */
 ENTRY(Reset_Handler)
 
@@ -579,9 +586,21 @@ _Min_Stack_Size = 0x400;
 MEMORY
 {
   RAM   (xrw) : ORIGIN = 0x20000000, LENGTH = ${mcu.device.ramKB}K
-  FLASH (rx)  : ORIGIN = 0x08000000, LENGTH = ${mcu.device.flashKB}K
+  FLASH (rx)  : ORIGIN = 0x08000000, LENGTH = ${mcu.device.flashKB}K${h7 ? `
+  RAM_D1 (xrw) : ORIGIN = 0x24000000, LENGTH = 128K /* AXI SRAM: DMA1/DMA2 DTCM'e erişemez */` : ''}
 }
-
+${h7 ? `
+SECTIONS
+{
+  /* DMA tamponları: static uint8_t buf[64] ES_DMA_BUFFER; (es_dma.h) */
+  .dma_buffer (NOLOAD) :
+  {
+    . = ALIGN(32);
+    *(.dma_buffer)
+    . = ALIGN(32);
+  } >RAM_D1
+}
+` : ''}
 SECTIONS
 {
   .isr_vector :
@@ -724,6 +743,7 @@ function agentGuide(design, lib, result, mcu, framework, name, files) {
   const label = (id) => design.instances.find((i) => i.id === id)?.label ?? id;
   const pins = result.connections.map((c) => `| ${label(c.instId)} | ${c.compPin} | ${c.mcuPin} | ${c.signal} |`).join('\n');
   const b = cm.normalizeBuild(design.build);
+  const regRow = framework === 'register' ? '| Register seviyesinde örnek sürücüler | `drivers/reg/es_*.c/h` (Ayarlar > Örnek register sürücüleri; bir kez üretilir, sonra kullanıcınındır; Embedded Studio yazmaz) |\n' : '';
   const cmakeRow = b.cmake === 'user'
     ? '| Derleme ayarı / ek kaynak | `CMakeLists.txt` kullanıcınındır (Embedded Studio yazmaz); üretilen ayarlar `cmake/embedded-studio.cmake` içinde, `embedded_studio_target()` ile uygulanır |'
     : '| Ek kaynak / hedef | `CMakeLists.txt` → `Sources`, `Targets` |\n| Derleme ayarı (bayrak, -O, -D, FPU, linker) | Embedded Studio > Proje Ayarları > Derleme → `cmake/embedded-studio.cmake` (elle düzenlemeyin) |';
@@ -760,14 +780,14 @@ başlangıç olarak oluşturuldu ve artık tamamen kullanıcınındır; Embedded
 | 1 ms periyodik iş | Kendi dosyanızda \`void bsp_systick_hook(void)\` tanımlayın (weak) |
 | UART'tan gelen byte | Kendi dosyanızda \`void bsp_uart_rx_callback(uint8_t bus, uint8_t byte)\` tanımlayın (weak) |
 | Hata işleyicileri | \`src/${familyOf(mcu).itFile}\` (SysTick ve UART kesmeleri üretilen \`src/bsp_irq.c\`'de) |
-${cmakeRow}` : `| Amaç | Dosya / blok |
+${regRow}${cmakeRow}` : `| Amaç | Dosya / blok |
 |---|---|
 | Sensör verisini işlemek | \`app.c\` → \`Poll_<SENSÖR>()\` içindeki \`USER CODE BEGIN <SENSÖR>\` (okunan değişkenler kapsamda) |
 | Global değişken / yardımcı fonksiyon | \`app.c\` → \`Globals\`, \`Functions\` |
 | Başlangıç kodu | \`app.c\` → \`Init\`; \`main.c\` → \`PreInit\` / \`PostInit\` |
 | ${design.rtos ? 'Kendi FreeRTOS task\'ları | `app.c` → `Tasks` (vTaskStartScheduler öncesi xTaskCreate)' : 'Ana döngü işi | `app.c` → `Loop`'} |
 | Kesme işleyicileri | \`${familyOf(mcu).itFile}\` → \`Handlers\` |
-${cmakeRow}`}
+${regRow}${cmakeRow}`}
 
 ## Donanım özeti
 

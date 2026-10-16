@@ -1470,6 +1470,60 @@
     "gpioEnr": {
       "reg": "AHB2ENR1",
       "bit": "RCC_AHB2ENR1_GPIO{P}EN"
+    },
+    "flash": {
+      "type": "page",
+      "pageKB": 8,
+      "pagesPerBank": 128,
+      "banks": 2,
+      "unit": 16
+    },
+    "ll": {
+      "syscfg": {
+        "reg": "APB3ENR",
+        "bit": "RCC_APB3ENR_SYSCFGEN"
+      },
+      "afio": null,
+      "crc": {
+        "reg": "AHB1ENR",
+        "bit": "RCC_AHB1ENR_CRCEN"
+      },
+      "wwdg": {
+        "reg": "APB1ENR1",
+        "bit": "RCC_APB1ENR1_WWDGEN"
+      },
+      "dma1": null,
+      "dma2": null,
+      "dmamux": null,
+      "gpdma": {
+        "reg": "AHB1ENR",
+        "bit": "RCC_AHB1ENR_GPDMA1EN"
+      },
+      "dac": {
+        "instance": "DAC1",
+        "reg": "AHB3ENR",
+        "bit": "RCC_AHB3ENR_DAC1EN"
+      },
+      "iwdg": "IWDG",
+      "wwdgInstance": "WWDG",
+      "exti": [
+        "EXTI0",
+        "EXTI1",
+        "EXTI2",
+        "EXTI3",
+        "EXTI4",
+        "EXTI5",
+        "EXTI6",
+        "EXTI7",
+        "EXTI8",
+        "EXTI9",
+        "EXTI10",
+        "EXTI11",
+        "EXTI12",
+        "EXTI13",
+        "EXTI14",
+        "EXTI15"
+      ]
     }
   },
   "clock": {

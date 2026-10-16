@@ -940,6 +940,54 @@
     "gpioEnr": {
       "reg": "AHBENR",
       "bit": "RCC_AHBENR_GPIO{P}EN"
+    },
+    "flash": {
+      "type": "page",
+      "pageKB": 2,
+      "pagesPerBank": 256,
+      "banks": 1,
+      "unit": 2
+    },
+    "ll": {
+      "syscfg": {
+        "reg": "APB2ENR",
+        "bit": "RCC_APB2ENR_SYSCFGEN"
+      },
+      "afio": null,
+      "crc": {
+        "reg": "AHBENR",
+        "bit": "RCC_AHBENR_CRCEN"
+      },
+      "wwdg": {
+        "reg": "APB1ENR",
+        "bit": "RCC_APB1ENR_WWDGEN"
+      },
+      "dma1": {
+        "reg": "AHBENR",
+        "bit": "RCC_AHBENR_DMA1EN"
+      },
+      "dma2": {
+        "reg": "AHBENR",
+        "bit": "RCC_AHBENR_DMA2EN"
+      },
+      "dmamux": null,
+      "gpdma": null,
+      "dac": {
+        "instance": "DAC1",
+        "reg": "APB1ENR",
+        "bit": "RCC_APB1ENR_DAC1EN"
+      },
+      "iwdg": "IWDG",
+      "wwdgInstance": "WWDG",
+      "exti": [
+        "EXTI0",
+        "EXTI1",
+        "EXTI2_TSC",
+        "EXTI3",
+        "EXTI4",
+        "EXTI9_5",
+        "EXTI15_10"
+      ]
     }
   },
   "clock": {

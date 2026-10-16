@@ -49,8 +49,8 @@ VS Code'da **F5** tuşuna bas. Eklentinin yüklü olduğu yeni bir pencere açı
 | Komut | Ne yapar | Gerekenler |
 |---|---|---|
 | `node test/smoke.js` | Pin atama, saat ağacı, kod üretimi, kullanıcı kodu birleştirme, komponent doğrulama | Node 22+ |
-| `node test/build.js <önbellek> <çıktı> [filtre]` | HAL/CMSIS/FreeRTOS'u indirir, 15 işlemci için HAL ve bare-metal projeleri (53 varyant) gerçekten derler. Filtre düzenli ifadedir, ör. `stm32g0` | git, cmake, ninja, arm-none-eabi-gcc |
-| `node test/ui-e2e.js <çalışma> <önbellek>` | Gerçek arayüzü headless tarayıcıda açar, 33 adımlık kullanıcı senaryosunu çalıştırır. `ES_THEME=light`, `ES_SIZE=1100x700` ve `ES_SLOW=6` (işlemciyi yavaşlatır) ile açık tema, dar pencere ve zamanlama hataları da denenebilir | Edge veya Chrome + yukarıdakiler |
+| `node test/build.js <önbellek> <çıktı> [filtre]` | HAL/CMSIS/FreeRTOS'u indirir, 15 işlemci için HAL ve bare-metal projeleri ve örnek sürücüleri (54 varyant) gerçekten derler. Filtre düzenli ifadedir, ör. `stm32g0` | git, cmake, ninja, arm-none-eabi-gcc |
+| `node test/ui-e2e.js <çalışma> <önbellek>` | Gerçek arayüzü headless tarayıcıda açar, 34 adımlık kullanıcı senaryosunu çalıştırır. `ES_THEME=light`, `ES_SIZE=1100x700` ve `ES_SLOW=6` (işlemciyi yavaşlatır) ile açık tema, dar pencere ve zamanlama hataları da denenebilir | Edge veya Chrome + yukarıdakiler |
 
 PR açmadan önce en azından `node test/smoke.js` çalıştır. Kod üretimini değiştirdiysen `test/build.js` de geçmeli.
 GitHub Actions her push'ta bu testleri otomatik çalıştırır.
@@ -147,6 +147,10 @@ veritabanından, saat açma bitleri ve kesme adları CMSIS cihaz başlıklarınd
    Araç, elle doğrulanmış `stm32f411ceu6.json` ile karşılaştırarak kendini de sınar.
 3. `node test/smoke.js` ve `node test/build.js <önbellek> <çıktı> <işlemci>` geçmeli (HAL + bare-metal, FreeRTOS, `-Werror`).
    Mümkünse gerçek bir kartta dene ve PR'da belirt.
+
+**Reference manual bölüm numaraları:** örnek register sürücülerinin "Kaynak:" satırı `data/rm-sections.json`'daki numaraları
+kullanır. ST'nin sitesi otomatik indirmeyi engellediği için RM PDF'lerini tarayıcıyla indirip
+`python tools/mcu/rm-sections.py <pdf klasörü>` çalıştır (pypdf gerekir); numaralar PDF'in içindekiler ağacından alınır.
 
 **Yeni bir aile** (ör. C0, WB, H5) daha fazla iş ister: `codegen/families.js` (çekirdek, FPU, FreeRTOS portu, çevre birimi
 IP sürümleri), `engine/clock.js` (saat modeli), `codegen/regcode.js` ve `codegen/halcode.js` (aileye özgü saat ve

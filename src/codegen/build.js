@@ -152,7 +152,7 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 set(ES_MCU_FLAGS ${mcuFlags(b, mcu).join(' ')})
 
 # Uygulama kaynakları (kendi src/*.c dosyalarınız otomatik toplanır)
-file(GLOB ES_APP_SOURCES CONFIGURE_DEPENDS \${ES_ROOT}/${P.src}/*.c \${ES_ROOT}/${P.drivers}/*.c)
+file(GLOB ES_APP_SOURCES CONFIGURE_DEPENDS \${ES_ROOT}/${P.src}/*.c \${ES_ROOT}/${P.drivers}/*.c \${ES_ROOT}/${P.drivers}/reg/*.c)
 # Üretici kaynakları: uyarıları kapalı derlenir
 set(ES_VENDOR_SOURCES
   \${ES_ROOT}/${P.systemC}
@@ -166,7 +166,7 @@ list(APPEND ES_VENDOR_SOURCES \${ES_HAL_SOURCES})
 ` : ''}set(ES_SOURCES \${ES_APP_SOURCES} \${ES_VENDOR_SOURCES})
 
 set(ES_INCLUDE_DIRS
-${list([`\${ES_ROOT}/${P.inc}`, `\${ES_ROOT}/${P.drivers}`, ...b.includes.map(rootPath)].map((p) => (p.includes(' ') ? q(p) : p)))})
+${list([`\${ES_ROOT}/${P.inc}`, `\${ES_ROOT}/${P.drivers}`, `\${ES_ROOT}/${P.drivers}/reg`, ...b.includes.map(rootPath)].map((p) => (p.includes(' ') ? q(p) : p)))})
 # Üretici başlıkları SYSTEM: uyarı seviyesi onları etkilemez
 set(ES_SYSTEM_INCLUDE_DIRS
 ${list([`\${ES_ROOT}/${P.cmsisCore}`, `\${ES_ROOT}/${P.deviceInc}`, ...(framework === 'hal' ? [`\${ES_ROOT}/${P.hal}/Inc`] : []), ...(o.rtos ? [`\${ES_ROOT}/${P.rtos}/include`, `\${ES_ROOT}/${P.rtos}/portable/GCC/${port}`] : [])])})

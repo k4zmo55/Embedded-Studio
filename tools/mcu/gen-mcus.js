@@ -89,8 +89,21 @@ function parseHeader(file) {
     return covered.includes(periph);
   });
   // ADC1'in ortak bloğu: ADC1_COMMON, ADC12_COMMON, ADC123_COMMON (ADC3_COMMON/ADC4_COMMON değil)
+  /** ES-107 örnek sürücüleri için: sistem birimlerinin saat bitleri, örnek adları, EXTI kesmeleri */
+  const ll = () => {
+    const bit = (names) => { const e = enr(names); return e ? { reg: e.reg, bit: e.bit } : null; };
+    const first = (names) => names.find(instance) || null;
+    const dacInst = first(['DAC1', 'DAC']);
+    return {
+      syscfg: bit(['SYSCFG', 'SYSCFGCOMP']), afio: bit(['AFIO']), crc: bit(['CRC']), wwdg: bit(['WWDG', 'WWDG1']),
+      dma1: bit(['DMA1']), dma2: bit(['DMA2']), dmamux: bit(['DMAMUX1']), gpdma: bit(['GPDMA1']),
+      dac: dacInst ? { instance: dacInst, ...bit(['DAC1', 'DAC', 'DAC12']) } : null,
+      iwdg: first(['IWDG', 'IWDG1']), wwdgInstance: first(['WWDG', 'WWDG1']),
+      exti: [...h.matchAll(/^\s*(EXTI\d+(?:_\w+)?)_IRQn\s*=/gm)].map((m) => m[1])
+    };
+  };
   const common = [...h.matchAll(/#define\s+(ADC(\d*)_COMMON)\s+(\(\(|ADC\w*_COMMON_NS\b)/g)].find((m) => m[2][0] === '1')?.[1];
-  return { enr, irqFor, instance, common };
+  return { enr, irqFor, instance, common, ll };
 }
 
 const busOf = (reg, fam) => {
@@ -195,7 +208,9 @@ for (const tg of targets) {
       openocdTarget: fam.openocd,
       family: tg.family,
       oscPort: osc ? osc.name[1] : undefined,
-      gpioEnr: gpioEnr ? { reg: gpioEnr.reg, bit: gpioEnr.bit.replace(/(GPIO|IOP)A/, '$1{P}') } : undefined
+      gpioEnr: gpioEnr ? { reg: gpioEnr.reg, bit: gpioEnr.bit.replace(/(GPIO|IOP)A/, '$1{P}') } : undefined,
+      flash: tg.flash,
+      ll: header.ll()
     },
     clock: tg.clock
   };
@@ -206,6 +221,11 @@ for (const tg of targets) {
     const bad = ref.pins.flatMap((p) => p.functions.filter((f) => gen.get(`${p.name}:${f.signal}`) !== f.af).map((f) => `${p.name}:${f.signal} el=${f.af} üretilen=${gen.get(`${p.name}:${f.signal}`)}`));
     console.log(`${tg.id.padEnd(16)} doğrulama: ${bad.length ? 'UYUŞMAZLIK\n  ' + bad.join('\n  ') : `${ref.pins.reduce((s, p) => s + p.functions.length, 0)} elle girilmiş fonksiyonun hepsi uyuşuyor`}`);
     if (bad.length) process.exitCode = 1;
+    // Pinlere dokunmadan sadece örnek sürücülerin ihtiyaç duyduğu cihaz bilgilerini güncelle
+    ref.device.flash = tg.flash;
+    ref.device.ll = header.ll();
+    ref.device.gpioEnr = ref.device.gpioEnr || mcu.device.gpioEnr;
+    fs.writeFileSync(path.join(out, `${tg.id}.json`), JSON.stringify(ref, null, 2) + '\n');
     continue;
   }
   fs.writeFileSync(path.join(out, `${tg.id}.json`), JSON.stringify(mcu, null, 2) + '\n');

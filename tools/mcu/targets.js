@@ -16,6 +16,20 @@ const ds = (part) => `https://www.st.com/resource/en/datasheet/${part}.pdf`;
 const rm = (doc) => `https://www.st.com/resource/en/reference_manual/${doc}.pdf`;
 const svd = (name) => `https://raw.githubusercontent.com/cmsis-svd/cmsis-svd-data/main/data/STMicro/${name}.svd`;
 
+
+// Flash düzeni (es_flash örnek sürücüsü). unit: en küçük programlama birimi (byte).
+//  page   : eşit sayfalar; çift bankada her bankanın sayfaları 0'dan numaralanır (BKER)
+//  sector : farklı boyutlu sektörler [başlangıç ofseti KB, boyut KB, SNB değeri, banka]
+const pages = (pageKB, count, unit, banks = 1) => ({ type: 'page', pageKB, pagesPerBank: count / banks, banks, unit });
+const F4_1M = [16, 16, 16, 16, 64, 128, 128, 128, 128, 128, 128, 128];
+const sectors = (sizes, unit, bank2 = null) => {
+  const list = [];
+  let off = 0;
+  sizes.forEach((kb, i) => { list.push([off, kb, i, 1]); off += kb; });
+  if (bank2) bank2.sizes.forEach((kb, i) => { list.push([bank2.offsetKB + bank2.sizes.slice(0, i).reduce((a, b) => a + b, 0), kb, bank2.snb(i), 2]); });
+  return { type: 'sector', unit, sectors: list };
+};
+
 // Kartlara göre özel pinler (notlar pin atayıcıda bu pinleri son tercihe bırakır)
 const NUCLEO64 = { PA2: 'ST-LINK VCP TX (USART2)', PA3: 'ST-LINK VCP RX (USART2)', PA5: 'LD2 kart LED\'i', PC13: 'B1 kullanıcı butonu' };
 const NUCLEO144 = { PD8: 'ST-LINK VCP TX (USART3)', PD9: 'ST-LINK VCP RX (USART3)', PB0: 'LD1 kart LED\'i', PB7: 'LD2 kart LED\'i', PB14: 'LD3 kart LED\'i', PC13: 'B1 kullanıcı butonu',
@@ -24,9 +38,9 @@ const NUCLEO144 = { PD8: 'ST-LINK VCP TX (USART3)', PD9: 'ST-LINK VCP RX (USART3
 
 module.exports = [
   // Elle girilmiş ilk tanım (DS10314'ten): üzerine yazılmaz, üretim aracının doğruluğunu sınamak için karşılaştırılır
-  { id: 'stm32f411ceu6', ref: 'STM32F411C(C-E)Ux', family: 'f4', define: 'STM32F411xE', verifyOnly: true, hse: 25, pinNotes: {}, clock: {} },
+  { id: 'stm32f411ceu6', ref: 'STM32F411C(C-E)Ux', family: 'f4', define: 'STM32F411xE', verifyOnly: true, hse: 25, pinNotes: {}, clock: {}, flash: sectors(F4_1M.slice(0, 8), 4) },
   {
-    id: 'stm32f030c8t6', name: 'STM32F030C8T6', ref: 'STM32F030C8Tx', family: 'f0', board: 'LQFP48 (generic)',
+    id: 'stm32f030c8t6', name: 'STM32F030C8T6', ref: 'STM32F030C8Tx', family: 'f0', board: 'LQFP48 (generic)', flash: pages(1, 64, 2),
     define: 'STM32F030x8', startup: 'startup_stm32f030x8.s', flashKB: 64, ramKB: 8, maxClockMHz: 48,
     datasheet: ds('stm32f030c8'), referenceManual: rm('rm0360-stm32f030x4x6x8xc-and-stm32f070x6xb-advanced-armbased-32bit-mcus-stmicroelectronics'), svdUrl: svd('STM32F030'),
     hse: 8, pinNotes: {},
@@ -38,7 +52,7 @@ module.exports = [
     }
   },
   {
-    id: 'stm32f103c8t6', name: 'STM32F103C8T6', ref: 'STM32F103C(8-B)Tx', family: 'f1', board: 'Blue Pill',
+    id: 'stm32f103c8t6', name: 'STM32F103C8T6', ref: 'STM32F103C(8-B)Tx', family: 'f1', board: 'Blue Pill', flash: pages(1, 64, 2),
     define: 'STM32F103xB', startup: 'startup_stm32f103xb.s', flashKB: 64, ramKB: 20, maxClockMHz: 72,
     datasheet: ds('stm32f103c8'), referenceManual: rm('rm0008-stm32f101xx-stm32f102xx-stm32f103xx-stm32f105xx-and-stm32f107xx-advanced-armbased-32bit-mcus-stmicroelectronics'), svdUrl: svd('STM32F103xx'),
     hse: 8, pinNotes: { PC13: 'Kart LED\'i (aktif düşük)', PA11: 'USB D-', PA12: 'USB D+' },
@@ -50,7 +64,7 @@ module.exports = [
     }
   },
   {
-    id: 'stm32f303ret6', name: 'STM32F303RET6', ref: 'STM32F303R(D-E)Tx', family: 'f3', board: 'Nucleo-F303RE',
+    id: 'stm32f303ret6', name: 'STM32F303RET6', ref: 'STM32F303R(D-E)Tx', family: 'f3', board: 'Nucleo-F303RE', flash: pages(2, 256, 2),
     define: 'STM32F303xE', startup: 'startup_stm32f303xe.s', flashKB: 512, ramKB: 64, maxClockMHz: 72,
     datasheet: ds('stm32f303re'), referenceManual: rm('rm0316-stm32f303xbcde-stm32f303x68-stm32f328x8-stm32f358xc-stm32f398xe-advanced-armbased-mcus-stmicroelectronics'), svdUrl: svd('STM32F303'),
     hse: 8, pinNotes: NUCLEO64,
@@ -63,7 +77,7 @@ module.exports = [
     }
   },
   {
-    id: 'stm32f407vgt6', name: 'STM32F407VGT6', ref: 'STM32F407V(E-G)Tx', family: 'f4', board: 'STM32F4-Discovery',
+    id: 'stm32f407vgt6', name: 'STM32F407VGT6', ref: 'STM32F407V(E-G)Tx', family: 'f4', board: 'STM32F4-Discovery', flash: sectors(F4_1M, 4),
     define: 'STM32F407xx', startup: 'startup_stm32f407xx.s', flashKB: 1024, ramKB: 128, maxClockMHz: 168,
     datasheet: ds('stm32f407vg'), referenceManual: rm('rm0090-stm32f405415-stm32f407417-stm32f427437-and-stm32f429439-advanced-armbased-32bit-mcus-stmicroelectronics'), svdUrl: svd('STM32F407'),
     hse: 8, pinNotes: { PD12: 'LD4 yeşil LED', PD13: 'LD3 turuncu LED', PD14: 'LD5 kırmızı LED', PD15: 'LD6 mavi LED', PA0: 'B1 kullanıcı butonu',
@@ -78,7 +92,7 @@ module.exports = [
     }
   },
   {
-    id: 'stm32f429zit6', name: 'STM32F429ZIT6', ref: 'STM32F429ZITx', family: 'f4', board: 'Nucleo-F429ZI',
+    id: 'stm32f429zit6', name: 'STM32F429ZIT6', ref: 'STM32F429ZITx', family: 'f4', board: 'Nucleo-F429ZI', flash: sectors(F4_1M, 4, { offsetKB: 1024, sizes: F4_1M, snb: (i) => 16 + i }),
     define: 'STM32F429xx', startup: 'startup_stm32f429xx.s', flashKB: 2048, ramKB: 192, maxClockMHz: 180,
     datasheet: ds('stm32f429zi'), referenceManual: rm('rm0090-stm32f405415-stm32f407417-stm32f427437-and-stm32f429439-advanced-armbased-32bit-mcus-stmicroelectronics'), svdUrl: svd('STM32F429'),
     hse: 8, pinNotes: NUCLEO144,
@@ -91,7 +105,7 @@ module.exports = [
     }
   },
   {
-    id: 'stm32f446ret6', name: 'STM32F446RET6', ref: 'STM32F446R(C-E)Tx', family: 'f4', board: 'Nucleo-F446RE',
+    id: 'stm32f446ret6', name: 'STM32F446RET6', ref: 'STM32F446R(C-E)Tx', family: 'f4', board: 'Nucleo-F446RE', flash: sectors(F4_1M.slice(0, 8), 4),
     define: 'STM32F446xx', startup: 'startup_stm32f446xx.s', flashKB: 512, ramKB: 128, maxClockMHz: 180,
     datasheet: ds('stm32f446re'), referenceManual: rm('rm0390-stm32f446xx-advanced-armbased-32bit-mcus-stmicroelectronics'), svdUrl: svd('STM32F446'),
     hse: 8, pinNotes: NUCLEO64,
@@ -104,7 +118,7 @@ module.exports = [
     }
   },
   {
-    id: 'stm32f767zit6', name: 'STM32F767ZIT6', ref: 'STM32F767ZITx', family: 'f7', board: 'Nucleo-F767ZI',
+    id: 'stm32f767zit6', name: 'STM32F767ZIT6', ref: 'STM32F767ZITx', family: 'f7', board: 'Nucleo-F767ZI', flash: sectors([32, 32, 32, 32, 128, 256, 256, 256, 256, 256, 256, 256], 4),
     define: 'STM32F767xx', startup: 'startup_stm32f767xx.s', flashKB: 2048, ramKB: 512, maxClockMHz: 216,
     datasheet: ds('stm32f767zi'), referenceManual: rm('rm0410-stm32f76xxx-and-stm32f77xxx-advanced-armbased-32bit-mcus-stmicroelectronics'), svdUrl: svd('STM32F7x7'),
     hse: 8, pinNotes: NUCLEO144,
@@ -117,7 +131,7 @@ module.exports = [
     }
   },
   {
-    id: 'stm32h743zit6', name: 'STM32H743ZIT6', ref: 'STM32H743ZITx', family: 'h7', board: 'Nucleo-H743ZI2',
+    id: 'stm32h743zit6', name: 'STM32H743ZIT6', ref: 'STM32H743ZITx', family: 'h7', board: 'Nucleo-H743ZI2', flash: sectors(Array(8).fill(128), 32, { offsetKB: 1024, sizes: Array(8).fill(128), snb: (i) => i }),
     define: 'STM32H743xx', startup: 'startup_stm32h743xx.s', flashKB: 2048, ramKB: 128, maxClockMHz: 480,
     datasheet: ds('stm32h743zi'), referenceManual: rm('rm0433-stm32h742-stm32h743753-and-stm32h750-value-line-advanced-armbased-32bit-mcus-stmicroelectronics'), svdUrl: svd('STM32H743x'),
     hse: 8, pinNotes: { ...NUCLEO144, PB7: 'LD2 kart LED\'i (sarı: PE1)', PE1: 'LD2 sarı LED' },
@@ -130,7 +144,7 @@ module.exports = [
     }
   },
   {
-    id: 'stm32h723zgt6', name: 'STM32H723ZGT6', ref: 'STM32H723ZGTx', family: 'h7', board: 'Nucleo-H723ZG',
+    id: 'stm32h723zgt6', name: 'STM32H723ZGT6', ref: 'STM32H723ZGTx', family: 'h7', board: 'Nucleo-H723ZG', flash: sectors(Array(8).fill(128), 32),
     define: 'STM32H723xx', startup: 'startup_stm32h723xx.s', flashKB: 1024, ramKB: 128, maxClockMHz: 550,
     datasheet: ds('stm32h723zg'), referenceManual: rm('rm0468-stm32h723733-stm32h725735-and-stm32h730-value-line-advanced-armbased-32bit-mcus-stmicroelectronics'), svdUrl: 'https://raw.githubusercontent.com/modm-io/cmsis-svd-stm32/main/stm32h7/STM32H723.svd',
     hse: 8, pinNotes: { ...NUCLEO144, PE1: 'LD2 sarı LED' },
@@ -143,7 +157,7 @@ module.exports = [
     }
   },
   {
-    id: 'stm32g071rbt6', name: 'STM32G071RBT6', ref: 'STM32G071R(6-8-B)Tx', family: 'g0', board: 'Nucleo-G071RB',
+    id: 'stm32g071rbt6', name: 'STM32G071RBT6', ref: 'STM32G071R(6-8-B)Tx', family: 'g0', board: 'Nucleo-G071RB', flash: pages(2, 64, 8),
     define: 'STM32G071xx', startup: 'startup_stm32g071xx.s', flashKB: 128, ramKB: 36, maxClockMHz: 64,
     datasheet: ds('stm32g071rb'), referenceManual: rm('rm0444-stm32g0x1-advanced-armbased-32bit-mcus-stmicroelectronics'), svdUrl: svd('STM32G071'),
     hse: 8, pinNotes: { PA2: 'ST-LINK VCP TX (USART2)', PA3: 'ST-LINK VCP RX (USART2)', PA5: 'LD4 kart LED\'i', PC13: 'B1 kullanıcı butonu' },
@@ -156,7 +170,7 @@ module.exports = [
     }
   },
   {
-    id: 'stm32g474ret6', name: 'STM32G474RET6', ref: 'STM32G474R(B-C-E)Tx', family: 'g4', board: 'Nucleo-G474RE',
+    id: 'stm32g474ret6', name: 'STM32G474RET6', ref: 'STM32G474R(B-C-E)Tx', family: 'g4', board: 'Nucleo-G474RE', flash: pages(2, 256, 8, 2),
     define: 'STM32G474xx', startup: 'startup_stm32g474xx.s', flashKB: 512, ramKB: 128, maxClockMHz: 170,
     datasheet: ds('stm32g474re'), referenceManual: rm('rm0440-stm32g4-series-advanced-armbased-32bit-mcus-stmicroelectronics'), svdUrl: svd('STM32G474xx'),
     hse: 24, pinNotes: NUCLEO64,
@@ -169,7 +183,7 @@ module.exports = [
     }
   },
   {
-    id: 'stm32l432kcu6', name: 'STM32L432KCU6', ref: 'STM32L432K(B-C)Ux', family: 'l4', board: 'Nucleo-L432KC',
+    id: 'stm32l432kcu6', name: 'STM32L432KCU6', ref: 'STM32L432K(B-C)Ux', family: 'l4', board: 'Nucleo-L432KC', flash: pages(2, 128, 8),
     define: 'STM32L432xx', startup: 'startup_stm32l432xx.s', flashKB: 256, ramKB: 64, maxClockMHz: 80,
     datasheet: ds('stm32l432kc'), referenceManual: rm('rm0394-stm32l41xxx42xxx43xxx44xxx45xxx46xxx-advanced-armbased-32bit-mcus-stmicroelectronics'), svdUrl: svd('STM32L4x2'),
     hse: 0, pinNotes: { PA2: 'ST-LINK VCP TX (USART2)', PA15: 'ST-LINK VCP RX (USART2)', PB3: 'LD3 kart LED\'i' },
@@ -182,7 +196,7 @@ module.exports = [
     }
   },
   {
-    id: 'stm32l476rgt6', name: 'STM32L476RGT6', ref: 'STM32L476R(C-E-G)Tx', family: 'l4', board: 'Nucleo-L476RG',
+    id: 'stm32l476rgt6', name: 'STM32L476RGT6', ref: 'STM32L476R(C-E-G)Tx', family: 'l4', board: 'Nucleo-L476RG', flash: pages(2, 512, 8, 2),
     define: 'STM32L476xx', startup: 'startup_stm32l476xx.s', flashKB: 1024, ramKB: 96, maxClockMHz: 80,
     datasheet: ds('stm32l476rg'), referenceManual: rm('rm0351-stm32l47xxx-stm32l48xxx-stm32l49xxx-and-stm32l4axxx-advanced-armbased-32bit-mcus-stmicroelectronics'), svdUrl: svd('STM32L4x6'),
     hse: 8, pinNotes: NUCLEO64,
@@ -195,7 +209,7 @@ module.exports = [
     }
   },
   {
-    id: 'stm32u575zit6q', name: 'STM32U575ZIT6Q', ref: 'STM32U575ZITxQ', family: 'u5', board: 'Nucleo-U575ZI-Q',
+    id: 'stm32u575zit6q', name: 'STM32U575ZIT6Q', ref: 'STM32U575ZITxQ', family: 'u5', board: 'Nucleo-U575ZI-Q', flash: pages(8, 256, 16, 2),
     define: 'STM32U575xx', startup: 'startup_stm32u575xx.s', flashKB: 2048, ramKB: 768, maxClockMHz: 160,
     datasheet: ds('stm32u575zi'), referenceManual: rm('rm0456-stm32u5-series-armbased-32bit-mcus-stmicroelectronics'), svdUrl: svd('STM32U575'),
     hse: 16, pinNotes: { PA9: 'ST-LINK VCP TX (USART1)', PA10: 'ST-LINK VCP RX (USART1)', PC7: 'LD1 kart LED\'i', PB7: 'LD2 kart LED\'i', PG2: 'LD3 kart LED\'i', PC13: 'B1 kullanıcı butonu', PA11: 'USB D-', PA12: 'USB D+' },

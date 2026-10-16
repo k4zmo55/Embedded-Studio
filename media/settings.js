@@ -125,6 +125,54 @@
     }));
   }
 
+  // ---- Örnek register sürücüleri (ES-107): bare-metal projede drivers/reg/ altına bir kez üretilir ----
+  const REG_DRIVERS = [
+    ['rcc', t('RCC / saat'), t('Saat kurulumu (bu projenin Clock ayarı) ve HCLK/PCLK frekanslarını register\'lardan okuma.')],
+    ['gpio', 'GPIO', t('Pin modu, çekme direnci, çıkış tipi, alternatif fonksiyon; yazma, okuma, tersleme.')],
+    ['exti', 'EXTI', t('GPIO pin kesmesi: kenar seçimi, bayrak, NVIC kesme numarası.')],
+    ['uart', 'UART', t('Yoklamalı gönderme/alma, kesmeyle halka tampona alma, DMA ile gönderme.')],
+    ['spi', 'SPI', t('Master, mod 0-3, saat bölücü; tam çift yönlü aktarım.')],
+    ['i2c', 'I2C', t('Master; 100/400 kHz zamanlaması çalışma anında hesaplanır; register okuma/yazma.')],
+    ['tim', 'TIM', t('PWM, input capture (periyot ölçümü), encoder modu.')],
+    ['adc', 'ADC', t('Tek kanal okuma ve DMA ile sürekli çok kanallı tarama.')],
+    ['dac', 'DAC', t('12 bit DAC çıkışı (kanal 1/2).')],
+    ['dma', 'DMA', t('Çevre birimi ↔ bellek aktarımı; bu işlemci için UART, ADC ve SPI istek eşlemeleri hazır.')],
+    ['iwdg', 'IWDG', t('Bağımsız watchdog: milisaniye cinsinden zaman aşımı.')],
+    ['wwdg', 'WWDG', t('Pencereli watchdog: sayaç ve pencere ayarı.')],
+    ['crc', 'CRC', t('Donanım CRC-32 (polinom 0x04C11DB7).')],
+    ['flash', 'FLASH', t('Kilit açma, sayfa/sektör silme, programlama (bu işlemcinin flash düzeniyle).')]
+  ];
+
+  /** src/codegen/regdrivers.js DRIVERS[].requires ile aynı */
+  const REG_REQUIRES = { exti: ['gpio'], uart: ['dma'], adc: ['dma'] };
+
+  function regDriverSection() {
+    const mcu = state.lib.mcus[state.design.mcuId];
+    const sel = new Set(state.design.regDrivers || []);
+    const avail = new Set(mcu.regDriverIds || []);
+    const bare = state.design.framework === 'register';
+    const toggle = (id, on) => {
+      const next = new Set(state.design.regDrivers || []);
+      if (on) next.add(id); else next.delete(id);
+      state.design.regDrivers = REG_DRIVERS.map(([i]) => i).filter((i) => next.has(i));
+      update();
+    };
+    return h('section', { class: 'wizard-card', id: 'set-regdrivers' },
+      h('h3', { text: t('Örnek register sürücüleri') }),
+      bare
+        ? h('p', { class: 'hint', text: t('Seçilenler "Kod Üret" ile drivers/reg/ klasörüne bir kez üretilir ve sonra sizindir (seçimi kaldırmak dosyaları silmez). Yalnızca CMSIS cihaz başlığına bağlıdır; her dosyada kullanım örneği ve reference manual bölümü vardır. UART ve ADC, DMA sürücüsünü de ekler.') })
+        : h('p', { class: 'hint', text: t('Örnek register sürücüleri bare-metal (register) altyapıda kullanılır. Kod altyapısını yukarıdan değiştirebilirsiniz.') }),
+      bare ? h('div', { class: 'reg-drivers' }, ...REG_DRIVERS.map(([id, title, desc]) => {
+        const ok = avail.has(id);
+        // Seçilenlerin bağımlılığı olarak gelen sürücü (UART/ADC → DMA, EXTI → GPIO): işaretli ve kilitli
+        const by = Object.entries(REG_REQUIRES).filter(([d, reqs]) => sel.has(d) && reqs.includes(id)).map(([d]) => d.toUpperCase());
+        const forced = ok && by.length > 0 && !sel.has(id);
+        return h('label', { class: `check reg-driver${ok && !forced ? '' : ' disabled'}`, title: !ok ? t('{0} bu işlemcide yok.', title) : forced ? t('{0} için gerekli.', by.join(', ')) : '' },
+          h('input', { type: 'checkbox', id: `set-rd-${id}`, checked: (sel.has(id) || forced) && ok, disabled: !ok || forced, onchange: (e) => toggle(id, e.target.checked) }),
+          h('span', {}, h('b', { text: title }), h('span', { class: 'hint', text: ` — ${desc}` })));
+      })) : null);
+  }
+
   function buildSection() {
     const b = state.design.build;
     const mcu = state.lib.mcus[state.design.mcuId];
@@ -226,7 +274,8 @@
       h('div', { class: 'wizard-actions' },
         h('button', { class: 'ghost', id: 'set-cancel', disabled: !changed(), onclick: () => { draft = null; preview = null; render(); } }, t('Vazgeç')),
         h('button', { id: 'set-apply', disabled: !changed() || !preview, onclick: apply }, t('Uygula'))),
-      buildSection());
+      buildSection(),
+      regDriverSection());
     if (focused && $(focused)) $(focused).focus();
     if ($('settings')) $('settings').scrollTop = scroll;
   }

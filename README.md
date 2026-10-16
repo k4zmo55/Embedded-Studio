@@ -141,6 +141,18 @@ Altyapıyı Ayarlar sekmesinden değiştirirseniz bir sonraki "Kod Üret"te kend
 - Bir sensörü çıkarırsanız sürücüsü kaldırılır ama **ona yazdığınız kod silinmez**; dosyanın sonunda `#if 0` bloğunda durur.
 - Üretilen kod her push'ta Linux'ta **ARM GCC ile** HAL / register × RTOS / RTOS'suz, Debug / Release / MinSizeRel, donanım / yazılım float varyantlarında derlenir; sıkı uyarılar ve `-Werror` altında da temiz kalır.
 
+### Örnek register sürücüleri
+
+Bare-metal projelerde **Ayarlar > Örnek register sürücüleri** bölümünden seçilir ve `drivers/reg/es_*.c/h` olarak bir kez üretilir
+(sonra sizindir, Embedded Studio bunlara yazmaz): RCC/saat, GPIO, EXTI, UART (yoklama, kesme + halka tampon, DMA), SPI, I2C,
+TIM (PWM, input capture, encoder), ADC (tek kanal ve DMA ile tarama), DAC, DMA, IWDG, WWDG, CRC, FLASH (silme/programlama).
+
+- Sadece CMSIS cihaz başlığına bağlıdır; HAL ya da Embedded Studio BSP'si gerekmez, başka projeye kopyalanabilir.
+- Projenin işlemcisine göre üretilir: F1'in CRL/CRH GPIO'su, TIMINGR'li I2C, DMAMUX (G0/G4/H7) ve GPDMA (U5) istek eşlemeleri,
+  flash sayfa/sektör düzeni ve banka seçimi o işlemcinin koduyla yazılır.
+- Her dosyanın başında açıklama, kullanım örneği ve ilgili reference manual bölümü (`RM0090 "General-purpose I/Os (GPIO)"`) bulunur.
+  Bölüm numaraları için RM PDF'lerini indirip `python tools/mcu/rm-sections.py <klasör>` çalıştırın.
+
 ### Derleme ayarları ve CMake
 
 Derleme ayarları **Ayarlar > Derleme** bölümündedir ve üretilen `cmake/embedded-studio.cmake` dosyasına yazılır:

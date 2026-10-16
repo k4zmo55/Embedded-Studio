@@ -1,5 +1,18 @@
 # Değişiklik günlüğü
 
+## 0.5.0 (önizleme)
+
+M1 (temel profesyonel kullanım) tamamlandı: çalışma modları, proje yapıları, kullanıcının yönettiği CMake, 15 STM32 ve örnek register sürücüleri.
+
+- **Örnek register sürücüleri** (Ayarlar > Örnek register sürücüleri, bare-metal): RCC/saat, GPIO, EXTI, UART (yoklama, kesme + halka tampon, DMA), SPI, I2C, TIM (PWM, input capture, encoder), ADC (tek kanal, DMA ile tarama), DAC, DMA, IWDG, WWDG, CRC, FLASH. `drivers/reg/es_*.c/h` olarak bir kez üretilir, sonra kullanıcınındır.
+  - Sadece CMSIS cihaz başlığına bağlı; HAL ya da BSP gerektirmez.
+  - İşlemciye göre üretilir: F1 GPIO (CRL/CRH) ve AFIO, SYSCFG / EXTI tipi EXTICR, eski ve TIMINGR'li I2C (zamanlama çalışma anında), FIFO'lu USART, H7/U5 SPI, dört ADC tipi, beş DMA tipi (kanal, kanal + CSELR, kanal + DMAMUX, stream, stream + DMAMUX, GPDMA) ve bu işlemcinin UART/ADC/SPI istek eşlemeleri, flash sayfa/sektör tablosu, çift banka (F429, H743, G474, L476, U575).
+  - Her dosyada açıklama, kullanım örneği ve reference manual kaynağı. Bölüm numaraları `tools/mcu/rm-sections.py` ile RM PDF'lerinin içindekilerinden çıkarılır (ST otomatik indirmeyi engellediği için PDF'ler elle indirilir).
+  - Bağımlılıklar kendiliğinden eklenir (UART/ADC → DMA, EXTI → GPIO); işlemcide olmayan birim (ör. F411'de DAC) seçilemez.
+- H7: linker betiğinde AXI SRAM (`RAM_D1`) ve `.dma_buffer` bölümü (DMA1/DMA2 DTCM'e erişemez); `ES_DMA_BUFFER` ile kullanılır.
+- AGENTS.md bare-metal projelerde örnek sürücülerin yerini anlatır.
+- Testler: derleme 54 varyant (her işlemcide 14 sürücünün tamamı + tüm API'leri çağıran dosya derlenir ve bağlanır), birim 49, arayüz 34 adım.
+
 ## 0.4.6 (önizleme)
 
 - **15 STM32, 10 aile:** STM32F030C8, F103C8 (Blue Pill), F303RE, F407VG (Discovery), F411CE (Black Pill), F429ZI, F446RE, F767ZI, G071RB, G474RE, H723ZG, H743ZI, L432KC, L476RG, U575ZI-Q. Proje oluştururken ya da Ayarlar'dan seçilir.

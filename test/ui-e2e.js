@@ -846,6 +846,41 @@ async function until(fn, ms = 8000, what = 'koşul') {
     await until(() => fs.existsSync(P('Core/Src/stm32f4xx_it.c')) && !fs.existsSync(P('Core/Src/stm32g4xx_it.c')), 60000, 'F4 dosyaları');
     await cdp.click('#tab-design');
   });
+  await step('Örnek register sürücüleri (ES-107): bare-metal\'de seçilir, drivers/reg/ altına bir kez üretilir ve derlenir', async () => {
+    const P = (p) => path.join(PROJECT, p);
+    await cdp.click('#tab-settings');
+    assert.ok(await cdp.eval(`!document.querySelector('#set-rd-gpio') && document.querySelector('#set-regdrivers').textContent.includes('bare-metal')`), 'HAL projesinde seçim yok, açıklama var');
+    await cdp.click(`(document.querySelector('input[name=set-framework][value=register]').closest('label'))`);
+    await until(() => cdp.eval(`!document.querySelector('#set-apply').disabled`), 8000, 'önizleme');
+    await cdp.click('#set-apply');
+    await until(() => design().framework === 'register', 4000, 'bare-metal');
+    await until(() => cdp.eval(`!!document.querySelector('#set-rd-gpio')`), 3000, 'sürücü listesi');
+    assert.ok(await cdp.eval(`document.querySelector('#set-rd-dac').disabled`), 'F411\'de DAC yok');
+    await cdp.click('#set-rd-gpio');
+    await cdp.click('#set-rd-uart');
+    await until(() => JSON.stringify(design().regDrivers) === '["gpio","uart"]', 4000, 'seçim kaydedildi');
+    await cdp.eval(`document.querySelector('#set-regdrivers').scrollIntoView({ block: 'center' })`);
+    await cdp.shot('30-ornek-surucular');
+    await cdp.click('#generate');
+    await until(() => fs.existsSync(P('drivers/reg/es_uart.c')) && fs.existsSync(P('drivers/reg/es_dma.c')) && fs.existsSync(P('drivers/reg/es_gpio.h')), 20000, 'sürücü dosyaları (UART → DMA da)');
+    assert.ok(fs.readFileSync(P('drivers/reg/es_uart.c'), 'utf8').includes('Kaynak: RM0383'), 'RM kaynağı');
+    // Bir kez üretilir: kullanıcının değişikliği korunur
+    fs.appendFileSync(P('drivers/reg/es_gpio.c'), '\n/* benim eklemem */\n');
+    await cdp.click('#set-rd-crc');
+    await until(() => design().regDrivers.includes('crc'), 4000, 'crc');
+    await cdp.click('#generate');
+    await until(() => fs.existsSync(P('drivers/reg/es_crc.c')), 20000, 'crc dosyası');
+    assert.ok(fs.readFileSync(P('drivers/reg/es_gpio.c'), 'utf8').includes('/* benim eklemem */'), 'es_gpio.c kullanıcınındır');
+    execSync('cmake --preset debug && cmake --build --preset debug', { cwd: PROJECT, stdio: 'pipe', shell: process.platform === 'win32' ? 'cmd.exe' : undefined });
+    // HAL'e dön
+    await cdp.click(`(document.querySelector('input[name=set-framework][value=hal]').closest('label'))`);
+    await until(() => cdp.eval(`!document.querySelector('#set-apply').disabled`), 8000, 'önizleme');
+    await cdp.click('#set-apply');
+    await until(() => design().framework === 'hal', 4000, 'HAL');
+    await cdp.click('#generate');
+    await until(() => fs.existsSync(P('Core/Src/app.c')), 20000, 'HAL dosyaları');
+    await cdp.click('#tab-design');
+  });
   await step('İngilizce arayüz: ayar değişince yeniden yüklenir, ekranda Türkçe metin kalmaz', async () => {
     settings.language = 'en';
     configListeners.forEach((fn) => fn({ affectsConfiguration: (s) => s === 'embeddedStudio.language' }));

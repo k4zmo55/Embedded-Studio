@@ -15,6 +15,7 @@ const cm = require('./codegen/build');
 const { detectToolchains, elfSize } = require('./toolchain');
 const { familyOf } = require('./codegen/families');
 const { periphClockTable } = require('./engine/periphclock');
+const { DRIVERS: REG_DRIVERS } = require('./codegen/regdrivers');
 const packs = require('./codegen/packs');
 const { parseLine, Simulator } = require('./monitor/telemetry');
 const { OpenOcdTarget, SimTarget, simModel, elfSymbols } = require('./debug/session');
@@ -85,6 +86,7 @@ function migrate(design, lib) {
   d.instances = d.instances || [];
   d.locks = d.locks || {};
   d.build = cm.normalizeBuild(d.build);
+  d.regDrivers = Array.isArray(d.regDrivers) ? d.regDrivers.filter((x) => typeof x === 'string') : [];
   if (!lib.mcus[d.mcuId]) d.mcuId = lib.mcus.stm32f411ceu6 ? 'stm32f411ceu6' : Object.keys(lib.mcus)[0];
   d.clock = { ...lib.mcus[d.mcuId].clock.default, ...(d.clock || {}) };
   return d;
@@ -187,7 +189,9 @@ class Studio {
     // Arayüz için aile bilgisi: FPU (yoksa derleme ayarlarında FPU seçimi kapalı) ve APB sayısı
     const mcus = Object.fromEntries(Object.entries(this.lib.mcus).map(([id, m]) => {
       const fam = familyOf(m);
-      return [id, { ...m, fpu: fam.fpu, apbCount: fam.apbCount, series: fam.series }];
+      // Örnek register sürücüleri: bu işlemcide üretilebilenler (ör. DAC'siz işlemcide DAC yok)
+      const regDriverIds = REG_DRIVERS.filter((d) => !d.needs || d.needs(m)).map((d) => d.id);
+      return [id, { ...m, fpu: fam.fpu, apbCount: fam.apbCount, series: fam.series, regDriverIds }];
     }));
     return { mcus, components: comps };
   }

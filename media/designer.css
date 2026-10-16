@@ -553,6 +553,11 @@ table.regs.core td:first-child { width: 44px; }
 .tc-list { display: flex; flex-direction: column; gap: 4px; margin-top: 6px; }
 .tc-item { display: flex; flex-direction: column; align-items: flex-start; text-align: left; gap: 1px; padding: 4px 8px; }
 .tc-item .hint { font-size: 11px; overflow-wrap: anywhere; }
+.reg-drivers { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px 16px; }
+.reg-driver { align-items: flex-start; font-size: 12px; }
+.reg-driver input { margin-top: 2px; }
+.reg-driver.disabled { opacity: 0.5; cursor: default; }
+@media (max-width: 620px) { .reg-drivers { grid-template-columns: 1fr; } }
 .set-usage { display: grid; grid-template-columns: 44px 1fr auto; gap: 10px; align-items: center; font-size: 12px; }
 .set-usage .bar { margin-top: 0; height: 6px; }
 .set-usage .bar > div.hot { background: var(--err); }
