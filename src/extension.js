@@ -31,6 +31,7 @@ const packs = require('./codegen/packs');
 const { parseLine, Simulator } = require('./monitor/telemetry');
 const { OpenOcdTarget, SimTarget, simModel, elfSymbols } = require('./debug/session');
 const { builtinStm32f4, parseSvd, summary, parseValue, insertField, mask } = require('./debug/registers');
+const { readRegion, toIntelHex, checkWrite, simSymbols, MAX_SAVE } = require('./debug/memory');
 const i18n = require('./i18n');
 const { t } = i18n;
 
@@ -510,6 +511,15 @@ class Studio {
       case 'debug.fav':
         this.setFavorite(m.key, m.on);
         break;
+      case 'debug.memwrite':
+        await this.memoryWrite(m);
+        break;
+      case 'debug.memsave':
+        await this.memorySave(m);
+        break;
+      case 'debug.watch':
+        this.saveDebugState({ watch: m.list });
+        break;
       case 'build':
         await actions.build();
         break;
@@ -983,29 +993,75 @@ class Studio {
     }
   }
 
-  /** Favori register'lar ("GPIOA.ODR"), işlemciye göre .embedded-studio/debug.json'da */
-  favorites() {
+  /** .embedded-studio/debug.json: favori register'lar (işlemciye göre), izlenen değişkenler */
+  debugState() {
     try {
-      const d = JSON.parse(fs.readFileSync(path.join(this.root, STATE_DIR, 'debug.json'), 'utf8'));
-      return (d.favorites && d.favorites[this.lib.mcus[this.design.mcuId].name]) || [];
+      return JSON.parse(fs.readFileSync(path.join(this.root, STATE_DIR, 'debug.json'), 'utf8')) || {};
     } catch {
-      return [];
+      return {};
     }
+  }
+
+  saveDebugState(patch) {
+    if (!this.root) return;
+    const file = path.join(this.root, STATE_DIR, 'debug.json');
+    const d = { ...this.debugState(), ...patch };
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, JSON.stringify(d, null, 2) + '\n');
+  }
+
+  /** Favori register'lar ("GPIOA.ODR") */
+  favorites() {
+    const d = this.debugState();
+    return (d.favorites && d.favorites[this.lib.mcus[this.design.mcuId].name]) || [];
   }
 
   setFavorite(key, on) {
     if (!this.root) return;
-    const file = path.join(this.root, STATE_DIR, 'debug.json');
-    let d = {};
-    try { d = JSON.parse(fs.readFileSync(file, 'utf8')); } catch { /* yok */ }
     const mcuName = this.lib.mcus[this.design.mcuId].name;
-    d.favorites = d.favorites || {};
-    const list = (d.favorites[mcuName] || []).filter((x) => x !== key);
+    const favorites = this.debugState().favorites || {};
+    const list = (favorites[mcuName] || []).filter((x) => x !== key);
     if (on) list.push(key);
-    d.favorites[mcuName] = list;
-    fs.mkdirSync(path.dirname(file), { recursive: true });
-    fs.writeFileSync(file, JSON.stringify(d, null, 2) + '\n');
+    favorites[mcuName] = list;
+    this.saveDebugState({ favorites });
     this.postFavorites();
+  }
+
+  /** ES-206: bellek görüntüleyiciden yazma (8/16/32 bit) */
+  async memoryWrite(m) {
+    if (!this.target) return;
+    try {
+      const width = Number(m.width);
+      const value = typeof m.value === 'number' ? m.value >>> 0 : parseValue(m.value);
+      const err = checkWrite(m.addr >>> 0, width, value);
+      if (err) throw new Error(err);
+      await this.target.writeMemory(m.addr >>> 0, width, value);
+      this.post({ type: 'debug.written', addr: m.addr });
+    } catch (e) {
+      this.toast('error', e.message);
+    }
+  }
+
+  /** ES-206: bellek bölgesini dosyaya kaydet (.bin ham, .hex Intel HEX) */
+  async memorySave(m) {
+    if (!this.target) return;
+    const addr = m.addr >>> 0, length = Number(m.length);
+    if (!(length > 0 && length <= MAX_SAVE)) return this.toast('error', t('Bölge boyutu 1 bayt ile 1 MB arasında olmalı.'));
+    const name = `mem_0x${addr.toString(16).padStart(8, '0')}_${length}`;
+    const uri = await vscode.window.showSaveDialog({
+      defaultUri: vscode.Uri.file(path.join(this.root || require('os').homedir(), `${name}.bin`)),
+      filters: { [t('Ham ikili')]: ['bin'], 'Intel HEX': ['hex'] }
+    });
+    if (!uri) return;
+    try {
+      const bytes = await readRegion(this.target, addr, length);
+      const file = uri.fsPath;
+      if (/\.hex$/i.test(file)) fs.writeFileSync(file, toIntelHex(bytes, addr));
+      else fs.writeFileSync(file, bytes);
+      this.toast('info', t('{0} bayt kaydedildi: {1}', length, path.basename(file)));
+    } catch (e) {
+      this.toast('error', e.message);
+    }
   }
 
   /** Favorilerin tanımları (farklı çevre birimlerinden; webview okuma listesine ekler) */
@@ -1029,13 +1085,11 @@ class Studio {
     const elf = this.root && path.join(this.root, cm.elfRel(this.design));
     try {
       const syms = await elfSymbols(elf || '', cm.gccTool(this.design.build, 'nm'));
-      this.post({ type: 'debug.symbols', symbols: syms, source: path.relative(this.root, elf) });
+      this.post({ type: 'debug.symbols', symbols: syms, source: path.relative(this.root, elf), watch: this.debugState().watch || [] });
     } catch (e) {
-      // Simülasyonda ELF yoksa örnek semboller göster
-      const demo = this.target && this.target.mode === 'sim'
-        ? this.design.instances.map((i, k) => ({ name: i.label.toLowerCase() + '_ok', addr: 0x20000100 + k * 4, size: 1 })).concat([{ name: 'uwTick', addr: 0x20000080, size: 4 }])
-        : [];
-      this.post({ type: 'debug.symbols', symbols: demo, error: e.message });
+      // Simülasyonda ELF yoksa zamanla değişen örnek değişkenler göster
+      const demo = this.target && this.target.mode === 'sim' ? simSymbols(this.target.model, this.design.instances) : [];
+      this.post({ type: 'debug.symbols', symbols: demo, error: e.message, watch: this.debugState().watch || [] });
     }
   }
 

@@ -67,6 +67,7 @@ const vscodeFake = {
       onDidDispose: () => {}, reveal() {}
     }),
     showOpenDialog: async () => dialogQueue.shift(),
+    showSaveDialog: async () => dialogQueue.shift(),
     showQuickPick: async (items) => items[0],
     showInformationMessage: async (msg, ...items) => { recorded.info.push(msg); return items.includes('İndir') ? 'İndir' : undefined; },
     showWarningMessage: async (msg, opts, ...items) => { recorded.warn.push(msg); return items[0]; },
@@ -693,6 +694,100 @@ async function until(fn, ms = 8000, what = 'koşul') {
     await beat(1500);
     scene(null);
     await cdp.shot('16-debug');
+  });
+  await step('Bellek görüntüleyici ve Live Watch (ES-206): sembolle gitme, 8/16/32 bit, yazma, dosyaya kaydetme, grafik', async () => {
+    scene('debug');
+    await cdp.click('#dbg-resume');
+    await until(() => cdp.eval(`document.querySelector('#dbg-state').textContent === 'ÇALIŞIYOR'`), 3000, 'devam');
+    const memGo = (x) => cdp.eval(`(() => { const i = document.querySelector('#mem-addr'); i.value = ${JSON.stringify(x)}; i.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true })); })()`);
+    const memWidth = (w) => cdp.eval(`(() => { const s = document.querySelector('#mem-width'); s.value = '${w}'; s.dispatchEvent(new Event('change')); })()`);
+    // Sembolle gitme: temperature (4 bayt) vurgulanır; sayfa 16 bayta hizalı
+    await memGo('temperature');
+    await until(() => cdp.eval(`document.querySelectorAll('#dbg-mem .mc.mark').length === 4 && document.querySelector('#mem-info').textContent.startsWith('0x20000080')`), 3000, 'sembolle gitme');
+    assert.ok(await cdp.eval(`document.querySelector('#dbg-mem .mc.mark').title.includes('temperature')`), 'hücrede sembol adı');
+    // uwTick canlı değişiyor: değişen baytlar vurgulanır (hedef çalışırken okunur)
+    await until(() => cdp.eval(`!!document.querySelector('#dbg-mem .mc.changed')`), 3000, 'değişen bayt vurgusu');
+    // 16 / 32 bit görünüm
+    await memWidth(2);
+    assert.ok(await cdp.eval(`[8, 16].includes(document.querySelector('#dbg-mem .mem-row .cells').children.length * 2) && document.querySelector('#dbg-mem .mc').textContent.length === 4`), '16 bit');
+    await memWidth(4);
+    assert.ok(await cdp.eval(`[8, 16].includes(document.querySelector('#dbg-mem .mem-row .cells').children.length * 4) && document.querySelector('#dbg-mem .mc').textContent.length === 8`), '32 bit');
+    // Satırlar kırılmaz (adres, hücreler, ASCII tek satırda)
+    assert.ok(await cdp.eval(`[...document.querySelectorAll('#dbg-mem .mem-row')].every((r) => r.getBoundingClientRect().height < 24 && r.scrollWidth <= r.clientWidth + 1)`), 'bellek satırı taşmamalı');
+    await cdp.shot('16c-debug-bellek-32bit');
+    // Yazma (8 bit): bme280_1_ok = 0xAB, izleme listesinde de görünür
+    await memWidth(1);
+    await memGo('bme280_1_ok');
+    await until(() => cdp.eval(`!!document.querySelector('#dbg-mem .mc.mark')`), 3000, 'bme280_1_ok');
+    await cdp.eval(`document.querySelector('#dbg-mem .mc.mark').dispatchEvent(new MouseEvent('dblclick', { bubbles: true }))`);
+    await until(() => cdp.eval(`!!document.querySelector('#dbg-mem input.mem-edit')`), 2000, 'bellek düzenleyici');
+    await cdp.eval(`(() => { const i = document.querySelector('#dbg-mem input.mem-edit'); i.value = 'AB'; i.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true })); })()`);
+    await until(() => cdp.eval(`document.querySelector('#dbg-mem .mc.mark').textContent === 'ab'`), 3000, 'yazılan bayt');
+    await until(() => cdp.eval(`[...document.querySelectorAll('#dbg-watch tr')].some((r) => r.textContent.startsWith('bme280_1_ok171'))`), 3000, 'izlemede yeni değer');
+    // Flash bölgesi düzenlenemez
+    await cdp.click(`([...document.querySelectorAll('.mem-bar button')].find((b) => b.textContent === 'Flash'))`);
+    await until(() => cdp.eval(`document.querySelector('#mem-info').textContent.startsWith('0x08000000') && !!document.querySelector('#dbg-mem .mc') && !document.querySelector('#dbg-mem .mc.editable')`), 3000, 'flash salt okunur');
+    // Bölgeyi kaydet: Intel HEX ve ham .bin
+    const hexFile = path.join(WORK, 'mem.hex'), binFile = path.join(WORK, 'mem.bin');
+    for (const f of [hexFile, binFile]) fs.rmSync(f, { force: true });
+    const saveAs = async (file, start, len) => {
+      dialogQueue.push(vscodeFake.Uri.file(file));
+      await cdp.click('#mem-save');
+      await until(() => cdp.eval(`!!document.querySelector('#mem-save-ok')`), 2000, 'kaydet penceresi');
+      await cdp.eval(`(() => { const [a, n] = document.querySelectorAll('.modal input'); a.value = ${JSON.stringify(start)}; n.value = ${JSON.stringify(len)}; })()`);
+      await cdp.click('#mem-save-ok');
+      await until(() => fs.existsSync(file), 3000, 'kaydedilen dosya ' + path.basename(file));
+    };
+    await saveAs(hexFile, 'temperature', '16');
+    const hexLines = fs.readFileSync(hexFile, 'utf8').trim().split('\n');
+    assert.deepStrictEqual([hexLines[0], hexLines[hexLines.length - 1], hexLines.length], [':020000042000DA', ':00000001FF', 3], hexLines.join(' '));
+    assert.ok(hexLines[1].startsWith(':100088'), hexLines[1]);
+    await saveAs(binFile, 'bme280_1_ok', '0x10');
+    const bin = fs.readFileSync(binFile);
+    assert.strictEqual(bin.length, 16);
+    assert.strictEqual(bin[0], 0xab, 'bin içeriği');
+    // Live Watch: temperature (f32) + adc_raw grafikte; hedef çalışırken değerler değişir
+    const addWatch = async (name) => {
+      await cdp.click('#dbg-sym');
+      await cdp.type(name);
+      await cdp.click(`([...document.querySelectorAll('.sym')].find((e) => e.textContent.startsWith(${JSON.stringify(name)})))`);
+    };
+    await addWatch('temperature');
+    await addWatch('adc_raw');
+    const row = (n) => `[...document.querySelectorAll('#dbg-watch tr')].find((r) => r.firstChild.textContent === ${JSON.stringify(n)})`;
+    await cdp.eval(`(() => { const s = ${row('temperature')}.querySelector('select'); s.value = 'float'; s.dispatchEvent(new Event('change')); })()`);
+    await cdp.eval(`${row('temperature')}.querySelector('button.graph').click()`);
+    await cdp.eval(`${row('adc_raw')}.querySelector('button.graph').click()`);
+    await until(() => cdp.eval(`(() => { const v = Number(${row('temperature')}.querySelector('td.val').textContent); return v > 20 && v < 28; })()`), 3000, 'float değer');
+    assert.ok(await cdp.eval(`[...document.querySelectorAll('#dbg-watch button')].every((b) => { const r = b.getBoundingClientRect(), c = document.querySelector('#dbg-watch').getBoundingClientRect(); return r.width > 0 && r.right <= c.right + 1; })`), 'izleme düğmeleri görünür');
+    await until(() => cdp.eval(`document.querySelectorAll('#dbg-wchart canvas.w-chart').length === 2 && document.querySelector('#dbg-wchart').textContent.includes('adc_raw')`), 3000, 'Live Watch grafiği');
+    const adc1 = await cdp.eval(`${row('adc_raw')}.querySelector('td.val').textContent`);
+    await until(async () => (await cdp.eval(`${row('adc_raw')}.querySelector('td.val').textContent`)) !== adc1, 3000, 'durdurmadan değişen değer');
+    await sleep(1500);
+    assert.ok(await cdp.eval(`(() => { const c = document.querySelector('#dbg-wchart canvas'); const d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data; let n = 0; for (let i = 3; i < d.length; i += 4) if (d[i]) n++; return c.width > 100 && n > 200; })()`), 'grafik çizildi');
+    const saved = JSON.parse(fs.readFileSync(path.join(PROJECT, '.embedded-studio', 'debug.json'), 'utf8')).watch;
+    assert.deepStrictEqual(saved.map((w) => [w.name, w.fmt, w.graph]), [['bme280_1_ok', 'dec', false], ['temperature', 'float', true], ['adc_raw', 'dec', true]]);
+    // İzlemeden değer yazma: negatif sayı / float
+    await cdp.eval(`${row('bme280_1_ok')}.querySelector('td.val').dispatchEvent(new MouseEvent('dblclick', { bubbles: true }))`);
+    await until(() => cdp.eval(`!!document.querySelector('#dbg-watch input.tiny')`), 2000, 'izleme düzenleyici');
+    await cdp.eval(`(() => { const i = document.querySelector('#dbg-watch input.tiny'); i.value = '5'; i.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true })); })()`);
+    await until(() => cdp.eval(`${row('bme280_1_ok')}.querySelector('td.val').textContent === '5'`), 3000, 'izlemeden yazma');
+    await cdp.eval(`${row('temperature')}.querySelector('td.val').dispatchEvent(new MouseEvent('dblclick', { bubbles: true }))`);
+    await until(() => cdp.eval(`!!document.querySelector('#dbg-watch input.tiny')`), 2000, 'float düzenleyici');
+    await cdp.eval(`(() => { const i = document.querySelector('#dbg-watch input.tiny'); i.value = '-12.5'; i.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true })); })()`);
+    await until(() => cdp.eval(`${row('temperature')}.querySelector('td.val').textContent === '-12.5'`), 3000, 'float yazma');
+    // Hedef durunca değerler donar
+    await cdp.click('#dbg-halt');
+    await until(() => cdp.eval(`document.querySelector('#dbg-state').textContent === 'DURDU'`), 3000, 'durdu');
+    await sleep(700);
+    const a1 = await cdp.eval(`${row('adc_raw')}.querySelector('td.val').textContent`);
+    await sleep(800);
+    assert.strictEqual(await cdp.eval(`${row('adc_raw')}.querySelector('td.val').textContent`), a1, 'durunca değişmez');
+    await cdp.click('#dbg-resume');
+    await memGo('uwTick');
+    await sleep(1200);
+    scene(null);
+    await cdp.shot('16d-debug-livewatch');
   });
   await step('Debug: OpenOCD kart yokken anlaşılır hata', async () => {
     await cdp.click('#dbg-conn');

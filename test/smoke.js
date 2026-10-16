@@ -827,6 +827,50 @@ test('register yazma: alan ekleme, değer ayrıştırma; FPU ve özel register a
     passed++;
     console.log('  ✓ simülasyonda register yazma ve genişletilmiş çekirdek register\'ları');
   }
+  {
+    // ES-206: bellek bölgesi okuma (hizasız, parçalı), Intel HEX, yazma denetimi, simülasyon değişkenleri
+    const mem = require('../src/debug/memory');
+    const { SimTarget } = require('../src/debug/session');
+    const model = { peripherals: [], expected: new Map(), dynamic: new Map() };
+    for (let a = 0x20000000; a < 0x20000800; a += 4) model.expected.set(a, (a - 0x20000000) / 4);
+    const sim = new SimTarget(model);
+    let calls = 0;
+    const counted = { readMemory: (a, n) => { calls++; assert.ok(n <= mem.CHUNK_WORDS); return sim.readMemory(a, n); } };
+    const bytes = await mem.readRegion(counted, 0x20000005, 1500);
+    assert.strictEqual(bytes.length, 1500);
+    assert.strictEqual(bytes[0], 0x00, '0x20000005 = word 1 baytı 1');
+    assert.strictEqual(bytes[3], 2, '0x20000008 = word 2 baytı 0');
+    assert.ok(calls === 2, `parça sayısı ${calls}`);
+    // Intel HEX: genişletilmiş adres kaydı, 16 baytlık satırlar, sağlama toplamı, 64 KB sınırı
+    const hx = mem.toIntelHex(Uint8Array.from([1, 2, 3]), 0x0800fffe).trim().split('\n');
+    assert.deepStrictEqual(hx, [':020000040800F2', ':02FFFE000102FE', ':020000040801F1', ':0100000003FC', ':00000001FF']);
+    for (const line of mem.toIntelHex(Uint8Array.from({ length: 40 }, (_, i) => i), 0x20000000).trim().split('\n')) {
+      const b = line.slice(1).match(/../g).map((x) => parseInt(x, 16));
+      assert.strictEqual(b.reduce((a, x) => a + x, 0) & 0xff, 0, line);
+    }
+    assert.match(mem.checkWrite(0x08000000, 32, 1), /Flash|yazılamaz/);
+    assert.match(mem.checkWrite(0x20000001, 16, 1), /hizalı/);
+    assert.match(mem.checkWrite(0x20000000, 8, 256), /sığmıyor/);
+    assert.strictEqual(mem.checkWrite(0x20000002, 16, 0xffff), '');
+    assert.strictEqual(mem.checkWrite(0x40020014, 32, 0xffffffff), '');
+    // Örnek değişkenler zamanla değişir; durunca donar
+    const syms = mem.simSymbols(model, [{ label: 'BME280_1' }]);
+    assert.ok(['bme280_1_ok', 'uwTick', 'adc_raw', 'temperature'].every((n) => syms.some((x) => x.name === n)));
+    const temp = syms.find((x) => x.name === 'temperature');
+    const f = (await sim.readMemory(temp.addr, 1))[0];
+    const fl = Buffer.alloc(4); fl.writeUInt32LE(f); assert.ok(Math.abs(fl.readFloatLE() - 24) < 4, String(fl.readFloatLE()));
+    await sim.halt();
+    const t1 = (await sim.readMemory(0x20000080, 1))[0];
+    await new Promise((r) => setTimeout(r, 30));
+    assert.strictEqual((await sim.readMemory(0x20000080, 1))[0], t1, 'durunca uwTick donar');
+    await sim.resume();
+    await new Promise((r) => setTimeout(r, 30));
+    assert.ok((await sim.readMemory(0x20000080, 1))[0] > t1, 'devam edince artar');
+    await sim.writeMemory(0x20000084, 16, 0x1234);
+    assert.strictEqual((await sim.readMemory(0x20000084, 1))[0] & 0xffff, 0x1234, 'değişkene yazma');
+    passed++;
+    console.log('  ✓ bellek görüntüleyici (ES-206): parçalı okuma, Intel HEX, yazma denetimi, canlı örnek değişkenler');
+  }
   const { OpenOcdTarget, freePort } = require('../src/debug/session');
   const port = await freePort();
   assert.ok(port > 0 && port !== 6666, String(port));

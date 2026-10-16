@@ -224,7 +224,8 @@ Kısayollar sadece Embedded Studio projesinde ve debug oturumu dışında geçer
 <p align="center"><img src="docs/images/debug.png" width="900" alt="Debug sekmesi"></p>
 
 Simülasyon ya da **OpenOCD** (algılanan prob: ST-Link, J-Link, CMSIS-DAP): durdur, devam, adım, reset; core register'lar ve xPSR bayrakları; bit alanlarıyla
-çevre birimi register'ları (yerleşik tanımlar ya da tam CMSIS-SVD); bellek görüntüleyici; ELF'ten değişken izleme.
+çevre birimi register'ları (yerleşik tanımlar ya da tam CMSIS-SVD); bellek görüntüleyici (adres ya da sembolle gitme, 8/16/32 bit, düzenleme, .bin/.hex kaydetme);
+Live Watch: ELF'teki global değişkenler hedef durdurulmadan okunur, zaman grafiğinde izlenir.
 Okuması bayrak temizleyen register'lar (ör. `USART->DR`) sadece hedef durduğunda okunur; çalışan firmware'den veri çalınmaz.
 VS Code debug oturumu başlarken panelin OpenOCD bağlantısı probu kendiliğinden bırakır.
 

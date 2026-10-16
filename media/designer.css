@@ -480,8 +480,25 @@ table.regs.core td:first-child { width: 44px; }
 .mem-bar { display: flex; flex-wrap: wrap; gap: 6px; padding: 0 10px 8px; }
 .mem-bar input { width: 110px; }
 .mem { font-family: var(--mono); font-size: 11px; padding: 0 10px 10px; }
-.mem-row { display: grid; grid-template-columns: 82px 1fr auto; gap: 10px; line-height: 1.7; white-space: pre; }
+.mem-row { display: grid; grid-template-columns: 82px auto 1fr; gap: 10px; line-height: 1.7; white-space: pre; }
 .mem-row .ascii { color: var(--muted); }
+.mem-row .cells { display: flex; gap: 0 5px; }
+.mem-row .mc { border-radius: 2px; padding: 0 1px; }
+.mem-row .mc.editable { cursor: text; }
+.mem-row .mc.editable:hover { background: var(--hover); }
+.mem-row .mc.sym-byte { text-decoration: underline dotted var(--muted); text-underline-offset: 3px; }
+.mem-row .mc.mark { background: color-mix(in srgb, var(--accent) 22%, transparent); }
+.mem-row .mc.changed { color: var(--warn, #d29922); font-weight: 600; }
+.mem-row input.mem-edit { width: auto; padding: 0 2px; height: 18px; font-size: 11px; }
+.mem-info { padding: 0 10px 6px; font-size: 11px; }
+#mem-width { width: auto; }
+.wchart { padding: 0 10px; }
+.wchart .w-col { display: flex; flex-direction: column; height: 120px; margin-bottom: 8px; }
+table.watch { width: 100%; }
+table.watch td.val { width: 100%; }
+table.regs.watch select.tiny { width: auto; }
+table.watch button.graph { opacity: .45; }
+table.watch button.graph.on { opacity: 1; color: var(--accent); }
 
 /* Dar ekranlar */
 @media (max-width: 1240px) {

@@ -1,5 +1,15 @@
 # Değişiklik günlüğü
 
+## 0.5.6 (önizleme)
+
+- **Bellek görüntüleyici:** adres (`0x20000000`, `20000000`) ya da değişken adıyla (`uwTick`, `rx_buf+0x10`) gitme, yazarken ELF sembollerinden öneri; gidilen değişkenin baytları vurgulanır, değişken içindeki her hücrenin üzerinde `ad+ofset` görünür. 8 / 16 / 32 bit görünüm (little-endian), önceki/sonraki sayfa, değişen baytlar vurgulu. Dar sütunda satır başına 8 bayt.
+- **Bellekte düzenleme:** hücreye çift tıklayıp değer girilir (önek yoksa onaltılık); görünüm genişliğinde (8/16/32 bit) yazılır. Flash/kod bölgesi yazılamaz (programı yeniden yükleyin uyarısı); hizasız yazma ve sığmayan değer reddedilir. Gösterilen bölgenin türü (RAM, flash, çevre birimi, sistem) bilgi satırında.
+- **Bölgeyi dosyaya kaydetme:** başlangıç (adres ya da sembol) ve uzunluk (en fazla 1 MB) seçilir; `.bin` ham bayt, `.hex` Intel HEX. Büyük bölgeler 1 KB'lık parçalarla okunur.
+- **Live Watch:** izlenen global değişkenler hedef durdurulmadan seçilen aralıkta (250 ms / 500 ms / 1 sn) okunur. Değere çift tıklayarak yazılabilir (negatif sayı, `0x`, `0b`, `f32` biçiminde ondalık sayı). İzleme listesi biçim ve grafik seçimiyle `.embedded-studio/debug.json` dosyasında saklanır, bağlanınca geri gelir.
+- **Live Watch grafiği:** satırdaki grafik düğmesiyle değişkenin son 30 sn'si çizilir (monitördeki çizgi grafik bileşeni); ölçekler farklı olabileceği için her değişkene ayrı grafik.
+- Simülasyonda ELF yokken örnek değişkenler zamanla değişiyor (`uwTick`, `adc_raw`, `temperature`, `error_count`); hedef durunca değerler donuyor.
+- Testler: birim 64 (parçalı/hizasız okuma, Intel HEX sağlama toplamı ve 64 KB sınırı, yazma denetimi, simülasyon zamanı), arayüz 36 (sembolle gitme, 8/16/32 bit, bellek ve izlemeden yazma, .hex/.bin kaydetme, grafik, durunca donma). Gerçek kartta henüz denenmedi.
+
 ## 0.5.5 (önizleme)
 
 - **SVD tabanlı çevre birimi ağacı:** çevre birimleri SVD gruplarına göre (TIM, USART, GPIO…) açılır-kapanır ağaçta; arama ad ve grupta. Projede kullanılanlar üstte.

@@ -1,15 +1,17 @@
 /* Debug sekmesi: bağlantı (simülasyon / OpenOCD + ST-Link), çalıştırma kontrolü,
  * core register'lar, çevre birimi register'ları (bit alanlarıyla), değişken izleme, bellek. */
 (function () {
-  const { t, h, $, post, state, ui, icon, hex, toast } = ES;
+  const { t, h, $, post, state, ui, icon, hex, toast, modal } = ES;
   const dbg = {
     connected: false, connecting: false, mode: 'sim', state: '', error: '',
     // defs: çevre birimi listesi (register'sız); register tanımları seçilince istenir ve regs'te saklanır (ES-205)
     defs: [], used: [], source: '', regs: {}, favs: [], cpu: {}, groups: new Set(), edit: null, fpuOpen: false,
     periph: null, open: new Set(), filter: '',
     values: {}, prev: {}, core: null, coreErr: '',
-    memAddr: 0x20000000, mem: null,
-    symbols: [], symSource: '', watch: [], symFilter: '',
+    // Bellek görüntüleyici (ES-206): sayfa başı 16 bayta hizalı; memMark: gidilen sembol/adres vurgusu
+    memAddr: 0x20000000, memLen: 256, memWidth: 1, memEdit: null, memMark: null,
+    // Live Watch: hist[ad] = [{ t, v }] (grafik için), watchEdit: düzenlenen değişken
+    symbols: [], symSource: '', watch: [], symFilter: '', hist: {}, charts: [], chartKey: '', watchEdit: null, savedWatch: null,
     auto: true, interval: 500, seq: 0, inflight: false, timer: 0
   };
 
@@ -48,7 +50,8 @@
           h('div', { class: 'pane-head' }, h('span', { class: 'pane-title', text: t('Değişkenler (izleme)') }), h('button', { class: 'ghost small', onclick: () => post({ type: 'debug.symbols' }) }, t('ELF\'ten yükle'))),
           h('div', { class: 'search' }, icon('search', 13), h('input', { type: 'text', id: 'dbg-sym', placeholder: t('Değişken ara ve ekle…'), oninput: (e) => { dbg.symFilter = e.target.value; renderSymbols(); } })),
           h('div', { id: 'dbg-symlist', class: 'symlist' }),
-          h('div', { id: 'dbg-watch' })),
+          h('div', { id: 'dbg-watch' }),
+          h('div', { id: 'dbg-wchart', class: 'wchart' })),
         h('section', { class: 'dbg-col wide' },
           h('div', { class: 'pane-head' },
             h('span', { class: 'pane-title', text: t('Çevre birimi register\'ları') }),
@@ -63,10 +66,17 @@
         h('section', { class: 'dbg-col' },
           h('div', { class: 'pane-head' }, h('span', { class: 'pane-title', text: t('Bellek') })),
           h('div', { class: 'mem-bar' },
-            h('input', { type: 'text', id: 'mem-addr', class: 'mono', value: hex(dbg.memAddr), 'aria-label': t('Adres'), onkeydown: (e) => { if (e.key === 'Enter') goMem(); } }),
+            h('input', { type: 'text', id: 'mem-addr', class: 'mono', list: 'mem-syms', value: hex(dbg.memAddr), placeholder: t('Adres ya da sembol'), 'aria-label': t('Adres ya da sembol'), onkeydown: (e) => { if (e.key === 'Enter') goMem(); } }),
+            h('datalist', { id: 'mem-syms' }),
             h('button', { class: 'small', onclick: goMem }, t('Git')),
-            h('button', { class: 'ghost small', onclick: () => setMem(0x20000000) }, 'SRAM'),
-            h('button', { class: 'ghost small', onclick: () => setMem(0x08000000) }, 'Flash')),
+            h('select', { id: 'mem-width', class: 'tiny', 'aria-label': t('Görünüm genişliği'), onchange: (e) => { dbg.memWidth = Number(e.target.value); dbg.memEdit = null; renderMem(); } },
+              ...[[1, '8 bit'], [2, '16 bit'], [4, '32 bit']].map(([v, l]) => h('option', { value: v, selected: v === dbg.memWidth, text: l }))),
+            h('button', { class: 'ghost small', title: t('Önceki sayfa'), 'aria-label': t('Önceki sayfa'), onclick: () => setMem(dbg.memAddr - dbg.memLen) }, '‹'),
+            h('button', { class: 'ghost small', title: t('Sonraki sayfa'), 'aria-label': t('Sonraki sayfa'), onclick: () => setMem(dbg.memAddr + dbg.memLen) }, '›'),
+            h('button', { class: 'ghost small', onclick: () => { dbg.memMark = null; setMem(0x20000000); } }, 'SRAM'),
+            h('button', { class: 'ghost small', onclick: () => { dbg.memMark = null; setMem(0x08000000); } }, 'Flash'),
+            h('button', { class: 'ghost small', id: 'mem-save', title: t('Bölgeyi dosyaya kaydet (.bin / .hex)'), onclick: saveMem }, t('Kaydet…'))),
+          h('div', { id: 'mem-info', class: 'hint mem-info' }),
           h('div', { id: 'dbg-mem', class: 'mem' })))));
   }
 
@@ -95,6 +105,8 @@
     renderWatch();
     schedule();
     if (dbg.connected) poll();
+    // Kaydedilmiş izleme listesi sembollerle geri yüklenir
+    if (dbg.connected && !dbg.symbols.length) post({ type: 'debug.symbols' });
   });
   ES.on('debug.regs', (m) => {
     dbg.defs = m.peripherals;
@@ -138,6 +150,17 @@
     dbg.symbols = m.symbols;
     dbg.symSource = m.source || '';
     if (m.error) toast(m.symbols.length ? 'info' : 'warn', m.symbols.length ? t('ELF yok; simülasyon için örnek değişkenler gösteriliyor.') : m.error);
+    // .embedded-studio/debug.json'daki izleme listesi (ilk yüklemede)
+    if (m.watch && dbg.savedWatch === null) {
+      dbg.savedWatch = m.watch;
+      for (const sv of m.watch) {
+        const sym = dbg.symbols.find((x) => x.name === sv.name);
+        if (sym && !dbg.watch.some((w) => w.name === sym.name)) dbg.watch.push({ ...sym, fmt: sv.fmt || defaultFmt(sym), graph: !!sv.graph });
+      }
+      renderWatch();
+    }
+    const dl = $('mem-syms');
+    if (dl) dl.replaceChildren(...dbg.symbols.slice(0, 1000).map((x) => h('option', { value: x.name })));
     renderSymbols();
   });
   ES.on('debug.data', (m) => {
@@ -150,11 +173,13 @@
     else if (m.state !== 'halted') { dbg.coreErr = ''; }
     const errs = Object.values(m.errors || {});
     if (errs.length) dbg.error = errs[0];
+    record(m.values);
     renderBar();
     if (!dbg.edit) renderRegs(); // düzenlerken yeniden çizme (yazılan kaybolmasın)
     renderCore();
-    renderMem();
-    renderWatch();
+    if (dbg.memEdit === null) renderMem();
+    if (dbg.watchEdit === null) renderWatch();
+    else renderChart();
   });
 
   // ---------------------------------------------------------------- okuma döngüsü
@@ -174,7 +199,7 @@
       if (run && run.periph === periph && reg.offset === run.end && run.words < 64) { run.words++; run.end += 4; }
       else if (!(run && run.periph === periph && reg.offset < run.end)) { run = { periph, key: `p:${periph}:${reg.offset}`, addr: base + reg.offset, words: 1, end: reg.offset + 4 }; reads.push(run); }
     }
-    reads.push({ key: 'mem', addr: dbg.memAddr, words: 64 });
+    reads.push({ key: 'mem', addr: dbg.memAddr, words: dbg.memLen / 4 });
     for (const w of dbg.watch) reads.push({ key: `w:${w.name}`, addr: w.addr & ~3, words: Math.min(4, Math.ceil(((w.addr & 3) + Math.max(1, w.size)) / 4)) });
     return reads.map(({ key, addr, words }) => ({ key, addr, words }));
   }
@@ -385,9 +410,10 @@
     const hits = dbg.symbols.filter((sym) => sym.name.toLowerCase().includes(q)).slice(0, 12);
     list.replaceChildren(...hits.map((sym) => h('div', {
       class: 'sym', onclick: () => {
-        if (!dbg.watch.some((w) => w.name === sym.name)) dbg.watch.push({ ...sym, fmt: sym.size === 4 ? 'hex' : 'dec' });
+        if (!dbg.watch.some((w) => w.name === sym.name)) dbg.watch.push({ ...sym, fmt: defaultFmt(sym), graph: false });
         dbg.symFilter = '';
         $('dbg-sym').value = '';
+        saveWatch();
         renderSymbols();
         renderWatch();
         poll();
@@ -395,59 +421,240 @@
     }, h('span', { class: 'mono', text: sym.name }), h('span', { class: 'hint mono', text: `${hex(sym.addr)} · ${sym.size} B` }))));
   }
 
-  function decode(w, words) {
+  // ---------------------------------------------------------------- Live Watch (ES-206)
+  const defaultFmt = (sym) => (sym.size === 4 ? 'hex' : 'dec');
+  const saveWatch = () => post({ type: 'debug.watch', list: dbg.watch.map((w) => ({ name: w.name, fmt: w.fmt, graph: !!w.graph })) });
+
+  /** Değişkenin baytları (okunan word'lerden, hizasız adres dahil) */
+  function watchBytes(w, words) {
     const bytes = [];
     for (const v of words) for (let i = 0; i < 4; i++) bytes.push((v >>> (8 * i)) & 0xff);
-    const b = bytes.slice(w.addr & 3, (w.addr & 3) + Math.max(1, w.size));
+    return bytes.slice(w.addr & 3, (w.addr & 3) + Math.max(1, w.size));
+  }
+  /** Sayısal değer (≤ 4 bayt; biçime göre işaretli / float) */
+  function numeric(w, words) {
+    const b = watchBytes(w, words);
+    if (w.size > 4) return undefined;
     const n = Math.min(4, b.length);
     let u = 0;
     for (let i = n - 1; i >= 0; i--) u = u * 256 + b[i];
-    if (w.size > 4) return b.slice(0, 16).map((x) => x.toString(16).padStart(2, '0')).join(' ') + (w.size > 16 ? ' …' : '');
-    if (w.fmt === 'hex') return hex(u, n * 2);
-    if (w.fmt === 'float' && n === 4) { const dv = new DataView(new ArrayBuffer(4)); dv.setUint32(0, u, false); return dv.getFloat32(0).toPrecision(7); }
-    if (w.fmt === 'sdec') return String(n === 1 ? (u << 24) >> 24 : n === 2 ? (u << 16) >> 16 : u | 0);
-    return String(u >>> 0);
+    if (w.fmt === 'float' && n === 4) { const dv = new DataView(new ArrayBuffer(4)); dv.setUint32(0, u, false); return dv.getFloat32(0); }
+    if (w.fmt === 'sdec') return n === 1 ? (u << 24) >> 24 : n === 2 ? (u << 16) >> 16 : u | 0;
+    return u >>> 0;
+  }
+  function decode(w, words) {
+    if (w.size > 4) {
+      const b = watchBytes(w, words);
+      return b.slice(0, 16).map((x) => x.toString(16).padStart(2, '0')).join(' ') + (w.size > 16 ? ' …' : '');
+    }
+    const v = numeric(w, words);
+    if (w.fmt === 'hex') return hex(v, Math.min(4, Math.max(1, w.size)) * 2);
+    if (w.fmt === 'float') return Number.isFinite(v) ? String(Number(v.toPrecision(7))) : String(v);
+    return String(v);
+  }
+  /** Girilen değeri değişkenin ham bitlerine çevirir (float, negatif sayı, 0x / 0b) */
+  function encode(w, text) {
+    const s = String(text).trim();
+    if (w.fmt === 'float') {
+      const f = Number(s);
+      if (!Number.isFinite(f)) return undefined;
+      const dv = new DataView(new ArrayBuffer(4)); dv.setFloat32(0, f); return dv.getUint32(0);
+    }
+    const v = /^-?0x[0-9a-f]+$/i.test(s) ? parseInt(s, 16) : /^0b[01]+$/i.test(s) ? parseInt(s.slice(2), 2) : /^-?\d+$/.test(s) ? Number(s) : NaN;
+    if (!Number.isFinite(v)) return undefined;
+    const bits = w.size * 8;
+    if (v < -(2 ** (bits - 1)) || v >= 2 ** bits) return undefined;
+    return v < 0 ? (v + 2 ** bits) >>> 0 : v;
+  }
+  /** Her okumada grafiği açık değişkenlerin geçmişi (son 60 sn) */
+  function record(values) {
+    const now = Date.now();
+    for (const w of dbg.watch) {
+      const words = values[`w:${w.name}`];
+      if (!words || w.size > 4) continue;
+      const v = numeric(w, words);
+      const hs = (dbg.hist[w.name] = dbg.hist[w.name] || []);
+      hs.push({ t: now, v });
+      while (hs.length && now - hs[0].t > 60000) hs.shift();
+    }
   }
 
   function renderWatch() {
     const box = $('dbg-watch');
     if (!box) return;
-    if (!dbg.watch.length) { box.replaceChildren(h('div', { class: 'hint pad', text: t('İzlenen değişken yok.') })); return; }
-    box.replaceChildren(h('table', { class: 'regs' }, ...dbg.watch.map((w, i) => {
+    if (!dbg.watch.length) { box.replaceChildren(h('div', { class: 'hint pad', text: t('İzlenen değişken yok.') })); renderChart(); return; }
+    const writable = (w) => dbg.connected && [1, 2, 4].includes(w.size) && w.addr >= 0x20000000;
+    box.replaceChildren(h('table', { class: 'regs watch' }, ...dbg.watch.map((w, i) => {
       const words = dbg.values[`w:${w.name}`];
+      const editing = dbg.watchEdit === w.name;
+      const done = (text) => {
+        if (dbg.watchEdit === null) return;
+        dbg.watchEdit = null;
+        if (text !== undefined) {
+          const raw = encode(w, text);
+          if (raw === undefined) toast('warn', t('{0} için geçersiz değer: {1}', w.name, text));
+          else post({ type: 'debug.memwrite', addr: w.addr, width: w.size * 8, value: raw });
+        }
+        renderWatch();
+      };
+      const cell = editing
+        ? h('input', { type: 'text', class: 'tiny mono', value: words ? decode(w, words) : '0', autofocus: true, 'aria-label': t('Yeni değer'), onkeydown: (e) => { if (e.key === 'Enter') done(e.target.value); if (e.key === 'Escape') done(); }, onblur: () => done() })
+        : words ? decode(w, words) : '—';
       return h('tr', {},
-        h('td', { class: 'mono', title: hex(w.addr), text: w.name }),
-        h('td', { class: 'mono val', text: words ? decode(w, words) : '—' }),
-        h('td', {}, w.size <= 4 ? h('select', { class: 'tiny', onchange: (e) => { w.fmt = e.target.value; renderWatch(); } },
+        h('td', { class: 'mono', title: `${hex(w.addr)} · ${w.size} B`, text: w.name }),
+        h('td', {
+          class: `mono val${writable(w) ? ' editable' : ''}`, title: writable(w) ? t('Değiştirmek için çift tıklayın') : '',
+          ondblclick: () => { if (!writable(w)) return; dbg.watchEdit = w.name; renderWatch(); requestAnimationFrame(() => { const el = document.querySelector('#dbg-watch input.tiny'); if (el) { el.focus(); el.select(); } }); }
+        }, cell),
+        h('td', {}, w.size <= 4 ? h('select', { class: 'tiny', 'aria-label': t('Biçim'), onchange: (e) => { w.fmt = e.target.value; dbg.hist[w.name] = []; saveWatch(); renderWatch(); } },
           ...[['dec', 'u'], ['sdec', 'i'], ['hex', 'hex'], ['float', 'f32']].filter(([k]) => k !== 'float' || w.size === 4).map(([k, l]) => h('option', { value: k, selected: w.fmt === k, text: l }))) : null),
-        h('td', {}, h('button', { class: 'icon tiny', title: t('Kaldır'), onclick: () => { dbg.watch.splice(i, 1); renderWatch(); } }, icon('close', 11))));
-    })));
+        h('td', {}, w.size <= 4 ? h('button', { class: `icon tiny graph${w.graph ? ' on' : ''}`, title: t('Zaman grafiğinde göster'), 'aria-label': t('Zaman grafiğinde göster'), 'aria-pressed': w.graph ? 'true' : 'false', onclick: () => { w.graph = !w.graph; saveWatch(); renderWatch(); } }, icon('chart', 12)) : null),
+        h('td', {}, h('button', { class: 'icon tiny', title: t('Kaldır'), onclick: () => { dbg.watch.splice(i, 1); delete dbg.hist[w.name]; saveWatch(); renderWatch(); } }, icon('close', 11))));
+    })),
+    dbg.connected ? h('div', { class: 'hint pad', text: t('Live Watch: değerler hedef durdurulmadan {0} ms\'de bir okunur.', dbg.interval) }) : null);
+    renderChart();
   }
 
+  /**
+   * Grafiği açık değişkenlerin zaman grafiği (monitördeki çizgi grafik bileşeni).
+   * Ölçekleri çok farklı olabilir (ör. sıcaklık ve ADC ham değeri): her değişkene ayrı grafik.
+   */
+  function renderChart() {
+    const box = $('dbg-wchart');
+    if (!box) return;
+    const names = dbg.watch.filter((w) => w.graph && w.size <= 4).map((w) => w.name);
+    const key = names.join('|');
+    if (!names.length) { box.replaceChildren(); dbg.charts = []; dbg.chartKey = ''; return; }
+    if (dbg.chartKey !== key || !dbg.charts.length || !box.contains(dbg.charts[0].el)) {
+      const ctx = {
+        series: (n) => dbg.hist[n] || [],
+        last: (n) => { const hs = dbg.hist[n]; return hs && hs.length ? hs[hs.length - 1].v : undefined; },
+        unit: () => '', short: (n) => n, post
+      };
+      dbg.charts = names.map((n) => ES.widgets.types.chart.create({ type: 'chart', channels: [n] }, ctx));
+      dbg.chartKey = key;
+      box.replaceChildren(...dbg.charts.map((c) => c.el));
+    }
+    for (const c of dbg.charts) c.update();
+  }
+
+  // ---------------------------------------------------------------- bellek görüntüleyici (ES-206)
+  /** "0x20000000", "20000000", "sembol", "sembol+0x10" → { addr, size } */
+  function resolveAddr(text) {
+    const s = String(text).trim();
+    const m = /^([A-Za-z_][\w.$]*)\s*(?:([+-])\s*(0x[0-9a-f]+|\d+))?$/i.exec(s);
+    const sym = m && dbg.symbols.find((x) => x.name === m[1]);
+    if (sym) {
+      const off = m[3] ? (m[2] === '-' ? -1 : 1) * Number(m[3]) : 0;
+      return { addr: (sym.addr + off) >>> 0, size: off ? 0 : sym.size, name: sym.name };
+    }
+    if (!/^(0x)?[0-9a-f]{1,8}$/i.test(s)) return null;
+    return { addr: parseInt(s.replace(/^0x/i, ''), 16) >>> 0, size: 0 };
+  }
   function setMem(a) {
-    dbg.memAddr = a >>> 0;
+    dbg.memAddr = (a >>> 0) & ~0xf;
     $('mem-addr').value = hex(dbg.memAddr);
-    dbg.mem = null;
+    dbg.memEdit = null;
+    delete dbg.values.mem;
+    delete dbg.prev.mem;
+    renderMem();
     poll();
   }
   function goMem() {
-    const v = parseInt($('mem-addr').value.replace(/^0x/i, ''), 16);
-    if (Number.isNaN(v)) return toast('warn', t('Geçerli bir onaltılık adres girin (ör. 0x20000000).'));
-    setMem(v & ~3);
+    const r = resolveAddr($('mem-addr').value);
+    if (!r) return toast('warn', t('Geçerli bir onaltılık adres ya da değişken adı girin (ör. 0x20000000, uwTick).'));
+    dbg.memMark = { addr: r.addr, size: Math.max(1, r.size || dbg.memWidth) };
+    setMem(r.addr);
+    $('mem-addr').value = r.name || hex(r.addr);
+  }
+  function saveMem() {
+    if (!dbg.connected) return toast('warn', t('Önce hedefe bağlanın.'));
+    const start = h('input', { type: 'text', class: 'mono', list: 'mem-syms', value: dbg.memMark ? hex(dbg.memMark.addr) : hex(dbg.memAddr), 'aria-label': t('Başlangıç') });
+    const len = h('input', { type: 'text', class: 'mono', value: String(dbg.memMark && dbg.memMark.size > 1 ? dbg.memMark.size : dbg.memLen), 'aria-label': t('Uzunluk (bayt)') });
+    modal({
+      title: t('Bellek bölgesini kaydet'), width: 380,
+      body: h('div', {},
+        h('div', { class: 'field' }, h('label', { text: t('Başlangıç (adres ya da sembol)') }), start),
+        h('div', { class: 'field' }, h('label', { text: t('Uzunluk (bayt; 0x da olur)') }), len),
+        h('p', { class: 'hint', text: t('.bin ham bayt, .hex Intel HEX olarak kaydedilir. En fazla 1 MB.') })),
+      buttons: [
+        { label: t('Vazgeç') },
+        {
+          label: t('Kaydet…'), primary: true, id: 'mem-save-ok', action: () => {
+            const r = resolveAddr(start.value);
+            const n = /^0x/i.test(len.value.trim()) ? parseInt(len.value.trim(), 16) : Number(len.value.trim());
+            if (!r || !(n > 0 && n <= 1 << 20)) { toast('warn', t('Adres ya da uzunluk geçersiz.')); return false; }
+            post({ type: 'debug.memsave', addr: r.addr, length: n });
+          }
+        }]
+    });
+  }
+  /** Gösterilen bölgenin bilgisi: bellek türü ve uyarı */
+  function regionNote(a) {
+    if (a < 0x20000000) return t('Flash / kod bölgesi: salt okunur (değiştirmek için programı yükleyin).');
+    if (a >= 0x40000000 && a < 0x60000000) return t('Çevre birimi bölgesi: bazı register\'ları okumak bayrak temizleyebilir.');
+    if (a >= 0xe0000000) return t('Çekirdek (sistem) bölgesi.');
+    return t('RAM: değere çift tıklayarak yazabilirsiniz.');
   }
   function renderMem() {
     const box = $('dbg-mem');
     if (!box) return;
+    const W = dbg.memWidth;
+    const info = $('mem-info');
+    if (info) info.textContent = `${hex(dbg.memAddr)} – ${hex(dbg.memAddr + dbg.memLen - 1)} · ${regionNote(dbg.memAddr)}`;
     const words = dbg.values.mem;
     if (!words) { box.replaceChildren(h('div', { class: 'hint pad', text: dbg.connected ? t('Okunuyor…') : t('Bağlı değil.') })); return; }
+    const bytes = words.flatMap((v) => [0, 1, 2, 3].map((i) => (v >>> (8 * i)) & 0xff));
+    const pw = dbg.prev.mem;
+    const prev = pw ? pw.flatMap((v) => [0, 1, 2, 3].map((i) => (v >>> (8 * i)) & 0xff)) : null;
+    const base = dbg.memAddr, end = base + bytes.length;
+    const syms = dbg.symbols.filter((x) => x.addr < end && x.addr + Math.max(1, x.size) > base);
+    const symAt = (a) => { const x = syms.find((y) => a >= y.addr && a < y.addr + Math.max(1, y.size)); return x ? `${x.name}${a > x.addr ? '+' + (a - x.addr) : ''}` : ''; };
+    const mark = dbg.memMark;
+    const editable = dbg.connected && base >= 0x20000000;
     const rows = [];
-    for (let r = 0; r < words.length / 4; r++) {
-      const ws = words.slice(r * 4, r * 4 + 4);
-      const bytes = ws.flatMap((v) => [0, 1, 2, 3].map((i) => (v >>> (8 * i)) & 0xff));
+    // Dar sütunda satır başına 8 bayt (16 bayt sığmayınca satırlar kırılıyordu)
+    const N = box.clientWidth && box.clientWidth < 470 ? 8 : 16;
+    for (let r = 0; r < bytes.length / N; r++) {
+      const cells = [];
+      for (let c = 0; c < N; c += W) {
+        const off = r * N + c, a = base + off;
+        let v = 0;
+        for (let k = W - 1; k >= 0; k--) v = v * 256 + bytes[off + k];
+        const changed = prev && [...Array(W).keys()].some((k) => prev[off + k] !== bytes[off + k]);
+        const marked = mark && a < mark.addr + mark.size && a + W > mark.addr;
+        const sym = symAt(a);
+        if (dbg.memEdit === off) {
+          const done = (text) => {
+            if (dbg.memEdit === null) return;
+            dbg.memEdit = null;
+            if (text !== undefined) {
+              const s = String(text).trim();
+              // Hex görünümde önek yoksa onaltılık kabul edilir
+              post({ type: 'debug.memwrite', addr: a, width: W * 8, value: /^[0-9a-f]+$/i.test(s) ? '0x' + s : s });
+            }
+            renderMem();
+          };
+          cells.push(h('input', { type: 'text', class: 'tiny mono mem-edit', value: v.toString(16).toUpperCase().padStart(W * 2, '0'), size: W * 2 + 2, autofocus: true, 'aria-label': t('Yeni değer'),
+            onkeydown: (e) => { if (e.key === 'Enter') done(e.target.value); if (e.key === 'Escape') done(); }, onblur: () => done() }));
+          continue;
+        }
+        cells.push(h('span', {
+          class: `mc${changed ? ' changed' : ''}${marked ? ' mark' : ''}${sym ? ' sym-byte' : ''}${editable ? ' editable' : ''}`,
+          title: `${hex(a)}${sym ? ' · ' + sym : ''}${W > 1 ? ` · ${v >>> 0}` : ''}`,
+          ondblclick: () => {
+            if (!editable) return;
+            dbg.memEdit = off;
+            renderMem();
+            requestAnimationFrame(() => { const el = document.querySelector('#dbg-mem input.mem-edit'); if (el) { el.focus(); el.select(); } });
+          }
+        }, v.toString(16).padStart(W * 2, '0')));
+      }
+      const rb = bytes.slice(r * N, r * N + N);
       rows.push(h('div', { class: 'mem-row' },
-        h('span', { class: 'hint', text: hex(dbg.memAddr + r * 16) }),
-        h('span', { text: bytes.map((b) => b.toString(16).padStart(2, '0')).join(' ') }),
-        h('span', { class: 'ascii', text: bytes.map((b) => (b >= 32 && b < 127 ? String.fromCharCode(b) : '.')).join('') })));
+        h('span', { class: 'hint', text: hex(base + r * N) }),
+        h('span', { class: 'cells' }, ...cells),
+        h('span', { class: 'ascii', text: rb.map((b) => (b >= 32 && b < 127 ? String.fromCharCode(b) : '.')).join('') })));
     }
     box.replaceChildren(...rows);
   }

@@ -260,14 +260,15 @@ class SimTarget {
   async connect() {}
   async disconnect() {}
   async state() { return this.halted ? 'halted' : 'running'; }
-  async halt() { this.halted = true; }
-  async resume() { this.halted = false; }
+  // Durunca simülasyon zamanı da durur (Live Watch değerleri donar)
+  async halt() { if (!this.halted) this.haltMs = Date.now() - this.t0; this.halted = true; }
+  async resume() { if (this.halted) this.t0 = Date.now() - (this.haltMs || 0); this.halted = false; }
   async step() { this.pc += 2; }
   async reset() { this.t0 = Date.now(); this.pc = 0x08000420; this.halted = false; }
   async program() { return t('simülasyon: yükleme atlandı'); }
 
   async readMemory(addr, words) {
-    const ms = Date.now() - this.t0;
+    const ms = this.halted ? this.haltMs || 0 : Date.now() - this.t0;
     const out = [];
     for (let i = 0; i < words; i++) {
       const a = addr + i * 4;

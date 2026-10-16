@@ -99,6 +99,7 @@ window.ES = (function () {
       reset: '<path d="M3 8a5 5 0 109-3M12 1.5V5H8.5" fill="none" stroke="currentColor" stroke-width="1.4"/>',
       edit: '<path d="M2 14l1-4 8-8 3 3-8 8zM9.5 3.5l3 3" fill="none" stroke="currentColor" stroke-width="1.2"/>',
       drag: '<circle cx="6" cy="4" r="1.1" fill="currentColor"/><circle cx="10" cy="4" r="1.1" fill="currentColor"/><circle cx="6" cy="8" r="1.1" fill="currentColor"/><circle cx="10" cy="8" r="1.1" fill="currentColor"/><circle cx="6" cy="12" r="1.1" fill="currentColor"/><circle cx="10" cy="12" r="1.1" fill="currentColor"/>',
+      chart: '<path d="M2 2v12h12" fill="none" stroke="currentColor" stroke-width="1.2"/><path d="M4 11l3-4 2.5 2.5L14 4" fill="none" stroke="currentColor" stroke-width="1.4"/>',
       search: '<circle cx="7" cy="7" r="4.5" fill="none" stroke="currentColor" stroke-width="1.3"/><path d="M10.5 10.5L14 14" stroke="currentColor" stroke-width="1.4"/>'
     };
     return h('span', { class: 'ic', html: `<svg viewBox="0 0 16 16" width="${size}" height="${size}" aria-hidden="true">${paths[name] || ''}</svg>` });
