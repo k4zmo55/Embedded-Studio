@@ -518,6 +518,59 @@ test('komutlar, kısayollar ve komut paleti package.json\'da; çeviriler var', (
   }
 });
 
+console.log('Prob ve kart algılama (ES-202)');
+const usb = require('../src/debug/usb');
+const sid = require('../src/debug/stm32id');
+test('USB sınıflandırma: ST-Link V2-1 + sanal seri port, J-Link, DFU, CH340; bileşik arayüzler ayrı sayılmaz', () => {
+  const win = [
+    'USB\\VID_0483&PID_374B\\066DFF485671664867074721', 'USB\\VID_0483&PID_374B&MI_00\\6&1A2B3C&0&0000', 'USB\\VID_0483&PID_374B&MI_02\\6&1A2B3C&0&0002',
+    'USB\\VID_1366&PID_0105\\000260115436', 'USB\\VID_0483&PID_DF11\\205B30915843', 'USB\\VID_1A86&PID_7523\\5&2B&0&3', 'USB\\VID_046D&PID_C52B\\5&1&0&1'
+  ].map(usb.parseWinId);
+  assert.deepStrictEqual(win[0], { vid: 0x0483, pid: 0x374B, iface: undefined, serial: '066DFF485671664867074721' });
+  assert.strictEqual(win[1].iface, 0);
+  assert.strictEqual(win[1].serial, undefined, 'arayüz örneğinde seri numarası yok');
+  const devices = [win[0], win[1], { ...win[2], port: 'COM7', name: 'STMicroelectronics STLink Virtual COM Port (COM7)' }, win[3], win[4], { ...win[5], port: 'COM3' }, win[6]];
+  const probes = usb.classify(devices);
+  assert.deepStrictEqual(probes.map((p) => [p.kind, p.label, p.serial || null, p.port || null]), [
+    ['stlink', 'ST-Link V2-1', '066DFF485671664867074721', 'COM7'],
+    ['jlink', 'SEGGER J-Link', '000260115436', null],
+    ['dfu', 'STM32 USB DFU (bootloader)', '205B30915843', null],
+    ['uart', 'CH340/CH341 UART', null, 'COM3']
+  ]);
+  assert.strictEqual(probes[0].interfaceCfg, 'interface/stlink.cfg');
+  assert.strictEqual(usb.classify([{ vid: 0x0483, pid: 0x374E, serial: 'X' }])[0].label, 'ST-Link V3');
+  assert.strictEqual(usb.classify([{ vid: 0x0D28, pid: 0x0204, serial: 'D' }])[0].interfaceCfg, 'interface/cmsis-dap.cfg');
+});
+test('hedef kimliği: F411 (RDP 0), H743 rev V, F103 (RDP 1), G071; aday adresler catch ile', () => {
+  assert.ok(sid.readCommands().every((c) => /^catch \{md[wh] 0x[0-9A-F]{8}( 3)?\}$/.test(c)));
+  const f411 = sid.decodeTarget(`Info : [stm32f4x.cpu] Cortex-M4 r0p1 processor detected
+0x40015800: 00000000
+0xe0042000: 10006431
+0x1fff7a22: 0200
+0x1fff7a10: 00300041 30355101 32373232
+0x40023c14: 0fffaaed`);
+  assert.deepStrictEqual([f411.name, f411.devId, f411.rev, f411.flashKB, f411.uid, f411.rdp], ['STM32F411xC/E', 0x431, 'A', 512, '323732323035510100300041', 0]);
+  assert.strictEqual(sid.matchesProject(f411, lib.mcus.stm32f411ceu6), true);
+  assert.strictEqual(sid.matchesProject(f411, lib.mcus.stm32g474ret6), false);
+  const h7 = sid.decodeTarget('0x5c001000: 20036450\n0x1ff1e880: 0800\n0x5200201c: 1ab0aac6');
+  assert.deepStrictEqual([h7.name, h7.rev, h7.flashKB, h7.rdp], ['STM32H74x/75x', 'V', 2048, 0]);
+  assert.strictEqual(sid.matchesProject(h7, lib.mcus.stm32h743zit6), true);
+  const f1 = sid.decodeTarget('0xe0042000: 20036410\n0x1ffff7e0: 0040\n0x4002201c: 03fffffe');
+  assert.deepStrictEqual([f1.name, f1.rev, f1.flashKB, f1.rdp], ['STM32F10x medium-density', 'Y', 64, 1]);
+  const g0 = sid.decodeTarget('0x40015800: 20006460\n0x40022020: dffff8bb');
+  assert.deepStrictEqual([g0.devId, g0.rdp], [0x460, 1]);
+  assert.strictEqual(sid.matchesProject(g0, lib.mcus.stm32g071rbt6), true);
+  assert.strictEqual(sid.decodeTarget('0xe0042000: 10006999'), null, 'bilinmeyen DEV_ID');
+  assert.deepStrictEqual([sid.rdpLevel('byte0', 0xAA), sid.rdpLevel('byte0', 0xCC), sid.rdpLevel('byte8', 0x5500), sid.rdpLevel('obr2', 0x6)], [0, 2, 0.5, 2]);
+});
+test('prob raporu: problar, hedef, uyuşmazlık, eksik araç', () => {
+  const { probeReport } = require('../src/debug/report');
+  const target = sid.decodeTarget('0xe0042000: 10006469\n0x1fff75e0: 0200\n0x40022020: ffeff8aa');
+  const md = probeReport({ mcu: lib.mcus.stm32f411ceu6, result: { ok: true, probes: usb.classify([{ vid: 0x0483, pid: 0x374B, serial: 'ABC' }]), core: 'Cortex-M4', voltage: '3.28', target, match: false },
+    tools: [{ name: 'OpenOCD', found: false, required: true, install: 'https://x', hint: 'winget' }] });
+  for (const s of ['ST-Link V2-1', '`ABC`', 'STM32G47x/48x', 'DEV_ID 0x469', '512 KB', 'Seviye 0', '⚠ Projedeki işlemci STM32F411CEU6', '3.28 V', 'gerekli, yok']) assert.ok(md.includes(s), s);
+});
+
 console.log('Kütüphane, telemetri, debug');
 test('tüm hazır komponentler doğrulamadan geçer', () => {
   for (const c of Object.values(lib.components)) assert.deepStrictEqual(validateComponent(c), [], c.id);

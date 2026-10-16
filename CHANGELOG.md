@@ -1,5 +1,15 @@
 # Değişiklik günlüğü
 
+## 0.5.2 (önizleme)
+
+- **Prob ve kart algılama:** ST-Link (V1/V2/V2-1/V3), J-Link, CMSIS-DAP/DAPLink, STM32 USB DFU önyükleyicisi ve USB-UART köprüleri (CH340, CP210x, FTDI, PL2303) seri numarası ve sanal seri portuyla listelenir. Yerel modül yok: Windows'ta CIM + `Win32_DeviceChangeEvent` (tak/çıkar olayı), Linux'ta `/sys`, macOS'ta `ioreg`.
+- **Hedef bilgisi:** OpenOCD ile tek oturumda prob firmware'i, hedef voltajı, çekirdek ve `DBGMCU_IDCODE` → cihaz ve revizyon (40 STM32 cihaz kimliği), flash boyutu, 96 bit UID, RDP seviyesi (0 / 0.5 / 1 / 2). Register adresleri 10 ailenin her biri için ayrı; aday adresler `catch` ile okunup cihaz kimliğine göre seçilir. Birden fazla aynı tür prob varsa seri numarasıyla seçilir.
+- **Projeyle uyumsuzluk uyarısı:** bağlı cihaz projedeki işlemciden farklıysa durum çubuğu uyarı renginde ve bildirim çıkar.
+- **Tak/çıkar:** debug probu takılınca (debug oturumu ya da çalışan görev yoksa) kart kendiliğinden sorgulanır; çıkarılınca durum çubuğu "Prob yok" olur. `embeddedStudio.probe.autoDetect` ayarı (varsayılan açık).
+- **Araç algılama:** STM32_Programmer_CLI (PATH ve varsayılan kurulum klasörü), OpenOCD, pyOCD, st-flash sürümleriyle; yoksa indirme bağlantısı ve kurulum komutu.
+- **Prob ve kart raporu:** prob öğesine tıklayınca problar, hedef ve araçlar Markdown önizlemede.
+- Testler: birim 54 (USB sınıflandırma, Windows aygıt kimlikleri, F411/H743/F103/G071 kimlik çözme, RDP, rapor), arayüz 35.
+
 ## 0.5.1 (önizleme)
 
 - **Durum çubuğunda Build / Flash / Debug / Run / Terminal butonları** ve prob bilgisi. Sadece Embedded Studio projesi açıkken görünür; tasarımcı paneli kapalıyken de çalışır.

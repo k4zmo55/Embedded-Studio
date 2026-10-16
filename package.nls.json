@@ -10,5 +10,6 @@
   "command.run": "Run (build, download and run without debugger)",
   "command.terminal": "Open Monitor",
   "command.probe": "Probe and Board Info",
-  "config.flashConfirm": "Ask for confirmation before flashing (status bar Flash/Run, designer Flash)."
+  "config.flashConfirm": "Ask for confirmation before flashing (status bar Flash/Run, designer Flash).",
+  "config.probeAutoDetect": "Detect probes (ST-Link, J-Link, CMSIS-DAP, DFU, UART bridges) when they are plugged in and query the connected board automatically."
 }

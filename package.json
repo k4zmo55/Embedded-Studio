@@ -2,7 +2,7 @@
   "name": "embedded-studio",
   "displayName": "Embedded Studio",
   "description": "STM32 için görsel gömülü sistem tasarımı: komponent seçimi, otomatik pin/saat ataması, HAL veya bare-metal + FreeRTOS kod üretimi, canlı monitör ve debug.",
-  "version": "0.5.1",
+  "version": "0.5.2",
   "publisher": "mhmtakfseckin",
   "license": "MIT",
   "repository": {
@@ -121,6 +121,11 @@
           "type": "boolean",
           "default": false,
           "description": "%config.flashConfirm%"
+        },
+        "embeddedStudio.probe.autoDetect": {
+          "type": "boolean",
+          "default": true,
+          "description": "%config.probeAutoDetect%"
         }
       }
     },

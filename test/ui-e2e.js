@@ -947,6 +947,10 @@ async function until(fn, ms = 8000, what = 'koşul') {
     const pr = await cmds['embeddedStudio.probe']();
     assert.ok(pr && !pr.ok && pr.error, JSON.stringify(pr && { ok: pr.ok, error: pr.error }));
     assert.ok(texts().some((x) => x.includes('Prob yok')), texts().join(' | '));
+    // ES-202: rapor Markdown önizlemede açılır; prob yokken OpenOCD hiç çalıştırılmaz (USB taraması yeter)
+    assert.ok(recorded.openFolder.some((a) => a[0] === 'markdown.showPreview'), 'prob raporu açıldı');
+    assert.ok(/Bağlı prob yok/.test(pr.error), pr.error);
+    assert.ok(Array.isArray(pr.probes), 'USB taraması yapıldı');
     await cdp.click('#tab-design');
   });
   await step('İngilizce arayüz: ayar değişince yeniden yüklenir, ekranda Türkçe metin kalmaz', async () => {

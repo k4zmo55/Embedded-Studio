@@ -16,6 +16,8 @@ const { spawn } = require('child_process');
 const cm = require('./codegen/build');
 const { elfSize } = require('./toolchain');
 const { openocdCmd, parseProbe } = require('./debug/probe');
+const { classify, listUsb } = require('./debug/usb');
+const { readCommands, decodeTarget, matchesProject } = require('./debug/stm32id');
 const { t } = require('./i18n');
 
 const SOURCE = 'Embedded Studio';
@@ -32,8 +34,8 @@ class ProjectActions {
   constructor(getProject, hooks = {}) {
     this.getProject = getProject;
     this.hooks = hooks;
-    /** @type {{ running: string | null, errors: number, warnings: number, ok: boolean | null, probe: any }} */
-    this.state = { running: null, errors: 0, warnings: 0, ok: null, probe: null };
+    /** @type {{ running: string | null, errors: number, warnings: number, ok: boolean | null, probe: any, probes: any[] | null }} */
+    this.state = { running: null, errors: 0, warnings: 0, ok: null, probe: null, probes: null };
     /** @type {Map<any, (code: number) => void>} */
     this.waiting = new Map();
     this.disposables = [vscode.tasks.onDidEndTaskProcess((e) => {
@@ -202,36 +204,56 @@ class ProjectActions {
     return vscode.debug.startDebugging(vscode.workspace.workspaceFolders?.[0], this.debugConfig(p));
   }
 
+  /** USB'deki problar (sorgu yapmadan; tak/çıkar izleyicisi çağırır) */
+  async scanUsb() {
+    const probes = classify(await listUsb());
+    this.set({ probes });
+    return probes;
+  }
+
   /**
-   * Prob ve hedef bilgisi: OpenOCD ile bir kez bağlanır (init + targets), çıktıdan prob türü, firmware, hedef voltajı ve çekirdek.
-   * @returns {Promise<{ ok: boolean, probe?: string, firmware?: string, voltage?: string, core?: string, error?: string, log: string }>}
+   * Prob ve hedef bilgisi (ES-202): USB'de prob aranır, ilk debug probuyla (ST-Link / J-Link / CMSIS-DAP) OpenOCD tek oturumda
+   * bağlanıp prob firmware'i, hedef voltajı, çekirdek ve DBGMCU_IDCODE / flash boyutu / UID / RDP okunur.
+   * @returns {Promise<any>}
    */
-  probe() {
+  async probe() {
     const p = this.getProject();
     const mcu = p ? p.lib.mcus[p.design.mcuId] : null;
-    const target = mcu ? mcu.device.openocdTarget : 'target/stm32f4x.cfg';
     this.set({ running: 'probe' });
-    return new Promise((resolve) => {
-      let log = '';
+    const probes = await this.scanUsb().catch(() => []);
+    const dbg = probes.find((x) => x.interfaceCfg);
+    const finishWith = (r) => {
+      const res = { probes, ...r };
+      if (res.target && mcu) res.match = matchesProject(res.target, mcu);
+      this.set({ running: null, probe: res });
+      return res;
+    };
+    if (!dbg) {
+      const other = probes.find((x) => x.kind === 'dfu' || x.kind === 'uart');
+      return finishWith({ ok: false, error: other ? t('Debug probu yok; {0} bulundu.', other.label) : t('Bağlı prob yok. ST-Link\'i takın (Nucleo/Discovery kartlarında dahili).') });
+    }
+    const target = mcu ? mcu.device.openocdTarget : 'target/stm32f4x.cfg';
+    const sameKind = probes.filter((x) => x.kind === dbg.kind).length;
+    const args = ['-f', dbg.interfaceCfg, ...(sameKind > 1 && dbg.serial ? ['-c', `adapter serial ${dbg.serial}`] : []), '-f', target,
+      '-c', 'init', '-c', 'targets', ...readCommands().flatMap((c) => ['-c', c]), '-c', 'shutdown'];
+    const log = await new Promise((resolve) => {
+      let out = '';
       let proc;
-      const finish = (r) => {
-        clearTimeout(timer);
-        try { proc && proc.kill(); } catch { /* kapandı */ }
-        this.set({ running: null, probe: r });
-        resolve(r);
-      };
-      const timer = setTimeout(() => finish({ ok: false, error: t('openocd 15 sn içinde yanıt vermedi.'), log }), 15000);
+      const timer = setTimeout(() => { try { proc && proc.kill(); } catch { /* kapandı */ } resolve(out + '\n' + t('openocd 15 sn içinde yanıt vermedi.')); }, 15000);
       try {
-        proc = spawn('openocd', ['-f', 'interface/stlink.cfg', '-f', target, '-c', 'init', '-c', 'targets', '-c', 'shutdown'], { windowsHide: true });
+        proc = spawn('openocd', args, { windowsHide: true });
       } catch (e) {
-        return finish({ ok: false, error: e.message, log });
+        clearTimeout(timer);
+        return resolve(String(e.message));
       }
-      const onText = (d) => { log += String(d); };
+      const onText = (d) => { out += String(d); };
       proc.stdout.on('data', onText);
       proc.stderr.on('data', onText);
-      proc.on('error', (e) => finish({ ok: false, error: t('openocd başlatılamadı ({0}). OpenOCD kurulu ve PATH\'te mi?', e.message), log }));
-      proc.on('exit', () => finish(parseProbe(log)));
+      proc.on('error', (e) => { clearTimeout(timer); resolve(out + '\n' + t('openocd başlatılamadı ({0}). OpenOCD kurulu ve PATH\'te mi?', e.message)); });
+      proc.on('exit', () => { clearTimeout(timer); resolve(out); });
     });
+    const base = parseProbe(log);
+    return finishWith({ ...base, probe: dbg.label, serial: dbg.serial, port: dbg.port, target: base.ok ? decodeTarget(log) : null });
   }
 }
 

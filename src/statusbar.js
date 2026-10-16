@@ -58,15 +58,31 @@ class StatusBar {
     terminal.text = '$(terminal) Terminal';
     terminal.tooltip = t('Monitör sekmesini aç (telemetri). Seri port terminali ES-211 ile gelecek.');
 
+    // Prob: önce USB taraması (tak/çıkar), sorgu yapıldıysa hedef kimliği
     const pr = s.probe;
+    const usb = s.probes;
+    const debugProbe = usb && usb.find((x) => x.interfaceCfg);
+    const volts = pr && pr.voltage ? `${Number(pr.voltage).toFixed(2)} V` : null;
+    let warn = false;
     if (busy('probe')) probe.text = `$(sync~spin) ${t('Prob aranıyor…')}`;
-    else if (pr && pr.ok) probe.text = `$(plug) ${[pr.probe, pr.core, pr.voltage && `${pr.voltage} V`].filter(Boolean).join(' · ')}`;
-    else if (pr) probe.text = `$(debug-disconnect) ${t('Prob yok')}`;
+    else if (pr && pr.ok && pr.target) {
+      warn = pr.match === false;
+      probe.text = `${warn ? '$(warning)' : '$(plug)'} ${[pr.probe, `${pr.target.name.split(' /')[0]} rev ${pr.target.rev}`, volts].filter(Boolean).join(' · ')}`;
+    } else if (pr && pr.ok) probe.text = `$(plug) ${[pr.probe, pr.core, volts].filter(Boolean).join(' · ')}`;
+    else if (usb && !usb.length) probe.text = `$(debug-disconnect) ${t('Prob yok')}`;
+    else if (debugProbe && pr && !pr.ok) { warn = true; probe.text = `$(plug) ${debugProbe.label} · ${t('hedef yok')}`; }
+    else if (debugProbe) probe.text = `$(plug) ${debugProbe.label}`;
+    else if (usb && usb.length) probe.text = `$(plug) ${usb[0].label}`;
+    else if (pr) { warn = true; probe.text = `$(debug-disconnect) ${t('Prob yok')}`; }
     else probe.text = `$(plug) ${mcu.name}`;
-    probe.tooltip = pr
-      ? (pr.ok ? `${t('Proje: {0}', mcu.name)}\n${[pr.probe, pr.firmware && `firmware ${pr.firmware}`, pr.core, pr.voltage && t('Hedef voltajı {0} V', pr.voltage)].filter(Boolean).join('\n')}` : pr.error) + `\n${t('Yeniden denemek için tıklayın.')}`
-      : t('Proje: {0}. Bağlı prob ve kartı sorgulamak için tıklayın.', mcu.name);
-    probe.backgroundColor = pr && !pr.ok ? new vscode.ThemeColor('statusBarItem.warningBackground') : undefined;
+    const lines = [t('Proje: {0}', mcu.name)];
+    if (usb && usb.length) lines.push(...usb.map((x) => `${x.label}${x.serial ? ` · ${x.serial}` : ''}${x.port ? ` · ${x.port}` : ''}`));
+    if (pr && pr.target) lines.push(`${pr.target.name} · DEV_ID 0x${pr.target.devId.toString(16).toUpperCase()} · rev ${pr.target.rev}${pr.target.flashKB ? ` · ${pr.target.flashKB} KB` : ''}`);
+    if (pr && pr.match === false) lines.push(t('Projedeki işlemciyle uyuşmuyor!'));
+    if (pr && !pr.ok && pr.error) lines.push(pr.error);
+    lines.push(t('Ayrıntılı rapor için tıklayın.'));
+    probe.tooltip = lines.join('\n');
+    probe.backgroundColor = warn ? new vscode.ThemeColor('statusBarItem.warningBackground') : undefined;
     all.forEach((i) => i.show());
   }
 }

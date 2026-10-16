@@ -18,6 +18,9 @@ const { periphClockTable } = require('./engine/periphclock');
 const { DRIVERS: REG_DRIVERS } = require('./codegen/regdrivers');
 const { ProjectActions } = require('./actions');
 const { StatusBar } = require('./statusbar');
+const { watchUsb } = require('./debug/usb');
+const { detectTools } = require('./debug/tools');
+const { probeReport } = require('./debug/report');
 
 /** @type {ProjectActions} */
 let actions;
@@ -76,6 +79,31 @@ function activate(context) {
     vscode.commands.registerCommand('embeddedStudio.terminal', async () => (await Studio.show(context)).post({ type: 'tab', tab: 'monitor' })),
     vscode.commands.registerCommand('embeddedStudio.probe', () => probeCommand()));
 
+  // ---- ES-202: tak/çıkar izleme; debug probu takılınca (debug oturumu yoksa) kart kendiliğinden sorgulanır ----
+  let usbWatch = null;
+  let lastDebugProbes = '';
+  const onUsb = async () => {
+    if (!currentProject()) return;
+    const probes = await actions.scanUsb().catch(() => []);
+    const sig = probes.filter((x) => x.interfaceCfg).map((x) => x.label + (x.serial || '')).join(',');
+    const appeared = sig && sig !== lastDebugProbes;
+    lastDebugProbes = sig;
+    if (!sig && actions.state.probe) actions.set({ probe: null }); // prob çıkarıldı
+    const busy = actions.state.running || vscode.debug.activeDebugSession || (Studio.current && Studio.current.target);
+    if (appeared && !busy) actions.probe().catch(() => {});
+  };
+  const startWatch = () => {
+    usbWatch?.dispose();
+    usbWatch = null;
+    if (!currentProject() || !vscode.workspace.getConfiguration?.('embeddedStudio').get('probe.autoDetect', true)) return;
+    usbWatch = watchUsb(onUsb);
+    onUsb();
+  };
+  startWatch();
+  if (watcher) ['onDidCreate', 'onDidDelete'].forEach((ev) => watcher[ev](startWatch));
+  context.subscriptions.push({ dispose: () => usbWatch?.dispose() });
+  context.subscriptions.push(vscode.workspace.onDidChangeConfiguration?.((e) => { if (e.affectsConfiguration('embeddedStudio.probe.autoDetect')) startWatch(); }) || { dispose() {} });
+
   const status = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 100);
   status.text = '$(circuit-board) Embedded Studio';
   status.tooltip = t('Embedded Studio tasarımcısını aç');
@@ -103,20 +131,16 @@ function currentProject() {
   }
 }
 
-/** Prob bilgisi: OpenOCD ile bir kez sorgula; projedeki çekirdekle karşılaştır */
+/** Prob ve kart raporu: USB problar + OpenOCD ile hedef kimliği + araçlar; Markdown önizlemede açılır */
 async function probeCommand() {
-  const r = await actions.probe();
+  const [r, tools] = await Promise.all([actions.probe(), detectTools().catch(() => [])]);
   const p = currentProject();
-  if (!r.ok) {
-    vscode.window.showWarningMessage(r.error || t('Hedef bulunamadı.'));
-    return r;
-  }
-  const want = p ? p.lib.mcus[p.design.mcuId] : null;
-  const core = (r.core || '').replace(/\+$/, '');
-  const mismatch = want && core && !want.core.replace(/F$/, '').startsWith(core);
-  const text = [r.probe, r.core, r.voltage && t('hedef {0} V', r.voltage)].filter(Boolean).join(' · ');
-  if (mismatch) vscode.window.showWarningMessage(t('Bağlı kart ({0}) projedeki işlemciyle ({1}, {2}) uyuşmuyor olabilir.', text, want.name, want.core));
-  else vscode.window.showInformationMessage(t('Bağlı: {0}', text));
+  const mcu = p ? p.lib.mcus[p.design.mcuId] : null;
+  if (r.match === false) vscode.window.showWarningMessage(t('Bağlı cihaz ({0}) projedeki işlemciyle ({1}) uyuşmuyor.', r.target.name, mcu.name));
+  const missing = tools.find((x) => x.required && !x.found);
+  if (missing) vscode.window.showWarningMessage(t('{0} bulunamadı: {1}', missing.name, missing.hint));
+  const doc = await vscode.workspace.openTextDocument({ language: 'markdown', content: probeReport({ result: r, tools, mcu }) });
+  await vscode.commands.executeCommand('markdown.showPreview', doc.uri);
   return r;
 }
 

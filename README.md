@@ -194,6 +194,13 @@ Embedded Studio projesi açıkken VS Code'un alt durum çubuğunda (tasarımcı 
 | **Terminal** | — | Monitör sekmesini açar (seri port terminali ileride) |
 | Prob | — | Tıklayınca bağlı ST-Link, hedef voltajı ve çekirdek; projedeki işlemciyle uyuşmazsa uyarır |
 
+**Prob ve kart algılama:** ST-Link (V2/V2-1/V3), J-Link, CMSIS-DAP, USB DFU önyükleyicisi ve USB-UART köprüleri takılınca
+kendiliğinden algılanır (yerel modül gerekmez; Windows'ta WMI olayları, Linux'ta `/sys`, macOS'ta `ioreg`). Debug oturumu yoksa
+bağlı kart OpenOCD ile sorgulanır: `DBGMCU_IDCODE` ile cihaz ve revizyon, flash boyutu, 96 bit UID, okuma koruması (RDP)
+seviyesi, hedef voltajı. Projedeki işlemciden farklı bir kart bağlıysa durum çubuğu uyarır. Prob öğesine tıklayınca prob, hedef
+ve araç (STM32_Programmer_CLI, OpenOCD, pyOCD, st-flash; yoksa kurulum yolu) bilgisini içeren bir rapor açılır.
+Otomatik algılama `embeddedStudio.probe.autoDetect` ayarıyla kapatılabilir.
+
 Kısayollar sadece Embedded Studio projesinde ve debug oturumu dışında geçerlidir. Yüklemeden önce onay için
 `embeddedStudio.flash.confirm` ayarını açın.
 
