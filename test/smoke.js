@@ -1045,6 +1045,104 @@ test('register yazma: alan ekleme, değer ayrıştırma; FPU ve özel register a
     passed++;
     console.log('  ✓ SWO/ITM, RTT, semihosting (ES-208): paket çözücü, ITM/DWT ayarı, PC profili, RTT halkası, uçtan uca simülasyon, es_trace');
   }
+  {
+    // ES-209: FreeRTOS yapılandırması → yerleşim, simülasyon çekirdeği, okuyucu, bağlam ve çağrı zinciri
+    const R = require('../src/debug/rtos');
+    const T = require('../src/debug/trace');
+    const { SimTarget } = require('../src/debug/session');
+    const cfg = R.parseConfig('#define configMAX_TASK_NAME_LEN  ( 12 ) /* ad */\n#define configTOTAL_HEAP_SIZE ((size_t)13312)\n#define configUSE_MUTEXES 1U\n// #define configUSE_TRACE_FACILITY 1\n#define configCPU_CLOCK_HZ (SystemCoreClock)\n');
+    assert.deepStrictEqual(cfg, { configMAX_TASK_NAME_LEN: 12, configTOTAL_HEAP_SIZE: 13312, configUSE_MUTEXES: 1 });
+    // V11 tasks.c / gdb ptype/o ile doğrulanmış ofsetler
+    const L0 = R.tcbLayout({ configUSE_TRACE_FACILITY: 1, configUSE_MUTEXES: 1, configGENERATE_RUN_TIME_STATS: 1 });
+    assert.deepStrictEqual([L0.name, L0.tcbNum, L0.basePrio, L0.mutexes, L0.runTime, L0.end], [52, 68, 76, 80, 84, undefined]);
+    const L1 = R.tcbLayout(R.DEFAULT_CONFIG);
+    assert.deepStrictEqual([L1.end, L1.runTime], [68, 88]);
+    assert.strictEqual(R.tcbLayout({ configMAX_TASK_NAME_LEN: 10 }).size, 64, 'ad 4 bayta hizalanır');
+    assert.strictEqual(R.queueLayout({ configUSE_TRACE_FACILITY: 1 }).type, 76);
+    assert.strictEqual(R.queueLayout({ configUSE_TRACE_FACILITY: 1, configSUPPORT_STATIC_ALLOCATION: 1, configUSE_QUEUE_SETS: 1 }).type, 80);
+    assert.throws(() => R.tcbLayout({ portUSING_MPU_WRAPPERS: 1 }), /MPU/);
+    assert.ok(R.precededByCall((a) => ({ 0x100: 0xf000, 0x102: 0xf800 })[a], 0x104), 'BL');
+    assert.ok(R.precededByCall((a) => ({ 0x102: 0x4798 })[a], 0x104), 'BLX r3');
+    assert.ok(!R.precededByCall((a) => ({ 0x100: 0xbf00, 0x102: 0xbf00 })[a], 0x104), 'NOP');
+    // Simülasyon çekirdeği: üç çekirdek düzeninde (CM0 V11, CM4F, CM33) bağlam ve çağrı zinciri
+    for (const core of ['cortex-m4', 'cortex-m0plus', 'cortex-m33']) {
+      const sim = new SimTarget({ peripherals: [], expected: new Map(), dynamic: new Map() });
+      const syms = R.simKernel(sim, { names: ['BME280_1', 'MPU6050_1', 'SSD1306_1'], core, funcs: T.SIM_FUNCS });
+      const rd = new R.RtosReader(sim, { syms: R.symbolMap(syms), core });
+      await rd.snapshot();
+      await new Promise((r) => setTimeout(r, 120));
+      const s = await rd.snapshot();
+      const by = Object.fromEntries(s.tasks.map((x) => [x.name, x]));
+      assert.deepStrictEqual(Object.keys(by).sort(), ['BME280_1', 'IDLE', 'MPU6050_1', 'Monitor', 'SSD1306_1']);
+      assert.strictEqual(s.tasks[s.tasks.length - 1].name, 'IDLE', 'önceliğe göre sıralı');
+      assert.strictEqual(by.MPU6050_1.state, 'suspended');
+      assert.ok(['running', 'ready'].includes(by.IDLE.state) && s.tasks.filter((x) => x.state === 'running').length === 1);
+      assert.deepStrictEqual(by.SSD1306_1.waiting, { name: 'lock_I2C1', dir: 'recv', type: 'mutex' });
+      assert.strictEqual(by.BME280_1.mutexesHeld, 1);
+      assert.ok(Math.abs(s.tasks.reduce((a, x) => a + x.cpu, 0) - 100) < 0.01 && by.IDLE.cpu > 40, JSON.stringify(s.tasks.map((x) => x.cpu)));
+      assert.deepStrictEqual([by.Monitor.stackSize, by.SSD1306_1.freeMin], [1024, 24]);
+      assert.ok(by.Monitor.used > 0 && by.Monitor.freeMin === by.Monitor.stackSize - by.Monitor.used, 'tepe = şu anki kullanım (dolgu bozulmamış)');
+      assert.deepStrictEqual(s.queues.map((q) => [q.name, q.type]), [['SensorQ', 'queue'], ['lock_I2C1', 'mutex'], ['DataReady', 'binary']]);
+      assert.deepStrictEqual([s.queues[1].holderName, s.queues[1].receiversNames], ['BME280_1', ['SSD1306_1']]);
+      assert.deepStrictEqual(s.timers.map((x) => [x.name, x.period, x.autoReload]), [['Blink', 500, true], ['Watchdog', 2000, false]]);
+      assert.deepStrictEqual(s.warnings.map((w) => [w.level, w.task || 'heap']), [['warn', 'SSD1306_1'], ['warn', 'heap']]);
+      const task = by.MPU6050_1;
+      const ctx = await R.taskContext(sim, task, core);
+      const prof = new T.PcProfile(T.SIM_FUNCS);
+      assert.strictEqual(prof.lookup(ctx.regs.pc), 'sensor_read', core);
+      const bt = await R.backtrace(sim, ctx.regs, task.stackEnd + 4, (a) => prof.lookup(a), null);
+      assert.deepStrictEqual(bt.map((f) => f.func), ['sensor_read', 'HAL_Delay', 'App_Loop', 'main'], core);
+    }
+    // Taşma: dolgunun ilk word'ü bozulunca hata; heap tükenince hata
+    {
+      const sim = new SimTarget({ peripherals: [], expected: new Map(), dynamic: new Map() });
+      const rd = new R.RtosReader(sim, { syms: R.symbolMap(R.simKernel(sim, { names: ['A'], funcs: T.SIM_FUNCS })) });
+      let s = await rd.snapshot();
+      const a = s.tasks.find((x) => x.name === 'A');
+      await sim.writeMemory(a.pxStack, 32, 0x12345678);
+      s = await rd.snapshot();
+      assert.ok(s.tasks.find((x) => x.name === 'A').overflow && s.warnings[0].level === 'error' && /taşmış/.test(s.warnings[0].text));
+      assert.deepStrictEqual(R.warnings({ tasks: [], heap: { free: 0, minEver: 0, total: 100 } }).map((w) => w.level), ['error']);
+    }
+    // Çalışan görev, durdurulmuşken: çekirdek register'ları; işleyicide PSP çerçevesi
+    {
+      const sim = new SimTarget({ peripherals: [], expected: new Map(), dynamic: new Map() });
+      const fr = [1, 2, 3, 4, 5, 0x08000a01, 0x08000660, 0x01000000];
+      fr.forEach((v, i) => sim.model.expected.set(0x20003000 + i * 4, v));
+      const c1 = await R.taskContext(sim, {}, 'cortex-m4', { pc: 0x08000400, lr: 0x08000501, sp: 0x20002000, xPSR: 0x01000000, psp: 0x20003000 });
+      assert.deepStrictEqual([c1.layout, c1.regs.pc], ['core', 0x08000400]);
+      const c2 = await R.taskContext(sim, {}, 'cortex-m4', { pc: 0x08000c10, lr: 0xfffffffd, sp: 0x2001ff00, xPSR: 0x0100000f, psp: 0x20003000 });
+      assert.deepStrictEqual([c2.layout, c2.regs.pc, c2.regs.sp], ['psp', 0x08000660, 0x20003020]);
+    }
+    // Üretilen proje: kuyruk kaydı ve yığın üst adresi
+    {
+      const d = design([inst('bme280'), inst('led')], { rtos: true });
+      const files = generate(d, lib, assign(d, lib), computeClock(mcu, d.clock), {}).files;
+      const conf = files.find((f) => f.path.endsWith('FreeRTOSConfig.h')).content;
+      const c = R.parseConfig(conf);
+      assert.deepStrictEqual([c.configRECORD_STACK_HIGH_ADDRESS, c.configQUEUE_REGISTRY_SIZE], [1, 8]);
+      assert.ok(files.some((f) => /vQueueAddToRegistry\(lock_I2C1, "lock_I2C1"\)/.test(f.content)) && files.some((f) => f.content.includes('vQueueAddToRegistry(tx_lock, "tx_lock")')));
+    }
+    // Derlenmiş gerçek proje varsa: TCB/Queue ofsetleri gdb'nin DWARF çıktısıyla aynı, ELF'ten kod okunur
+    const built = 'C:/Users/mehme/AppData/Local/Temp/es-build/t_f407vg_hal_rtos';
+    const elf = path.join(built, 'build/debug/t_f407vg_hal_rtos.elf');
+    if (fs.existsSync(elf)) {
+      const gdb = await new Promise((resolve) => require('child_process').execFile('arm-none-eabi-gdb', ['-batch', '-ex', 'ptype/o TCB_t', '-ex', 'ptype/o Queue_t', elf], { windowsHide: true }, (e, out) => resolve(e ? '' : out)));
+      if (gdb) {
+        const off = (field) => Number((new RegExp(`/\\*\\s+(\\d+)\\s+\\|\\s+\\d+ \\*/\\s+[^;]*\\b${field}\\b`).exec(gdb) || [])[1]);
+        const pc = R.parseConfig(fs.readFileSync(path.join(built, 'Core/Inc/FreeRTOSConfig.h'), 'utf8'));
+        const L = R.tcbLayout(pc), Q = R.queueLayout(pc);
+        assert.deepStrictEqual([off('pcTaskName'), off('uxPriority'), off('pxStack'), off('ulRunTimeCounter'), off('uxMutexesHeld')], [L.name, L.prio, L.stack, L.runTime, L.mutexes], gdb.slice(0, 600));
+        if (pc.configRECORD_STACK_HIGH_ADDRESS) assert.strictEqual(off('pxEndOfStack'), L.end);
+        assert.deepStrictEqual([off('uxMessagesWaiting'), off('ucQueueType')], [Q.waiting, Q.type]);
+      }
+      const code = R.elfCode(elf);
+      const main = (await T.functionSymbols(elf)).find((f) => f.name === 'main');
+      assert.ok(code && code(main.addr) !== undefined && code(0x30000000) === undefined, 'ELF kodu okunur');
+    }
+    passed++;
+    console.log('  ✓ FreeRTOS farkındalıklı debug (ES-209): yapılandırma → TCB/Queue yerleşimi, görev durumu, yığın tepe değeri, CPU %, kuyruk/mutex, zamanlayıcı, uyarılar, call stack');
+  }
   const { OpenOcdTarget, freePort } = require('../src/debug/session');
   const port = await freePort();
   assert.ok(port > 0 && port !== 6666, String(port));

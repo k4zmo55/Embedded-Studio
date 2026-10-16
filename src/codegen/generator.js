@@ -165,7 +165,7 @@ ${design.rtos ? `  int locked = xTaskGetSchedulerState() == taskSCHEDULER_RUNNIN
 
 void Telemetry_Init(void)
 {
-${design.rtos ? '  tx_lock = xSemaphoreCreateMutex();\n' : ''}  send("$I,${name},${mcu.name},${design.rtos ? 'FreeRTOS' : 'bare-metal'}\\n");
+${design.rtos ? '  tx_lock = xSemaphoreCreateMutex();\n  vQueueAddToRegistry(tx_lock, "tx_lock"); /* Debug > Konsol > FreeRTOS\'ta adıyla görünür */\n' : ''}  send("$I,${name},${mcu.name},${design.rtos ? 'FreeRTOS' : 'bare-metal'}\\n");
 }
 
 void Telemetry_Status(const char *source, const char *text)
@@ -326,7 +326,7 @@ void vApplicationMallocFailedHook(void)
 
 void App_Start(void)
 {
-${busesUsed.map((b) => `  lock_${b} = xSemaphoreCreateMutex();`).join('\n')}
+${busesUsed.map((b) => `  lock_${b} = xSemaphoreCreateMutex();\n  vQueueAddToRegistry(lock_${b}, "lock_${b}");`).join('\n')}
 ${plan.tasks.map((t) => {
     const c = ctxs.find((v) => v.inst.id === t.inst.id);
     return `  xTaskCreate(Task_${c.L}, "${t.name}", ${t.stackWords}, NULL, ${t.priority}, NULL); /* ${t.periodMs} ms */`;
@@ -537,6 +537,9 @@ uint32_t ulGetRunTimeCounter(void);
 #define configUSE_MALLOC_FAILED_HOOK            1
 #define configSUPPORT_DYNAMIC_ALLOCATION        1
 #define configSUPPORT_STATIC_ALLOCATION         0
+/* Çekirdek farkındalıklı debug (Debug > Konsol > FreeRTOS): yığın boyutu ve adlı kuyruk/mutex'ler */
+#define configRECORD_STACK_HIGH_ADDRESS         1
+#define configQUEUE_REGISTRY_SIZE               8
 
 ${stats ? `/* Embedded Studio task monitörü için */
 #define configUSE_TRACE_FACILITY                1

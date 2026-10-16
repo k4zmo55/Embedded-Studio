@@ -12,6 +12,8 @@
     profile: null, dtrace: [], semiOn: false, dirty: false, sendHist: [], histAt: -1
   };
   const D = () => ES.dbg || {};
+  /** Başka dosyaların eklediği sekmeler (rtos.js): { label, ctl(): Node[], view(box), msg?(): { level, text }, running?(), clear?(), save?(): string } */
+  const EXT = (ES.consoleTabs = ES.consoleTabs || {});
 
   function mount(el) {
     if (!el) return;
@@ -20,12 +22,13 @@
         h('button', { class: 'ghost small tw-btn', id: 'con-toggle', 'aria-expanded': 'true', title: t('Konsolu daralt / genişlet'), onclick: () => { con.open = !con.open; render(); } }, '▾'),
         h('span', { class: 'pane-title', text: t('Konsol') }),
         h('div', { class: 'con-tabs', role: 'tablist' },
-          ...TABS().map(([id, label]) => h('button', { class: 'con-tab', role: 'tab', id: `con-tab-${id}`, 'data-tab': id, onclick: () => { con.tab = id; con.open = true; render(); } }, label))),
+          ...TABS().map(([id, label]) => h('button', { class: 'con-tab', role: 'tab', id: `con-tab-${id}`, 'data-tab': id, onclick: () => { con.tab = id; con.open = true; render(); EXT[id]?.onShow?.(); } }, label))),
         h('span', { class: 'spacer' }),
         h('span', { class: 'hint', id: 'con-stat' }),
         h('label', { class: 'check', title: t('Satır başına geliş zamanı') }, h('input', { type: 'checkbox', id: 'con-time', onchange: (e) => { con.time = e.target.checked; con.dirty = true; renderOut(); } }), h('span', { text: t('Zaman') })),
         h('button', { class: 'ghost small', id: 'con-clear', onclick: clear }, t('Temizle')),
-        h('button', { class: 'ghost small', id: 'con-save', onclick: save }, t('Kaydet…'))),
+        h('button', { class: 'ghost small', id: 'con-save', onclick: save }, t('Kaydet…')),
+        h('button', { class: 'ghost small', id: 'con-max', title: t('Konsolu büyüt / küçült'), 'aria-label': t('Konsolu büyüt / küçült'), onclick: () => { con.tall = !con.tall; con.open = true; render(); } }, '⤢')),
       h('div', { class: 'con-body', id: 'con-body' },
         h('div', { class: 'con-ctl', id: 'con-ctl' }),
         h('div', { class: 'con-msg', id: 'con-msg', role: 'status' }),
@@ -35,8 +38,10 @@
     render();
   }
 
-  const TABS = () => [['itm', 'SWO / ITM'], ['rtt', 'RTT'], ['semi', 'Semihosting'], ['prof', t('Profil (PC örnekleme)')], ['data', 'Data trace']];
-  const running = () => ({ itm: !!con.status.swo, rtt: !!con.status.rtt, semi: !!con.status.semi, prof: !!con.status.swo && con.pc, data: !!con.status.swo && con.data.length > 0 });
+  const TABS = () => [['itm', 'SWO / ITM'], ['rtt', 'RTT'], ['semi', 'Semihosting'], ['prof', t('Profil (PC örnekleme)')], ['data', 'Data trace'],
+    ...Object.entries(EXT).map(([id, x]) => [id, x.label])];
+  const running = () => ({ itm: !!con.status.swo, rtt: !!con.status.rtt, semi: !!con.status.semi, prof: !!con.status.swo && con.pc, data: !!con.status.swo && con.data.length > 0,
+    ...Object.fromEntries(Object.entries(EXT).map(([id, x]) => [id, !!(x.running && x.running())])) });
 
   // ---------------------------------------------------------------- mesajlar
   ES.on('debug.traceInfo', (m) => {
@@ -128,6 +133,7 @@
     input.value = '';
   }
   function clear() {
+    if (EXT[con.tab]) { EXT[con.tab].clear?.(); render(); return; }
     if (con.tab === 'prof') post({ type: 'debug.profileReset' });
     else if (con.tab === 'data') con.dtrace = [];
     else con.lines[con.tab] = [];
@@ -136,11 +142,12 @@
   }
   function save() {
     let text;
-    if (con.tab === 'prof') text = (con.profile?.rows || []).map((r) => `${r.pct.toFixed(2).padStart(6)}%  ${String(r.count).padStart(8)}  ${r.name}`).join('\n');
+    if (EXT[con.tab]) text = EXT[con.tab].save ? EXT[con.tab].save() : '';
+    else if (con.tab === 'prof') text = (con.profile?.rows || []).map((r) => `${r.pct.toFixed(2).padStart(6)}%  ${String(r.count).padStart(8)}  ${r.name}`).join('\n');
     else if (con.tab === 'data') text = con.dtrace.map((d) => `${new Date(d.t).toISOString()}\t${d.name}\t${d.write ? 'W' : 'R'}\t${d.value}\t${d.pc !== undefined ? hex(d.pc) : ''}`).join('\n');
     else text = lineText(con.tab);
     if (!text) return toast('info', t('Kaydedilecek çıktı yok.'));
-    post({ type: 'debug.consoleSave', text: text + '\n', name: { itm: 'swo-itm', rtt: 'rtt', semi: 'semihosting', prof: 'profile', data: 'data-trace' }[con.tab] });
+    post({ type: 'debug.consoleSave', text: text + '\n', name: { itm: 'swo-itm', rtt: 'rtt', semi: 'semihosting', prof: 'profile', data: 'data-trace' }[con.tab] || con.tab });
   }
 
   /** Görünen satırların metni (port süzgeci, zaman ve port öneki) */
@@ -156,15 +163,10 @@
     const root = $('dbg-console');
     if (!root) return;
     root.classList.toggle('closed', !con.open);
+    root.classList.toggle('tall', !!con.tall && con.open);
     $('con-toggle').textContent = con.open ? '▾' : '▸';
     $('con-toggle').setAttribute('aria-expanded', String(con.open));
-    const run = running();
-    for (const b of root.querySelectorAll('.con-tab')) {
-      const id = b.dataset.tab;
-      b.classList.toggle('active', id === con.tab);
-      b.setAttribute('aria-selected', String(id === con.tab));
-      b.classList.toggle('streaming', !!run[id]);
-    }
+    renderTabs();
     const st = con.status;
     $('con-stat').textContent = [st.swo ? `SWO ${(st.swoHz / 1e6).toFixed(3).replace(/\.?0+$/, '')} MHz` : '', st.rtt ? 'RTT' : '', st.semi ? 'Semihosting' : ''].filter(Boolean).join(' · ');
     const tm = $('con-time');
@@ -176,9 +178,28 @@
     renderView();
   }
 
+  function renderTabs() {
+    const root = $('dbg-console');
+    if (!root) return;
+    const run = running();
+    for (const b of root.querySelectorAll('.con-tab')) {
+      const id = b.dataset.tab;
+      b.classList.toggle('active', id === con.tab);
+      b.setAttribute('aria-selected', String(id === con.tab));
+      b.classList.toggle('streaming', !!run[id]);
+    }
+  }
+
   function renderMsg() {
     const el = $('con-msg');
     if (!el) return;
+    if (EXT[con.tab]) {
+      const x = EXT[con.tab].msg ? EXT[con.tab].msg() : null;
+      el.className = `con-msg${x && x.level ? ' ' + x.level : ''}`;
+      el.textContent = x ? x.text : '';
+      el.hidden = !x || !x.text;
+      return;
+    }
     const text = con.error || con.warn;
     el.className = `con-msg${con.error ? ' error' : con.warn ? ' warn' : ''}`;
     el.textContent = text;
@@ -192,7 +213,8 @@
     if (!box) return;
     const st = con.status, info = con.info || {}, conn = !!D().connected;
     const parts = [];
-    if (con.tab === 'itm' || con.tab === 'prof' || con.tab === 'data') {
+    if (EXT[con.tab]) parts.push(...EXT[con.tab].ctl());
+    else if (con.tab === 'itm' || con.tab === 'prof' || con.tab === 'data') {
       if (info.swo === false) {
         parts.push(h('span', { class: 'hint', text: t('{0} çekirdeğinde ITM/SWO yok. RTT ya da semihosting kullanın.', info.core || 'Cortex-M0') }));
       } else {
@@ -288,6 +310,7 @@
   function renderView() {
     const box = $('con-view');
     if (!box) return;
+    if (EXT[con.tab]) { box.hidden = false; EXT[con.tab].view(box); return; }
     if (con.tab === 'prof') {
       const p = con.profile;
       box.hidden = false;
@@ -323,5 +346,12 @@
     } else { box.replaceChildren(); box.hidden = true; }
   }
 
-  ES.traceConsole = { mount, render: () => { con.dirty = true; render(); } };
+  ES.traceConsole = {
+    mount, render: () => { con.dirty = true; render(); },
+    /** Eklenti sekmeleri: görünüm ve mesaj yeniden çizilir (denetimler değil: yazılan kaybolmasın) */
+    refresh(id) { renderTabs(); if (con.tab === id) { renderMsg(); renderView(); } },
+    refreshCtl(id) { renderTabs(); if (con.tab === id) renderCtl(); },
+    /** Görünen sekme ('' : konsol kapalı ya da başka sekme) */
+    get visible() { return con.open && ui.tab === 'debug' ? con.tab : ''; }
+  };
 })();

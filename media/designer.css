@@ -668,3 +668,23 @@ body.mode-pro .note { padding: 3px 8px; }
 .regs.prof .barcell { width: 40%; }
 .regs.prof .bar { display: block; height: 8px; border-radius: 2px; background: var(--accent); opacity: .75; }
 .regs.prof tr.sleep td { color: var(--muted); font-style: italic; }
+
+/* ---- Konsol: FreeRTOS sekmesi (ES-209) ---- */
+.dbg-console.tall { height: min(62vh, 620px); }
+.regs.rtos td, .regs.rtos th { white-space: nowrap; }
+.regs.rtos tr.deleted td { color: var(--muted); text-decoration: line-through; }
+.regs.rtos tr.warnrow td:first-child { box-shadow: inset 3px 0 0 var(--warn); }
+.rtos-sec { font-size: 11px; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); padding: 10px 12px 2px; }
+.st { display: inline-block; padding: 0 6px; border-radius: 8px; font-size: 11px; background: var(--hover); }
+.st-running { background: color-mix(in srgb, var(--ok) 25%, transparent); }
+.st-ready { background: color-mix(in srgb, var(--accent) 22%, transparent); }
+.st-suspended, .st-deleted { color: var(--muted); }
+.stk { display: inline-flex; align-items: center; gap: 6px; }
+.stk-bar { position: relative; display: inline-block; width: 90px; height: 8px; border-radius: 2px; background: var(--hover); overflow: hidden; }
+.stk-bar span { position: absolute; left: 0; top: 0; bottom: 0; }
+.stk-peak { background: color-mix(in srgb, var(--accent) 40%, transparent); }
+.stk-now { background: var(--accent); }
+.stk.warn .stk-peak, .stk.warn .stk-now { background: var(--warn); }
+.stk.bad .stk-peak, .stk.bad .stk-now { background: var(--err); }
+.rtos-stack { display: flex; flex-direction: column; gap: 6px; max-height: 70vh; overflow-y: auto; }
+.rtos-stack h4 { margin: 10px 0 2px; font-size: 12px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); }

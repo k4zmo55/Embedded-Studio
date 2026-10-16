@@ -229,6 +229,8 @@ Live Watch: ELF'teki global değişkenler hedef durdurulmadan okunur, zaman graf
 HardFault analizörü: fault register'ları cümlelere çevrilir, PC/LR kaynak satıra çözülür, MSP/PSP (RTOS görevi) ayrılır, olası nedenler listelenir.
 Konsol: SWO/ITM `printf` (port seçimi, SWO frekansı), SEGGER RTT okuma/yazma, semihosting çıktısı; PC örneklemeyle fonksiyon bazında profil ve
 değişken erişimlerini durdurmadan izleyen SWV data trace. Bare-metal projelerde `es_trace` örnek sürücüsü `printf`'i ITM ve RTT'ye yönlendirir.
+FreeRTOS: görevler (durum, öncelik, yığın kullanımı ve tepe değeri, CPU %), kuyruk/semafor/mutex (sahibi ve bekleyenler), zamanlayıcılar ve heap
+çekirdek yapılarından okunur; yığın taşması ve heap tükenmesi uyarılır; görevin kayıtlı bağlamından call stack çıkarılır.
 Okuması bayrak temizleyen register'lar (ör. `USART->DR`) sadece hedef durduğunda okunur; çalışan firmware'den veri çalınmaz.
 VS Code debug oturumu başlarken panelin OpenOCD bağlantısı probu kendiliğinden bırakır.
 

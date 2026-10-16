@@ -200,10 +200,10 @@ STM32CubeIDE'deki *Fault Analyzer* eşdeğeri.
 ### ES-209 · FreeRTOS farkındalıklı debug
 `etiketler: tip:özellik, alan:debug, öncelik:orta, seviye:profesyonel`
 
-- [ ] Görev listesi: durum, öncelik, stack kullanımı ve tepe değeri, CPU yüzdesi
-- [ ] Kuyruklar, semaforlar, mutexler, zamanlayıcılar
-- [ ] Durdurulmuş bir görevin call stack'ine geçiş
-- [ ] Stack taşması ve heap tükenmesi uyarıları
+- [x] Görev listesi: durum, öncelik, stack kullanımı ve tepe değeri, CPU yüzdesi
+- [x] Kuyruklar, semaforlar, mutexler, zamanlayıcılar
+- [x] Durdurulmuş bir görevin call stack'ine geçiş
+- [x] Stack taşması ve heap tükenmesi uyarıları
 
 ### ES-210 · Bellek kullanım raporu (Build Analyzer)
 `etiketler: tip:özellik, alan:derleme, öncelik:orta, seviye:hepsi`

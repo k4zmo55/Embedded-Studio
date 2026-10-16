@@ -911,6 +911,37 @@ async function until(fn, ms = 8000, what = 'koşul') {
     await cdp.click('#con-tab-itm');
     scene(null);
   });
+  await step('FreeRTOS (ES-209): görevler, durum, yığın tepe değeri, CPU %, mutex sahibi/bekleyen, zamanlayıcı, uyarılar, görev call stack\'i', async () => {
+    scene('debug');
+    await cdp.click('#con-tab-rtos');
+    await until(() => cdp.eval(`document.querySelectorAll('#rtos-tasks tr').length > 4`), 5000, 'görev tablosu');
+    const tasks = await cdp.eval(`document.querySelector('#rtos-tasks').textContent`);
+    assert.ok(/IDLE/.test(tasks) && /Monitor/.test(tasks) && /Askıda/.test(tasks) && /alma: lock_I2C1/.test(tasks), tasks.slice(0, 400));
+    assert.ok(await cdp.eval(`document.querySelectorAll('#rtos-tasks .st-running').length === 1`), 'tek çalışan görev');
+    assert.ok(/yığınında en kötü durumda/.test(await cdp.eval(`document.querySelector('#con-msg').textContent`)), 'yığın uyarısı');
+    assert.ok(await cdp.eval(`document.querySelector('#rtos-queues').textContent.includes('lock_I2C1') && document.querySelector('#rtos-timers').textContent.includes('prvBlinkTimer')`));
+    // Canlı: CPU yüzdeleri iki okuma farkından
+    await cdp.click('#rtos-live');
+    await sleep(2300);
+    const cpu = await cdp.eval(`[...document.querySelectorAll('#rtos-tasks tr')].slice(1).map((r) => Number(r.children[4].textContent)).reduce((a, b) => a + b, 0)`);
+    assert.ok(Math.abs(cpu - 100) < 1, String(cpu));
+    assert.ok(await cdp.eval(`document.querySelector('#con-tab-rtos').classList.contains('streaming')`));
+    await cdp.click('#rtos-live');
+    // Büyütülmüş konsol
+    await cdp.click('#con-max');
+    await cdp.shot('16j-freertos');
+    // Görev call stack'i: kayıtlı bağlam + yığın taraması
+    await cdp.click('.rtos-cs[data-task="Monitor"]');
+    await until(() => cdp.eval(`document.querySelectorAll('#rtos-frames tr').length >= 3`), 4000, 'çağrı zinciri');
+    const frames = await cdp.eval(`document.querySelector('#rtos-frames').textContent`);
+    assert.ok(/telemetry_send/.test(frames) && /App_Loop/.test(frames) && /main/.test(frames), frames);
+    await cdp.shot('16k-freertos-callstack');
+    await cdp.eval(`document.querySelector('.modal .modal-foot button:last-child').click()`);
+    await until(() => cdp.eval(`!document.querySelector('#rtos-frames')`), 2000, 'pencere kapandı');
+    await cdp.click('#con-max');
+    await cdp.click('#con-tab-itm');
+    scene(null);
+  });
   await step('Debug: OpenOCD kart yokken anlaşılır hata', async () => {
     await cdp.click('#dbg-conn');
     await sleep(500);

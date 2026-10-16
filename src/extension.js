@@ -22,6 +22,21 @@ const { watchUsb } = require('./debug/usb');
 const { detectTools } = require('./debug/tools');
 const { probeReport } = require('./debug/report');
 
+/** Klasörde (derleme klasörleri hariç) bir dosyayı arar; derinlik sınırlı */
+function findFile(dir, name, depth) {
+  let entries;
+  try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { return null; }
+  const hit = entries.find((e) => e.isFile() && e.name === name);
+  if (hit) return path.join(dir, name);
+  if (depth <= 0) return null;
+  for (const e of entries) {
+    if (!e.isDirectory() || /^(build|\.git|node_modules|\.embedded-studio)$/.test(e.name)) continue;
+    const f = findFile(path.join(dir, e.name), name, depth - 1);
+    if (f) return f;
+  }
+  return null;
+}
+
 /** @type {ProjectActions} */
 let actions;
 /** @type {StatusBar} */
@@ -34,6 +49,7 @@ const { builtinStm32f4, parseSvd, summary, parseValue, insertField, mask } = req
 const { readRegion, toIntelHex, checkWrite, simSymbols, MAX_SAVE } = require('./debug/memory');
 const fault = require('./debug/fault');
 const trace = require('./debug/trace');
+const rtos = require('./debug/rtos');
 const i18n = require('./i18n');
 const { t } = i18n;
 
@@ -548,6 +564,13 @@ class Studio {
         break;
       case 'debug.profileReset':
         this.trace?.resetProfile();
+        break;
+      // ES-209: FreeRTOS
+      case 'debug.rtos':
+        await this.rtosSnapshot();
+        break;
+      case 'debug.rtosStack':
+        await this.rtosStack(m.tcb);
         break;
       case 'debug.consoleSave':
         await this.saveConsole(m.text, m.name);
@@ -1212,6 +1235,81 @@ class Studio {
     await this.trace.startRtt({ addr, ramStart: 0x20000000, ramSize: Math.min(512, mcu.ramKB || 64) * 1024 });
   }
 
+  // ---------------------------------------------------------------- ES-209: FreeRTOS farkındalıklı debug
+  /**
+   * Çekirdek sembolleri, FreeRTOSConfig.h, fonksiyonlar ve kod (ELF değişince yenilenir).
+   * Simülasyonda çekirdek yapıları hedefin belleğine kurulur.
+   */
+  async rtosContext() {
+    const mcu = this.lib.mcus[this.design.mcuId];
+    const fam = familyOf(mcu);
+    if (this.target.mode === 'sim') {
+      if (!this.target.rtosSyms) this.target.rtosSyms = rtos.simKernel(this.target, { names: this.design.instances.map((i) => i.label), core: fam.core, funcs: trace.SIM_FUNCS });
+      return { key: 'sim', syms: rtos.symbolMap(this.target.rtosSyms), cfg: rtos.DEFAULT_CONFIG, cfgSource: t('simülasyon'), funcs: trace.SIM_FUNCS, code: null, core: fam.core, elf: '' };
+    }
+    const elf = this.root ? path.join(this.root, cm.elfRel(this.design)) : '';
+    if (!elf || !fs.existsSync(elf)) throw new Error(t('ELF bulunamadı: {0}. Önce projeyi derleyin.', elf ? path.relative(this.root, elf) : '?'));
+    const key = `${elf}:${fs.statSync(elf).mtimeMs}`;
+    if (this._rtosCtx && this._rtosCtx.key === key) return this._rtosCtx;
+    const nm = cm.gccTool(this.design.build, 'nm');
+    const syms = rtos.symbolMap(await elfSymbols(elf, nm));
+    // FreeRTOSConfig.h: üretilen yerleşimdeki yer, yoksa projede aranır
+    let cfgFile = path.join(this.root, layout(this.design.framework, fam.key).inc, 'FreeRTOSConfig.h');
+    if (!fs.existsSync(cfgFile)) cfgFile = findFile(this.root, 'FreeRTOSConfig.h', 4) || '';
+    const cfg = cfgFile ? rtos.parseConfig(fs.readFileSync(cfgFile, 'utf8')) : rtos.DEFAULT_CONFIG;
+    this._rtosCtx = {
+      key, syms, cfg, cfgSource: cfgFile ? path.relative(this.root, cfgFile) : t('varsayılan (FreeRTOSConfig.h bulunamadı)'),
+      funcs: await trace.functionSymbols(elf, nm), code: rtos.elfCode(elf), core: fam.core, elf
+    };
+    return this._rtosCtx;
+  }
+
+  async rtosSnapshot() {
+    if (!this.target) return;
+    try {
+      if (!this.design.rtos && this.target.mode === 'sim') throw new Error(t('Bu proje FreeRTOS kullanmıyor (Ayarlar > İşletim sistemi).'));
+      const c = await this.rtosContext();
+      if (!this.rtosReader || this.rtosReader.key !== c.key || this.rtosReader.target !== this.target) {
+        this.rtosReader = new rtos.RtosReader(this.target, c);
+        this.rtosReader.key = c.key;
+      }
+      const snap = await this.rtosReader.snapshot();
+      const prof = new trace.PcProfile(c.funcs);
+      for (const tm of snap.timers) tm.callbackName = prof.lookup(tm.callback & ~1) || '';
+      this.rtosLast = snap;
+      this.post({ type: 'debug.rtosData', ...snap, cfgSource: c.cfgSource, state: await this.target.state().catch(() => '') });
+    } catch (e) {
+      this.post({ type: 'debug.rtosData', error: e.message });
+    }
+  }
+
+  /** Görevin kayıtlı bağlamı ve olası çağrı zinciri (kaynak satırlarıyla) */
+  async rtosStack(tcb) {
+    if (!this.target) return;
+    try {
+      const c = await this.rtosContext();
+      const task = (this.rtosLast?.tasks || []).find((x) => x.tcb === tcb);
+      if (!task) throw new Error(t('Görev bulunamadı; listeyi yenileyin.'));
+      const halted = (await this.target.state()) === 'halted';
+      let live = null;
+      if (task.state === 'running') {
+        if (!halted) throw new Error(t('Çalışan görevin call stack\'i için hedefi durdurun.'));
+        live = await this.target.coreRegisters(this.cpuInfo());
+      }
+      const ctx = await rtos.taskContext(this.target, task, c.core, live);
+      if (!ctx) throw new Error(t('Görevin kayıtlı bağlamı okunamadı (yığın bozuk ya da port düzeni tanınmadı).'));
+      const prof = new trace.PcProfile(c.funcs);
+      const top = task.stackEnd ? task.stackEnd + 4 : task.stackSize ? task.pxStack + task.stackSize : undefined;
+      const frames = await rtos.backtrace(this.target, ctx.regs, top, (a) => prof.lookup(a), c.code);
+      // Dönüş adresinin bir öncesi çağrı satırıdır
+      const where = await fault.addr2line(c.elf, frames.map((f) => (f.kind === 'pc' ? f.pc : f.pc - 2)), cm.gccTool(this.design.build, 'addr2line'));
+      frames.forEach((f, i) => { const w = where[i]; if (w && w.file) f.source = { ...w, file: path.isAbsolute(w.file) ? w.file : path.join(this.root, w.file) }; });
+      this.post({ type: 'debug.rtosStack', task: task.name, tcb, regs: ctx.regs, layout: ctx.layout, fpu: ctx.fpu, frames, live: !!live, elf: !!c.code });
+    } catch (e) {
+      this.post({ type: 'debug.rtosStack', tcb, error: e.message });
+    }
+  }
+
   /** Konsol çıktısını dosyaya kaydet */
   async saveConsole(text, name) {
     const uri = await vscode.window.showSaveDialog({
@@ -1269,7 +1367,7 @@ class Studio {
     const webview = this.panel.webview;
     const media = (f) => webview.asWebviewUri(vscode.Uri.joinPath(this.context.extensionUri, 'media', f));
     const nonce = [...Array(32)].map(() => Math.random().toString(36)[2]).join('');
-    const scripts = ['i18n.js', 'core.js', 'art.js', 'wizard.js', 'design.js', 'creator.js', 'clock.js', 'widgets.js', 'monitor.js', 'console.js', 'debug.js', 'settings.js', 'genpreview.js', 'main.js'];
+    const scripts = ['i18n.js', 'core.js', 'art.js', 'wizard.js', 'design.js', 'creator.js', 'clock.js', 'widgets.js', 'monitor.js', 'rtos.js', 'console.js', 'debug.js', 'settings.js', 'genpreview.js', 'main.js'];
     return `<!doctype html>
 <html lang="${i18n.getLanguage()}">
 <head>

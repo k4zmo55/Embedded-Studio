@@ -407,7 +407,10 @@ const SIM_FUNCS = [
   { name: 'memcpy', addr: 0x08000ba0, size: 0x40, w: 4 },
   { name: 'HAL_Delay', addr: 0x08000be0, size: 0x30, w: 18 },
   { name: 'SysTick_Handler', addr: 0x08000c10, size: 0x10, w: 3 },
-  { name: 'HAL_IncTick', addr: 0x08000c20, size: 0x20, w: 2 }
+  { name: 'HAL_IncTick', addr: 0x08000c20, size: 0x20, w: 2 },
+  // Simülasyondaki FreeRTOS zamanlayıcı geri çağrıları (ES-209; PC örneklerinde görünmez)
+  { name: 'prvBlinkTimer', addr: 0x08000c40, size: 0x20, w: 0 },
+  { name: 'prvWatchdogTimer', addr: 0x08000c60, size: 0x20, w: 0 }
 ];
 /** Uyku örneği ağırlığı */
 const SIM_SLEEP_W = 7;

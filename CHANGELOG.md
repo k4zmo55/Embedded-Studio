@@ -1,5 +1,17 @@
 # Değişiklik günlüğü
 
+## 0.5.9 (önizleme)
+
+- **FreeRTOS sekmesi (Debug > Konsol):** çekirdek yapıları GDB'siz, doğrudan hedef belleğinden okunur. TCB, `Queue_t` ve `Timer_t` ofsetleri projenin `FreeRTOSConfig.h`'inden hesaplanır (ad uzunluğu, trace, mutex, run-time stats, TLS, `configRECORD_STACK_HIGH_ADDRESS`…; V10.x ve V11.x, MPU'suz); derlenmiş projede gdb'nin DWARF çıktısıyla doğrulandı. LTO'lu derlemelerdeki `ad.lto_priv.N` sembolleri de bulunur.
+- **Görevler:** hazır / gecikmeli / askıda / silinen listeler gezilerek durum (Çalışıyor, Hazır, Bekliyor, Askıda, Silindi), öncelik ve öncelik kalıtımı (taban öncelik), tutulan mutex sayısı, beklediği kuyruk ya da mutex (alma / gönderme). Yığın: boyut (`pxEndOfStack` ya da heap_4 blok başlığı), şu anki kullanım ve 0xA5 dolgusundan tepe değeri, çubukla. CPU yüzdesi `ulRunTimeCounter`'ın iki okuma arasındaki farkından. "Canlı" ile saniyede bir, hedef durdurulmadan.
+- **Kuyruklar, semaforlar, mutexler:** kuyruk kaydındakiler (`vQueueAddToRegistry`); tür (kuyruk, ikili/sayan semafor, mutex, özyinelemeli mutex), doluluk, öğe boyutu, bekleyen gönderici/alıcı görevler, mutex sahibi. **Zamanlayıcılar:** etkin listelerdeki zamanlayıcılar, periyot, otomatik/tek seferlik, sonraki tetikleme, geri çağrı fonksiyonunun adı. **Heap:** boş, en az boş, toplam.
+- **Uyarılar:** yığın sonundaki dolgu bozulmuşsa "yığın taşmış", en kötü durumda %10'dan (en az 64 bayt) az boş kalmışsa "taşma riski"; heap tükenmişse ya da en az boş %10'un altına inmişse.
+- **Görev call stack'i:** durdurulmuş görevin kayıtlı bağlamı port düzenine göre çözülür (CM0 V11/V10, CM3, CM4F/CM7 FPU çerçevesiyle, CM33 PSPLIM); çalışan görevde çekirdek register'ları, işleyicide PSP çerçevesi. PC ve LR'den sonra yığında bir BL/BLX'ten sonrasını gösteren adreslerle olası çağrı zinciri (ELF'teki kodla denetlenir), satırlar `dosya:satır` bağlantılı. Kesin call stack için VS Code debug oturumu (Cortex-Debug `rtos`) önerilir.
+- **Konsol paneli büyütülebilir** (⤢).
+- **Üretilen projeler:** `FreeRTOSConfig.h`'e `configRECORD_STACK_HIGH_ADDRESS 1` ve `configQUEUE_REGISTRY_SIZE 8`; bus mutex'leri ve telemetri kilidi adlarıyla kuyruk kaydına eklenir.
+- Simülasyonda gerçek yerleşimle bir FreeRTOS çekirdeği (görevler, listeler, yığınlar ve kayıtlı bağlamlar, kuyruk kaydı, zamanlayıcılar, heap); CPU sayaçları ve çalışan görev zamanla değişir, bir görevin yığını ve heap uyarı verecek kadar dolu.
+- Testler: birim 67 (yerleşim hesapları, üç çekirdek düzeninde bağlam ve çağrı zinciri, taşma ve heap uyarıları, derlenmiş ELF'te gdb ile ofset karşılaştırması), arayüz 39. Gerçek kartta henüz denenmedi.
+
 ## 0.5.8 (önizleme)
 
 - **Debug konsolu:** Debug sekmesinin altında daraltılabilir panel; SWO / ITM, RTT, Semihosting, Profil ve Data trace sekmeleri. Akış olan sekmede yeşil işaret; çıktı temizlenebilir, `.log` olarak kaydedilebilir, satır başına geliş zamanı eklenebilir.
