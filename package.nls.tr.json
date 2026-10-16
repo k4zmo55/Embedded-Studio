@@ -3,5 +3,12 @@
   "command.newProject": "Yeni Proje",
   "command.generateCode": "Kod Üret",
   "config.language": "Embedded Studio arayüz dili. \"auto\" VS Code görüntüleme dilini izler (Türkçe ise Türkçe, değilse İngilizce).",
-  "config.language.auto": "VS Code görüntüleme dilini izle"
+  "config.language.auto": "VS Code görüntüleme dilini izle",
+  "command.build": "Derle",
+  "command.flash": "Yükle (derle ve yükle, hedef durur)",
+  "command.debug": "Debug (derle, yükle, main'de dur)",
+  "command.run": "Çalıştır (derle, yükle ve debugger olmadan çalıştır)",
+  "command.terminal": "Monitörü Aç",
+  "command.probe": "Prob ve Kart Bilgisi",
+  "config.flashConfirm": "Karta yüklemeden önce onay iste (durum çubuğundaki Flash/Run, tasarımcıdaki Yükle)."
 }

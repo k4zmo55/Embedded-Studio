@@ -489,6 +489,35 @@ test('flash düzeni: F429 çift banka SNB, F767 sektörleri, G474/L476 BKER, U5 
   assert.ok(regFiles('stm32h743zit6', ['flash'])[0].content.includes('ES_FLASH_ALIGN 32U'), 'H7: 256 bit flash kelimesi');
 });
 
+console.log('Durum çubuğu ve proje eylemleri (ES-201)');
+test('prob çıktısı: ST-Link sürümü, hedef voltajı, çekirdek; hata açıklaması', () => {
+  const { parseProbe, openocdCmd } = require('../src/debug/probe');
+  const ok = parseProbe(`Info : clock speed 2000 kHz
+Info : STLINK V2J37S7 (API v2) VID:PID 0483:3748
+Info : Target voltage: 3.245270
+Info : [stm32f4x.cpu] Cortex-M4 r0p1 processor detected
+Info : [stm32f4x.cpu] target has 6 breakpoints, 4 watchpoints`);
+  assert.deepStrictEqual([ok.ok, ok.probe, ok.firmware, ok.voltage, ok.core], [true, 'ST-Link V2', 'V2J37S7', '3.245270', 'Cortex-M4']);
+  const none = parseProbe('Error: open failed\nin procedure \'init\'');
+  assert.ok(!none.ok && /ST-Link bulunamadı/.test(none.error), none.error);
+  const noTarget = parseProbe('Info : STLINK V3J7M2 (API v3)\nInfo : Target voltage: 0.003\nError: init mode failed (unable to connect to the target)');
+  assert.ok(!noTarget.ok && noTarget.error && noTarget.voltage === '0.003');
+  assert.strictEqual(openocdCmd(lib.mcus.stm32g474ret6, ['program build/debug/a.elf verify exit']), 'openocd -f interface/stlink.cfg -f target/stm32g4x.cfg -c "program build/debug/a.elf verify exit"');
+});
+test('komutlar, kısayollar ve komut paleti package.json\'da; çeviriler var', () => {
+  const pkg = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'package.json'), 'utf8'));
+  const ids = ['build', 'flash', 'debug', 'run', 'terminal', 'probe'].map((x) => `embeddedStudio.${x}`);
+  for (const id of ids) assert.ok(pkg.contributes.commands.some((c) => c.command === id), id);
+  const keys = Object.fromEntries(pkg.contributes.keybindings.map((k) => [k.command, k.key]));
+  assert.deepStrictEqual([keys['embeddedStudio.build'], keys['embeddedStudio.flash'], keys['embeddedStudio.debug'], keys['embeddedStudio.run']], ['f7', 'shift+f7', 'f5', 'ctrl+f5']);
+  assert.ok(pkg.contributes.keybindings.every((k) => /embeddedStudio\.projectOpen/.test(k.when) && /!inDebugMode/.test(k.when)), 'kısayollar sadece projede ve debug dışında');
+  for (const f of ['package.nls.json', 'package.nls.tr.json']) {
+    const nls = JSON.parse(fs.readFileSync(path.join(__dirname, '..', f), 'utf8'));
+    const used = JSON.stringify(pkg.contributes).match(/%[\w.]+%/g).map((x) => x.slice(1, -1));
+    assert.deepStrictEqual(used.filter((k) => !(k in nls)), [], f);
+  }
+});
+
 console.log('Kütüphane, telemetri, debug');
 test('tüm hazır komponentler doğrulamadan geçer', () => {
   for (const c of Object.values(lib.components)) assert.deepStrictEqual(validateComponent(c), [], c.id);

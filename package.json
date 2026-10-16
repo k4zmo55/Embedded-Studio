@@ -61,6 +61,42 @@
         "command": "embeddedStudio.generateCode",
         "title": "%command.generateCode%",
         "category": "Embedded Studio"
+      },
+      {
+        "command": "embeddedStudio.build",
+        "title": "%command.build%",
+        "category": "Embedded Studio",
+        "icon": "$(tools)"
+      },
+      {
+        "command": "embeddedStudio.flash",
+        "title": "%command.flash%",
+        "category": "Embedded Studio",
+        "icon": "$(zap)"
+      },
+      {
+        "command": "embeddedStudio.debug",
+        "title": "%command.debug%",
+        "category": "Embedded Studio",
+        "icon": "$(debug-alt)"
+      },
+      {
+        "command": "embeddedStudio.run",
+        "title": "%command.run%",
+        "category": "Embedded Studio",
+        "icon": "$(play)"
+      },
+      {
+        "command": "embeddedStudio.terminal",
+        "title": "%command.terminal%",
+        "category": "Embedded Studio",
+        "icon": "$(terminal)"
+      },
+      {
+        "command": "embeddedStudio.probe",
+        "title": "%command.probe%",
+        "category": "Embedded Studio",
+        "icon": "$(plug)"
       }
     ],
     "configuration": {
@@ -68,12 +104,76 @@
       "properties": {
         "embeddedStudio.language": {
           "type": "string",
-          "enum": ["auto", "tr", "en"],
-          "enumDescriptions": ["%config.language.auto%", "Türkçe", "English"],
+          "enum": [
+            "auto",
+            "tr",
+            "en"
+          ],
+          "enumDescriptions": [
+            "%config.language.auto%",
+            "Türkçe",
+            "English"
+          ],
           "default": "auto",
           "description": "%config.language%"
+        },
+        "embeddedStudio.flash.confirm": {
+          "type": "boolean",
+          "default": false,
+          "description": "%config.flashConfirm%"
         }
       }
+    },
+    "keybindings": [
+      {
+        "command": "embeddedStudio.build",
+        "key": "f7",
+        "when": "embeddedStudio.projectOpen && !inDebugMode"
+      },
+      {
+        "command": "embeddedStudio.flash",
+        "key": "shift+f7",
+        "when": "embeddedStudio.projectOpen && !inDebugMode"
+      },
+      {
+        "command": "embeddedStudio.debug",
+        "key": "f5",
+        "when": "embeddedStudio.projectOpen && !inDebugMode"
+      },
+      {
+        "command": "embeddedStudio.run",
+        "key": "ctrl+f5",
+        "mac": "cmd+f5",
+        "when": "embeddedStudio.projectOpen && !inDebugMode"
+      }
+    ],
+    "menus": {
+      "commandPalette": [
+        {
+          "command": "embeddedStudio.build",
+          "when": "embeddedStudio.projectOpen"
+        },
+        {
+          "command": "embeddedStudio.flash",
+          "when": "embeddedStudio.projectOpen"
+        },
+        {
+          "command": "embeddedStudio.debug",
+          "when": "embeddedStudio.projectOpen"
+        },
+        {
+          "command": "embeddedStudio.run",
+          "when": "embeddedStudio.projectOpen"
+        },
+        {
+          "command": "embeddedStudio.terminal",
+          "when": "embeddedStudio.projectOpen"
+        },
+        {
+          "command": "embeddedStudio.probe",
+          "when": "embeddedStudio.projectOpen"
+        }
+      ]
     }
   }
 }

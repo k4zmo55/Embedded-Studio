@@ -3,5 +3,12 @@
   "command.newProject": "New Project",
   "command.generateCode": "Generate Code",
   "config.language": "Interface language of Embedded Studio. \"auto\" follows the VS Code display language (Turkish if it is Turkish, otherwise English).",
-  "config.language.auto": "Follow the VS Code display language"
+  "config.language.auto": "Follow the VS Code display language",
+  "command.build": "Build",
+  "command.flash": "Flash (build and download, target halted)",
+  "command.debug": "Debug (build, download, stop at main)",
+  "command.run": "Run (build, download and run without debugger)",
+  "command.terminal": "Open Monitor",
+  "command.probe": "Probe and Board Info",
+  "config.flashConfirm": "Ask for confirmation before flashing (status bar Flash/Run, designer Flash)."
 }

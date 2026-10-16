@@ -12,10 +12,18 @@ const { generate, GENERATOR_VERSION } = require('./codegen/generator');
 const { writeProject, designFingerprint, relocateLayout, relocateFamilyFiles, removeEmptyDirs, upgradeLegacyVscode, STATE_DIR } = require('./codegen/merge');
 const { layout } = require('./codegen/layout');
 const cm = require('./codegen/build');
-const { detectToolchains, elfSize } = require('./toolchain');
+const { detectToolchains } = require('./toolchain');
 const { familyOf } = require('./codegen/families');
 const { periphClockTable } = require('./engine/periphclock');
 const { DRIVERS: REG_DRIVERS } = require('./codegen/regdrivers');
+const { ProjectActions } = require('./actions');
+const { StatusBar } = require('./statusbar');
+
+/** @type {ProjectActions} */
+let actions;
+/** @type {StatusBar} */
+let statusBar;
+let libCache = null;
 const packs = require('./codegen/packs');
 const { parseLine, Simulator } = require('./monitor/telemetry');
 const { OpenOcdTarget, SimTarget, simModel, elfSymbols } = require('./debug/session');
@@ -29,6 +37,7 @@ const PREVIEW_SCHEME = 'embedded-studio-preview';
 /** @param {vscode.ExtensionContext} context */
 function activate(context) {
   applyLanguage();
+  Studio.extensionPath = context.extensionPath;
   context.subscriptions.push(
     vscode.workspace.onDidChangeConfiguration?.((e) => {
       if (!e.affectsConfiguration('embeddedStudio.language')) return;
@@ -47,6 +56,26 @@ function activate(context) {
     }));
   }
 
+  // ---- ES-201: proje eylemleri ve durum çubuğu (tasarımcı kapalıyken de çalışır) ----
+  actions = new ProjectActions(currentProject, {
+    onState: () => statusBar && statusBar.refresh(),
+    onSize: (s) => Studio.current?.post({ type: 'build.size', ...s }),
+    onTask: (name, ok) => Studio.current?.post(ok === null ? { type: 'task.start', name } : { type: 'task.done', name, ok })
+  });
+  statusBar = new StatusBar(actions, currentProject);
+  const watcher = vscode.workspace.createFileSystemWatcher?.(`**/${DESIGN_FILE}`);
+  if (watcher) {
+    ['onDidCreate', 'onDidDelete', 'onDidChange'].forEach((ev) => watcher[ev](() => statusBar.refresh()));
+    context.subscriptions.push(watcher);
+  }
+  context.subscriptions.push(actions, statusBar,
+    vscode.commands.registerCommand('embeddedStudio.build', () => actions.build()),
+    vscode.commands.registerCommand('embeddedStudio.flash', () => actions.flash()),
+    vscode.commands.registerCommand('embeddedStudio.run', () => actions.run()),
+    vscode.commands.registerCommand('embeddedStudio.debug', () => actions.debug()),
+    vscode.commands.registerCommand('embeddedStudio.terminal', async () => (await Studio.show(context)).post({ type: 'tab', tab: 'monitor' })),
+    vscode.commands.registerCommand('embeddedStudio.probe', () => probeCommand()));
+
   const status = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 100);
   status.text = '$(circuit-board) Embedded Studio';
   status.tooltip = t('Embedded Studio tasarımcısını aç');
@@ -60,6 +89,36 @@ function activate(context) {
 }
 
 const workspaceRoot = () => vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+
+/** Açık proje: tasarımcı açıksa onun tasarımı, değilse embedded-studio.json (durum çubuğu ve komutlar için) */
+function currentProject() {
+  const root = workspaceRoot();
+  if (!root || !fs.existsSync(path.join(root, DESIGN_FILE))) return null;
+  if (Studio.current && Studio.current.design) return { root, design: Studio.current.design, lib: Studio.current.lib };
+  try {
+    if (!libCache || libCache.root !== root) libCache = { root, lib: loadLibrary(Studio.extensionPath || __dirname + '/..', root) };
+    return { root, design: migrate(JSON.parse(fs.readFileSync(path.join(root, DESIGN_FILE), 'utf8')), libCache.lib), lib: libCache.lib };
+  } catch {
+    return null;
+  }
+}
+
+/** Prob bilgisi: OpenOCD ile bir kez sorgula; projedeki çekirdekle karşılaştır */
+async function probeCommand() {
+  const r = await actions.probe();
+  const p = currentProject();
+  if (!r.ok) {
+    vscode.window.showWarningMessage(r.error || t('Hedef bulunamadı.'));
+    return r;
+  }
+  const want = p ? p.lib.mcus[p.design.mcuId] : null;
+  const core = (r.core || '').replace(/\+$/, '');
+  const mismatch = want && core && !want.core.replace(/F$/, '').startsWith(core);
+  const text = [r.probe, r.core, r.voltage && t('hedef {0} V', r.voltage)].filter(Boolean).join(' · ');
+  if (mismatch) vscode.window.showWarningMessage(t('Bağlı kart ({0}) projedeki işlemciyle ({1}, {2}) uyuşmuyor olabilir.', text, want.name, want.core));
+  else vscode.window.showInformationMessage(t('Bağlı: {0}', text));
+  return r;
+}
 
 /** Arayüz dilini ayardan (embeddedStudio.language: auto | tr | en) ve VS Code dilinden belirler. */
 function applyLanguage() {
@@ -98,6 +157,7 @@ class Studio {
 
   /** @param {vscode.ExtensionContext} context */
   static async show(context) {
+    Studio.extensionPath = context.extensionPath;
     if (Studio.current) {
       Studio.current.panel.reveal();
       return Studio.current;
@@ -145,12 +205,6 @@ class Studio {
       this.post({ type: 'telemetry', items: this.pending });
       this.pending = [];
     }, 120);
-    context.subscriptions.push(vscode.tasks.onDidEndTaskProcess((e) => {
-      const task = e.execution.task;
-      if (task.source !== 'Embedded Studio') return;
-      this.post({ type: 'task.done', name: task.name, ok: e.exitCode === 0 });
-      if (e.exitCode === 0 && task.definition.kind === 'build') this.reportSize(task.definition.config).catch(() => {});
-    }));
   }
 
   get designPath() {
@@ -207,6 +261,7 @@ class Studio {
   }
 
   pushState() {
+    statusBar?.refresh();
     this.post({ type: 'state', design: this.design, ...this.compute(), project: { root: this.root, name: this.design.project.name } });
   }
 
@@ -365,7 +420,7 @@ class Studio {
         await this.loadSvd(true);
         break;
       case 'build':
-        await this.runTask('build');
+        await actions.build();
         break;
       case 'flash':
         await this.flash();
@@ -792,61 +847,22 @@ class Studio {
     }
   }
 
-  async runTask(kind) {
-    if (!this.root) return this.toast('error', t('Önce bir proje açın.'));
-    if (!fs.existsSync(path.join(this.root, 'CMakeLists.txt'))) return this.toast('warn', t('Önce "Kod Üret" ile projeyi oluşturun.'));
-    const mcu = this.lib.mcus[this.design.mcuId];
-    const config = this.design.build.type;
-    const cmd = kind === 'build'
-      ? cm.buildCommand(config)
-      : `openocd -f interface/stlink.cfg -f ${mcu.device.openocdTarget} -c "program ${cm.elfRel(this.design)} verify reset exit"`;
-    const folder = vscode.workspace.workspaceFolders?.[0];
-    // Windows'ta varsayılan kabuk PowerShell 5 olabilir; && için cmd.exe
-    const shell = process.platform === 'win32' ? { executable: 'cmd.exe', shellArgs: ['/d', '/c'] } : {};
-    const task = new vscode.Task({ type: 'embedded-studio', kind, config }, folder || vscode.TaskScope.Workspace,
-      kind === 'build' ? t('Derle ({0})', config) : t('Yükle'), 'Embedded Studio', new vscode.ShellExecution(cmd, { cwd: this.root, ...shell }), ['$gcc']);
-    await vscode.tasks.executeTask(task);
-    this.post({ type: 'task.start', name: task.name });
-  }
-
-  /** Derleme sonrası boyut özeti: flash/RAM kullanımı ve çıktı dosyaları (.elf, .hex, .bin, .map). */
-  async reportSize(config) {
-    if (!this.root || !this.design) return;
-    const design = { ...this.design, build: { ...this.design.build, type: config || this.design.build.type } };
-    const elf = path.join(this.root, cm.elfRel(design));
-    const size = await elfSize(cm.gccTool(design.build, 'size'), elf);
-    if (!size) return;
-    const dev = this.lib.mcus[design.mcuId].device;
-    const kb = (n) => (n / 1024).toFixed(1);
-    const pct = (n, totalKB) => ((n * 100) / (totalKB * 1024)).toFixed(1);
-    const dir = path.dirname(elf);
-    const base = path.basename(elf, '.elf');
-    const outputs = ['.elf', '.hex', '.bin', '.map'].filter((x) => fs.existsSync(path.join(dir, base + x)));
-    const summary = { config: design.build.type, ...size, flashKB: dev.flashKB, ramKB: dev.ramKB, dir: path.relative(this.root, dir).split(path.sep).join('/'), outputs };
-    this.post({ type: 'build.size', ...summary });
-    const msg = t('Derlendi ({0}): Flash {1} KB / {2} KB (%{3}) · RAM {4} KB / {5} KB (%{6}) · {7}',
-      summary.config, kb(size.flash), dev.flashKB, pct(size.flash, dev.flashKB), kb(size.ram), dev.ramKB, pct(size.ram, dev.ramKB), `${summary.dir}/${base}{${outputs.join(',')}}`);
-    const open = outputs.includes('.map') ? t('Map dosyasını aç') : undefined;
-    const choice = await vscode.window.showInformationMessage(msg, ...(open ? [open] : []));
-    if (choice && choice === open) await vscode.window.showTextDocument(vscode.Uri.file(path.join(dir, base + '.map')));
-  }
-
   async flash() {
+    if (this.target && this.target.mode === 'sim') return this.toast('info', t('Simülasyon modunda yükleme yapılmaz. Gerçek kart için "OpenOCD" ile bağlanın.'));
+    // Debug sekmesinde OpenOCD oturumu yoksa ortak eylem: derle, yükle, çalıştır (durum çubuğundaki Run ile aynı)
+    if (!this.target) return actions.run();
     const elf = this.root && path.join(this.root, cm.elfRel(this.design));
     if (!elf || !fs.existsSync(elf)) return this.toast('warn', t('ELF bulunamadı. Önce Derle.'));
     const go = await vscode.window.showWarningMessage(t('{0} karta yüklensin mi? Karttaki mevcut program silinir.', path.basename(elf)), { modal: true }, t('Yükle'));
     if (go !== t('Yükle')) return;
-    if (this.target && this.target.mode === 'openocd') {
+    if (this.target.mode === 'openocd') {
       try {
         await this.target.program(elf);
         this.toast('info', t('Yükleme tamamlandı, kart yeniden başlatıldı.'));
       } catch (e) {
         this.toast('error', t('Yükleme başarısız: {0}', e.message));
       }
-      return;
     }
-    if (this.target && this.target.mode === 'sim') return this.toast('info', t('Simülasyon modunda yükleme yapılmaz. Gerçek kart için "OpenOCD" ile bağlanın.'));
-    await this.runTask('flash');
   }
 
   html() {

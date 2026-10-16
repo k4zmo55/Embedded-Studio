@@ -98,6 +98,8 @@
   ES.on('generated', (m) => {
     if (m.report.orphans && m.report.orphans.length) ES.toast('warn', t('Kaldırılan sensörlere ait kodunuz silinmedi; ilgili dosyanın sonundaki "Orphaned" bloğunda.'));
   });
+  // Eklenti bir sekmeyi açtırabilir (ör. durum çubuğundaki Terminal → Monitör)
+  ES.on('tab', (m) => setTab(m.tab));
   ES.on('task.done', (m) => ES.toast(m.ok ? 'info' : 'error', m.ok ? t('{0} başarılı', m.name) : t('{0} başarısız (Terminal\'e bakın)', m.name)));
 
   // Alt+1…9: sekmeler arasında geçiş (moddaki sıraya göre)
