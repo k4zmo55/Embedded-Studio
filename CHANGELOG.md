@@ -1,5 +1,16 @@
 # Değişiklik günlüğü
 
+## 0.6.1 (önizleme)
+
+- **Düzeltme — derleme temizken editörde onlarca hata (ES-108):** `use of undeclared identifier 'RCC'`, `'board.h' file not found` gibi hatalar derleyiciden değil, editörün dil sunucusundan geliyordu. CMake derleme veritabanını `build/<tip>/compile_commands.json`'a yazıyor, clangd ise `build/` altında arıyordu; 0.4.x'ten yükseltilen projelerde orada eski yapıya ait bir veritabanı kalmıştı. Artık:
+  - `.clangd` üretilir: `CompilationDatabase: build/<tip>`, clang'ın bilmediği `-fcallgraph-info` / `-fstack-usage` çıkarılır. Derleme tipi değişince güncellenir; ilk satırı silinirse (kendi `.clangd`'niz) dokunulmaz.
+  - `.vscode/settings.json`'a `C_Cpp.default.compileCommands` eklenir (Microsoft C/C++ eklentisi). Farklı bir değer varsa ya da dosyada yorum varsa dokunulmaz.
+  - Kod Üret'ten sonra derleme klasörü yoksa arka planda yalnızca CMake yapılandırması çalışır; ilk derlemeden önce de editör doğru.
+  - Var olan projede düzelmesi için bir kez **Kod Üret** ya da **Derle** yeterli.
+- **Matris testi (ES-109):** `test/intellisense.js`, `test/build.js`'in ürettiği bütün projelerde (15 işlemci; HAL ve bare-metal, acemi ve profesyonel, FreeRTOS açık/kapalı) clangd `--check` ile her kaynak ve başlığı denetler; önce (eski durum) ve sonra (yeni `.clangd`) hata sayılarını tablo olarak verir. Derleme testine HAL + profesyonel mod varyantı eklendi.
+- **Ayarlar > Görünen sekmeler (ES-804):** kullanılmayan sekmeler üst çubuktan gizlenip geri getirilebilir. Seçim bütün projelerde geçerli, acemi ve profesyonel mod için ayrı (`embeddedStudio.hiddenTabs`). Ayarlar sekmesi gizlenemez, en az bir çalışma sekmesi açık kalır; Alt+1…9 gizli sekmeleri atlar; etkin sekme gizlenirse modun ana sekmesine (o da gizliyse ilk görünene) geçilir.
+- Testler: birim 70, derleme 55 varyant, clangd matrisi 55/55 projede sıfır hata (düzeltmeden önce her projede 95–410), arayüz 42 (sekme gizleme, kısayol, kalıcılık).
+
 ## 0.6.0 (önizleme) — M2 "Test ve debug" tamamlandı
 
 - **Seri port terminali (Terminal sekmesi):** harici programa (Tera Term, PuTTY, RealTerm) gerek yok. Durum çubuğundaki **Terminal** ve "Seri Port Terminalini Aç" komutu bu sekmeyi açar.

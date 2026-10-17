@@ -25,5 +25,6 @@
   "command.debugReset": "Hedefi Resetle (Debug)",
   "command.disassembly": "Disassembly Listesi (Kaynakla Karışık)",
   "config.debugServer": "Debug (F5) için GDB sunucusu. \"auto\": OpenOCD (ST-Link, J-Link ve CMSIS-DAP ile çalışır).",
+  "config.hiddenTabs": "Embedded Studio üst çubuğunda gizlenen sekmeler, çalışma moduna göre (beginner / pro). Ayarlar sekmesinden de değiştirilebilir.",
   "config.debugServer.auto": "OpenOCD"
 }

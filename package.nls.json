@@ -25,5 +25,6 @@
   "command.debugReset": "Reset Target (Debug)",
   "command.disassembly": "Disassembly Listing (Mixed with Source)",
   "config.debugServer": "GDB server used by Debug (F5). \"auto\": OpenOCD (works with ST-Link, J-Link and CMSIS-DAP).",
+  "config.hiddenTabs": "Tabs hidden from the Embedded Studio top bar, per working mode (beginner / pro). Can also be changed in the Settings tab.",
   "config.debugServer.auto": "OpenOCD"
 }
