@@ -1411,6 +1411,62 @@ async function until(fn, ms = 8000, what = 'koşul') {
     await until(() => fs.existsSync(P('Core/Src/app.c')), 20000, 'HAL dosyaları');
     await cdp.click('#tab-design');
   });
+  await step('Güvenli bootloader (ES-303): Ayarlar\'da aç, Kod Üret, derle (başlık + CRC, _full.hex), Programlayıcı\'da Embedded Studio bootloader\'ına güncelleme gönder; kapat', async () => {
+    const P = (p) => path.join(PROJECT, p);
+    const eb = require('../src/debug/esboot');
+    await cdp.click('#tab-settings');
+    await cdp.eval(`document.querySelector('#set-boot').scrollIntoView({ block: 'center' })`);
+    await cdp.click('#set-boot-on');
+    await until(() => design().boot && design().boot.enabled, 4000, 'bootloader açık');
+    await until(() => cdp.eval(`!!document.querySelector('#set-boot-map')`), 3000, 'bellek haritası');
+    assert.ok((await cdp.eval(`document.querySelector('#set-boot-map').textContent`)).includes('0x08004400'), 'uygulama vektörleri 0x08004400');
+    await cdp.eval(`(() => { const i = document.querySelector('#set-boot-version'); i.value = '1.2.3'; i.dispatchEvent(new Event('change')); })()`);
+    await until(() => design().boot.version === '1.2.3', 3000, 'sürüm');
+    await cdp.shot('31-bootloader-ayarlar');
+    await cdp.click('#generate');
+    await until(() => fs.existsSync(P('bootloader/main.c')) && fs.existsSync(P('Core/Src/es_image.c')) && fs.existsSync(P('cmake/es-image.cmake')) && fs.existsSync(P('STM32F411CEU6_BOOT.ld')), 20000, 'bootloader dosyaları');
+    assert.match(fs.readFileSync(P('STM32F411CEU6_FLASH.ld'), 'utf8'), /ORIGIN = 0x08004000/);
+    execSync('cmake --preset debug && cmake --build --preset debug', { cwd: PROJECT, stdio: 'pipe', shell: process.platform === 'win32' ? 'cmd.exe' : undefined });
+    for (const f of ['demo_proje_boot.elf', 'demo_proje_full.hex', 'demo_proje.bin']) assert.ok(fs.existsSync(P(`build/debug/${f}`)), f);
+    const chk = eb.checkImage(fs.readFileSync(P('build/debug/demo_proje.bin')));
+    assert.ok(chk.ok, chk.error);
+    assert.strictEqual(chk.header.version, '1.2.3');
+    // Programlayıcı: Embedded Studio bootloader (simülasyon portu)
+    await cdp.click('#tab-programmer');
+    await cdp.eval(`(() => { const s = document.querySelector('#pg-transport'); s.value = 'esboot'; s.dispatchEvent(new Event('change')); })()`);
+    await until(() => cdp.eval(`!!document.querySelector('#pg-port') && document.querySelector('#pg-port').value === 'SIM'`), 15000, 'port listesi');
+    assert.ok(await cdp.eval(`document.querySelector('#pg-read').hidden && document.querySelector('#pg-sectors').hidden`), 'okuma/sektör kartları gizli');
+    await cdp.click('#pg-connect');
+    await until(() => cdp.eval(`(document.querySelector('#pg-es-info') || {}).textContent || ''`).then((x) => /0x08004000/.test(x)), 20000, 'bootloader bilgisi');
+    assert.ok((await cdp.eval(`document.querySelector('#pg-es-app').textContent`)).includes('imaj yok'), 'boş yuva');
+    dialogQueue.push([vscodeFake.Uri.file(P('build/debug/demo_proje.bin'))]);
+    await cdp.click('#pg-write-go');
+    await until(() => cdp.eval(`[...document.querySelectorAll('#pg-log-list .pg-le.ok')].some((e) => e.textContent.includes('Güncellendi ve doğrulandı: v1.2.3'))`), 30000, 'güncellendi');
+    await until(() => cdp.eval(`!!document.querySelector('#pg-connect')`), 5000, 'BOOT sonrası bağlantı kapandı');
+    await cdp.click('#pg-connect');
+    await until(() => cdp.eval(`(document.querySelector('#pg-es-app') || {}).textContent || ''`).then((x) => /geçerli.*v1\.2\.3/.test(x)), 20000, 'yuvada v1.2.3');
+    await cdp.shot('32-bootloader-guncelleme');
+    const errs = await cdp.eval(`document.querySelectorAll('#pg-log-list .pg-le.error').length`);
+    await cdp.click('#pg-refresh');
+    await sleep(500);
+    assert.strictEqual(await cdp.eval(`document.querySelectorAll('#pg-log-list .pg-le.error').length`), errs, 'Yenile: hata yok');
+    // Yanlış dosya: _full.hex yuva başından başlamaz
+    dialogQueue.push([vscodeFake.Uri.file(P('build/debug/demo_proje_full.hex'))]);
+    await cdp.click('#pg-write-go');
+    await until(() => cdp.eval(`[...document.querySelectorAll('#pg-log-list .pg-le.error')].some((e) => e.textContent.includes('yuva başından'))`), 10000, 'yanlış dosya uyarısı');
+    await cdp.click('#pg-disconnect');
+    await until(() => cdp.eval(`!!document.querySelector('#pg-connect')`), 5000, 'bağlantı kesildi');
+    await cdp.eval(`(() => { const s = document.querySelector('#pg-transport'); s.value = 'swd'; s.dispatchEvent(new Event('change')); })()`);
+    // Kapat: linker eski haline döner
+    await cdp.click('#tab-settings');
+    await cdp.eval(`document.querySelector('#set-boot').scrollIntoView({ block: 'center' })`);
+    await cdp.click('#set-boot-on');
+    await until(() => !design().boot.enabled, 4000, 'bootloader kapalı');
+    await cdp.click('#generate');
+    await until(() => /ORIGIN = 0x08000000, LENGTH = 512K/.test(fs.readFileSync(P('STM32F411CEU6_FLASH.ld'), 'utf8')), 20000, 'linker eski haline döndü');
+    assert.ok(!fs.existsSync(P('Core/Src/es_image.c')), 'uygulama başlığı kaldırıldı');
+    await cdp.click('#tab-design');
+  });
   await step('Durum çubuğu (ES-201): Build/Flash/Debug/Run/Terminal/prob; görev bitişi, Debug yapılandırması, prob yokken uyarı; launch.json, breakpoint sınırı, reset (ES-204)', async () => {
     assert.strictEqual(recorded.context['embeddedStudio.projectOpen'], true, 'bağlam anahtarı');
     const texts = () => statusItems.filter((i) => i.visible).map((i) => i.text);

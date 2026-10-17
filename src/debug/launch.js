@@ -50,6 +50,8 @@ function cortexConfig(o) {
     else c.runToEntryPoint = 'main';
   }
   if (o.svd) c.svdFile = o.svd;
+  // ES-303: bootloader açıkken karta bootloader + uygulama yüklenir; semboller uygulama ELF'inden
+  if (o.loadFiles && o.request !== 'attach') c.loadFiles = o.loadFiles;
   if (o.rtos) c.rtos = server === 'jlink' ? 'FreeRTOS' : server === 'openocd' ? 'auto' : undefined;
   if (o.toolchainPath) c.armToolchainPath = o.toolchainPath;
   // ES-208: SWO ve RTT konsolu. Kapalı gelir: firmware ITM/RTT'ye yazıyorsa "enabled" true yapılır

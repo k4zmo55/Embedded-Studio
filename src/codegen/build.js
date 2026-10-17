@@ -74,6 +74,9 @@ const presetName = (type) => type.toLowerCase();
 const buildDir = (b) => `build/${presetName(normalizeBuild(b).type)}`;
 /** Projeye göre .elf yolu (proje köküne göre). */
 const elfRel = (design) => `${buildDir(design.build)}/${design.project.name}.elf`;
+/** ES-303: bootloader açıksa karta bootloader + uygulama birlikte yazılır (<proje>_full.hex) */
+const bootOn = (design) => !!(design.boot && design.boot.enabled);
+const flashRel = (design) => (bootOn(design) ? `${buildDir(design.build)}/${design.project.name}_full.hex` : elfRel(design));
 
 /** arm-none-eabi-<araç> komutu (seçilen GCC klasörüne göre). */
 function gccTool(b, tool) {
@@ -127,6 +130,11 @@ function cmakeModule(o) {
   const warn = [...WARNINGS[b.warnings], ...(b.werror ? ['-Werror'] : [])];
   const specs = [b.specs.nano && '--specs=nano.specs', b.specs.nosys && '--specs=nosys.specs'].filter(Boolean);
   const list = (items, ind = '  ') => items.map((s) => `${ind}${s}`).join('\n');
+  // ES-303: bootloader açıksa uygulama yuvada; vektör tablosu yuva + 1 KB
+  const boot = o.boot && o.part ? o.boot : null;
+  const part = boot ? o.part : null;
+  const hx = (v) => '0x' + (v >>> 0).toString(16).toUpperCase().padStart(8, '0');
+  if (boot) defines.push(`ES_APP_VECTORS=${hx(part.vectors)}U`, `ES_FW_VERSION=${hx(require('./bootloader').versionWord(boot.version))}U`, 'USER_VECT_TAB_ADDRESS', `VECT_TAB_OFFSET=${hx(part.vectors - part.bootBase)}U`);
   return `# Embedded Studio tarafından üretildi: ${o.name} / ${mcu.name}. Bu dosya her "Kod Üret"te yeniden yazılır.
 # Ayarları değiştirmek için: Embedded Studio > Proje Ayarları > Derleme (ya da kendi CMakeLists.txt'nizde bu
 # değişkenleri embedded_studio_target() çağrısından sonra kendiniz ekleyin).
@@ -168,7 +176,7 @@ list(APPEND ES_VENDOR_SOURCES \${ES_HAL_SOURCES})
 ` : ''}set(ES_SOURCES \${ES_APP_SOURCES} \${ES_VENDOR_SOURCES})
 
 set(ES_INCLUDE_DIRS
-${list([`\${ES_ROOT}/${P.inc}`, `\${ES_ROOT}/${P.drivers}`, `\${ES_ROOT}/${P.drivers}/reg`, ...b.includes.map(rootPath)].map((p) => (p.includes(' ') ? q(p) : p)))})
+${list([`\${ES_ROOT}/${P.inc}`, `\${ES_ROOT}/${P.drivers}`, `\${ES_ROOT}/${P.drivers}/reg`, ...(boot ? ['\${ES_ROOT}/bootloader'] : []), ...b.includes.map(rootPath)].map((p) => (p.includes(' ') ? q(p) : p)))})
 # Üretici başlıkları SYSTEM: uyarı seviyesi onları etkilemez
 set(ES_SYSTEM_INCLUDE_DIRS
 ${list([`\${ES_ROOT}/${P.cmsisCore}`, `\${ES_ROOT}/${P.deviceInc}`, ...(framework === 'hal' ? [`\${ES_ROOT}/${P.hal}/Inc`] : []), ...(o.rtos ? [`\${ES_ROOT}/${P.rtos}/include`, `\${ES_ROOT}/${P.rtos}/portable/GCC/${port}`] : [])])})
@@ -198,10 +206,61 @@ function(embedded_studio_target target)
   target_link_options(\${target} PRIVATE \${ES_MCU_FLAGS} -T\${ES_LINKER_SCRIPT} \${ES_LINK_FLAGS}
     -Wl,-Map=$<TARGET_FILE_DIR:\${target}>/\${target}.map)
   set_property(TARGET \${target} APPEND PROPERTY LINK_DEPENDS \${ES_LINKER_SCRIPT})
+${boot ? `  # ES-303: derleme kimliği ve imaj başlığı (boyut, CRC-32, commit) — .hex / .bin bundan sonra üretilir
+  target_compile_definitions(\${target} PRIVATE "ES_BUILD_ID=\\"\${ES_BUILD_ID}\\"")
   add_custom_command(TARGET \${target} POST_BUILD
+    COMMAND \${CMAKE_COMMAND} -DMODE=header -DELF=$<TARGET_FILE:\${target}> -DOBJCOPY=\${CMAKE_OBJCOPY} -P \${ES_ROOT}/cmake/es-image.cmake
+    COMMAND \${CMAKE_OBJCOPY} -O ihex $<TARGET_FILE:\${target}> $<TARGET_FILE_DIR:\${target}>/\${target}.hex
+    COMMAND \${CMAKE_OBJCOPY} --gap-fill 0xFF -O binary $<TARGET_FILE:\${target}> $<TARGET_FILE_DIR:\${target}>/\${target}.bin
+    COMMAND \${CMAKE_SIZE} $<TARGET_FILE:\${target}>
+    VERBATIM)
+` : `  add_custom_command(TARGET \${target} POST_BUILD
     COMMAND \${CMAKE_OBJCOPY} -O ihex $<TARGET_FILE:\${target}> $<TARGET_FILE_DIR:\${target}>/\${target}.hex
     COMMAND \${CMAKE_OBJCOPY} -O binary $<TARGET_FILE:\${target}> $<TARGET_FILE_DIR:\${target}>/\${target}.bin
     COMMAND \${CMAKE_SIZE} $<TARGET_FILE:\${target}>
+    VERBATIM)
+`}endfunction()
+${boot ? bootCmake(o, part, dev, fam) : ''}`;
+}
+
+/**
+ * ES-303: bootloader hedefi (<proje>_boot) ve bootloader + uygulama birleşik HEX'i (<proje>_full.hex: üretim için).
+ * Bootloader yalnızca CMSIS ve bootloader/reg sürücülerini kullanır (HAL'siz), her derleme tipinde -Os.
+ */
+function bootCmake(o, part, dev, fam) {
+  const { P } = o;
+  return `
+# ES-303: derleme kimliği: git kısa özeti, yoksa derleme zamanı (yapılandırmada bir kez)
+execute_process(COMMAND git rev-parse --short=12 HEAD WORKING_DIRECTORY \${ES_ROOT}
+  OUTPUT_VARIABLE ES_BUILD_ID OUTPUT_STRIP_TRAILING_WHITESPACE ERROR_QUIET RESULT_VARIABLE es_git)
+if(es_git OR NOT ES_BUILD_ID)
+  string(TIMESTAMP ES_BUILD_ID "%Y%m%d-%H%M%S" UTC)
+endif()
+set(ES_BOOT_LINKER_SCRIPT \${ES_ROOT}/${join(P.linkerDir, `${o.mcu.name}_BOOT.ld`)})
+
+# Bootloader: \${app}_boot (0x${part.bootBase.toString(16).toUpperCase()}, ${part.bootSize / 1024} KB) ve \${app}_full.hex (bootloader + uygulama)
+function(embedded_studio_bootloader app)
+  set(boot \${app}_boot)
+  file(GLOB ES_BOOT_SOURCES CONFIGURE_DEPENDS \${ES_ROOT}/bootloader/*.c \${ES_ROOT}/bootloader/reg/*.c)
+  set(ES_BOOT_VENDOR \${ES_ROOT}/${P.systemC} \${ES_ROOT}/${P.startupDir}/${dev.startup})
+  add_executable(\${boot} \${ES_BOOT_SOURCES} \${ES_BOOT_VENDOR})
+  target_include_directories(\${boot} PRIVATE \${ES_ROOT}/bootloader \${ES_ROOT}/bootloader/reg)
+  target_include_directories(\${boot} SYSTEM PRIVATE \${ES_ROOT}/${P.cmsisCore} \${ES_ROOT}/${P.deviceInc})
+  target_compile_definitions(\${boot} PRIVATE ${dev.define} HSE_VALUE=${o.hseHz}U)
+  target_compile_options(\${boot} PRIVATE \${ES_MCU_FLAGS} -ffunction-sections -fdata-sections -g3 -Os \${ES_WARNINGS})
+  target_link_options(\${boot} PRIVATE \${ES_MCU_FLAGS} -T\${ES_BOOT_LINKER_SCRIPT} --specs=nano.specs --specs=nosys.specs
+    -Wl,--gc-sections -Wl,--print-memory-usage -Wl,--no-warn-rwx-segments -Wl,-Map=$<TARGET_FILE_DIR:\${boot}>/\${boot}.map)
+  set_property(TARGET \${boot} APPEND PROPERTY LINK_DEPENDS \${ES_BOOT_LINKER_SCRIPT})
+  add_custom_command(TARGET \${boot} POST_BUILD
+    COMMAND \${CMAKE_OBJCOPY} -O ihex $<TARGET_FILE:\${boot}> $<TARGET_FILE_DIR:\${boot}>/\${boot}.hex
+    COMMAND \${CMAKE_OBJCOPY} -O binary $<TARGET_FILE:\${boot}> $<TARGET_FILE_DIR:\${boot}>/\${boot}.bin
+    COMMAND \${CMAKE_SIZE} $<TARGET_FILE:\${boot}>
+    VERBATIM)
+  add_custom_target(\${app}_full ALL
+    COMMAND \${CMAKE_COMMAND} -DMODE=merge -DBOOT_HEX=$<TARGET_FILE_DIR:\${boot}>/\${boot}.hex -DAPP_HEX=$<TARGET_FILE_DIR:\${app}>/\${app}.hex
+      -DOUT=$<TARGET_FILE_DIR:\${app}>/\${app}_full.hex -P \${ES_ROOT}/cmake/es-image.cmake
+    DEPENDS \${app} \${boot}
+    COMMENT "Bootloader + uygulama: \${app}_full.hex"
     VERBATIM)
 endfunction()
 `;
@@ -284,7 +343,7 @@ function cmakePresets() {
 }
 
 /** Embedded Studio'nun yönettiği CMakeLists.txt ('user' türü: USER CODE blokları korunur). */
-function cmakeListsManaged(name, userBlock) {
+function cmakeListsManaged(name, userBlock, boot = false) {
   return `# Embedded Studio tarafından üretildi. Kendi eklemelerinizi USER CODE bloklarına yazın.
 # Derleme ayarları (bayraklar, -O, -D, include, linker, FPU, araç zinciri) cmake/embedded-studio.cmake içindedir;
 # Embedded Studio > Proje Ayarları > Derleme'den değiştirin. Bu dosyayı tamamen kendiniz yönetmek için orada
@@ -299,7 +358,9 @@ set(APP_SOURCES "")
 ${userBlock('Sources', 'cmake')}
 
 add_executable(\${PROJECT_NAME} \${APP_SOURCES})
-embedded_studio_target(\${PROJECT_NAME})
+embedded_studio_target(\${PROJECT_NAME})${boot ? `
+# Bootloader (Proje Ayarları > Bootloader): \${PROJECT_NAME}_boot ve \${PROJECT_NAME}_full.hex
+embedded_studio_bootloader(\${PROJECT_NAME})` : ''}
 
 ${userBlock('Targets', 'cmake')}
 `;
@@ -361,7 +422,7 @@ const compileCommandsSetting = (type) => `\${workspaceFolder}/build/${presetName
 
 module.exports = {
   BUILD_TYPES, OPT_LEVELS, WARNINGS, DEFAULT_BUILD,
-  normalizeBuild, presetName, buildDir, elfRel, gccTool, rtosPort, mcuFlags, effectiveFpu,
+  normalizeBuild, presetName, buildDir, elfRel, flashRel, bootOn, gccTool, rtosPort, mcuFlags, effectiveFpu,
   cmakeModule, toolchainFile, cmakePresets, cmakeListsManaged, cmakeListsStarter, includeSnippet, buildCommand,
   configureCommand, clangdConfig, compileCommandsSetting, CLANGD_MARK
 };

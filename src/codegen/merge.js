@@ -77,7 +77,8 @@ function designFingerprint(design, generatorVersion) {
     instances: design.instances.map((i) => ({ id: i.id, c: i.componentId, l: i.label, o: i.options || null })),
     locks: design.locks || {},
     build: normalizeBuild(design.build), // derleme ayarları cmake/embedded-studio.cmake'i değiştirir
-    regDrivers: design.regDrivers || []
+    regDrivers: design.regDrivers || [],
+    boot: design.boot && design.boot.enabled ? design.boot : null // ES-303
   };
   return sha1(JSON.stringify(relevant));
 }

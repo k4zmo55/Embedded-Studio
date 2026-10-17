@@ -12,6 +12,8 @@ const { writeProject, designFingerprint } = require('../src/codegen/merge');
 const packs = require('../src/codegen/packs');
 const cm = require('../src/codegen/build');
 const { DRIVERS, resolveDrivers } = require('../src/codegen/regdrivers');
+const bl = require('../src/codegen/bootloader');
+const esboot = require('../src/debug/esboot');
 
 /** Örnek sürücülerin tüm API'sini çağıran dosya; constructor ile .init_array'de tutulur, böylece bağlanır da. */
 function regDriverUsage(mcu, ids) {
@@ -73,6 +75,9 @@ const ALL = ['usb_uart', 'bme280', 'mpu6050', 'ssd1306', 'w25q32', 'neo6m', 'led
     variants.push({ mcu: id, framework: 'register', rtos: false, mode: 'pro', build: strict, ids, suffix: 'pro', regDrivers: DRIVERS.map((d) => d.id) });
   }
   variants.push({ mcu: f411, framework: 'register', rtos: false, mode: 'pro', build: strict, suffix: 'regdrivers', regDrivers: DRIVERS.map((d) => d.id) });
+  // ES-303: bootloader + uygulama yuvası (her işlemcide bare-metal, sıkı uyarı + -Werror; F411'de HAL + FreeRTOS)
+  for (const id of Object.keys(lib.mcus)) variants.push({ mcu: id, framework: 'register', rtos: false, mode: 'pro', build: strict, suffix: 'boot', ids: ['usb_uart', 'led'], boot: { enabled: true } });
+  variants.push({ mcu: f411, framework: 'hal', rtos: true, build: strict, suffix: 'hboot', ids: ['usb_uart', 'led', 'bme280'], boot: { enabled: true, version: '2.1.5' } });
   const userCmake = (name) => `cmake_minimum_required(VERSION 3.20)
 set(CMAKE_TOOLCHAIN_FILE \${CMAKE_CURRENT_SOURCE_DIR}/cmake/arm-none-eabi.cmake CACHE FILEPATH "")
 project(${name} C ASM)
@@ -88,6 +93,7 @@ embedded_studio_target(\${PROJECT_NAME} NO_SOURCES)
   await packs.ensurePacks(cache, need, (m) => console.log('  ' + m));
 
   let failed = 0;
+  const boots = [];
   for (const v of selected) {
     const { framework, rtos, mode = 'beginner', build = {}, suffix, ids = ALL, regDrivers = [] } = v;
     const short = v.mcu === f411 ? '' : `${v.mcu.replace(/^stm32/, '').slice(0, 6)}_`;
@@ -96,7 +102,7 @@ embedded_studio_target(\${PROJECT_NAME} NO_SOURCES)
     fs.rmSync(root, { recursive: true, force: true });
     const mcu = lib.mcus[v.mcu];
     const design = {
-      mcuId: v.mcu, framework, rtos, mode, project: { name }, build, regDrivers,
+      mcuId: v.mcu, framework, rtos, mode, project: { name }, build, regDrivers, boot: v.boot,
       instances: ids.map((c, i) => ({ id: 'i' + i, componentId: c, label: `${c.toUpperCase()}_1` })), locks: {}
     };
     // En yüksek saat: over-drive / boost / EPOD yollarını da derle
@@ -119,17 +125,33 @@ embedded_studio_target(\${PROJECT_NAME} NO_SOURCES)
       if (build.cmake === 'user' && fs.readFileSync(path.join(root, 'CMakeLists.txt'), 'utf8') !== userCmake(name)) throw new Error('kullanıcının CMakeLists.txt dosyası değişti');
       execSync(`cmake --preset ${preset}`, { cwd: root, stdio: 'pipe' });
       const out = execSync(`cmake --build --preset ${preset}`, { cwd: root, stdio: 'pipe' }).toString();
-      const missing = ['.elf', '.hex', '.bin', '.map'].filter((x) => !fs.existsSync(path.join(root, 'build', preset, name + x)));
+      const missing = ['.elf', '.hex', '.bin', '.map', ...(v.boot ? ['_boot.elf', '_boot.hex', '_full.hex'] : [])].filter((x) => !fs.existsSync(path.join(root, 'build', preset, name + x)));
       if (missing.length) throw new Error(`build/${preset}/ altında eksik çıktı: ${missing.join(', ')}`);
+      if (v.boot) {
+        // Uygulama .bin: yuva başından; başlık + CRC eklentinin doğrulayıcısından geçmeli, vektör yuva + 0x400
+        const bin = fs.readFileSync(path.join(root, 'build', preset, `${name}.bin`));
+        const chk = esboot.checkImage(bin);
+        if (!chk.ok) throw new Error(`imaj başlığı: ${chk.error}`);
+        const part = bl.partition(mcu, bl.normalizeBoot(design.boot, mcu));
+        if (chk.header.vectorAddr !== part.vectors) throw new Error(`vektör adresi ${chk.header.vectorAddr.toString(16)} != ${part.vectors.toString(16)}`);
+        if (v.boot.version && chk.header.version !== v.boot.version) throw new Error(`sürüm ${chk.header.version}`);
+        if (bin.readUInt32LE(esboot.COMMIT_OFF) !== esboot.COMMIT_MAGIC) throw new Error('commit yok');
+        const full = fs.readFileSync(path.join(root, 'build', preset, `${name}_full.hex`), 'utf8');
+        if ((full.match(/:00000001FF/g) || []).length !== 1) throw new Error('birleşik HEX: tek EOF olmalı');
+        const bootFlash = out.split(/\r?\n/).filter((l) => /FLASH:/.test(l)).map((l) => l.trim().replace(/\s+/g, ' '));
+        boots.push(`${name}: bootloader ${bootFlash.find((l) => new RegExp(`${part.bootSize / 1024} KB`).test(l)) || bootFlash[0] || '?'} · imaj ${chk.total} B, CRC ${chk.header.imageCrc.toString(16)}, kimlik ${chk.header.buildId}`);
+      }
       const warn = out.split('\n').filter((l) => /warning:/.test(l) && /Core|Components|src|drivers/.test(l));
       const size = out.split('\n').filter((l) => /FLASH:|RAM:/.test(l)).map((l) => l.trim().replace(/\s+/g, ' ')).join(' | ');
       console.log(`OK   ${name} [${preset}, ${clock.freq.sysclk} MHz]  ${size}${warn.length ? `\n     ${warn.length} uyarı:\n     ` + warn.slice(0, 8).join('\n     ') : ''}`);
     } catch (e) {
       failed++;
       const text = (e.stdout || '').toString() + (e.stderr || '').toString() || e.message;
-      console.log(`FAIL ${name}\n` + text.split('\n').filter((l) => /error|undefined|Error|overflow/.test(l)).slice(0, 25).join('\n'));
+      const lines = text.split('\n').filter((l) => /error|undefined|Error|overflow/.test(l)).slice(0, 25);
+      console.log(`FAIL ${name}\n` + (lines.length ? lines.join('\n') : text.slice(0, 600)));
     }
   }
+  if (boots.length) console.log('\nBootloader varyantları:\n  ' + boots.join('\n  '));
   console.log(`\n${selected.length - failed}/${selected.length} varyant derlendi.`);
   process.exit(failed ? 1 : 0);
 })().catch((e) => { console.error(e); process.exit(1); });

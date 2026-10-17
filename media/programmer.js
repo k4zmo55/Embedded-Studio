@@ -10,7 +10,7 @@
     info: null, sel: new Set(), last: null, log: [], progress: null, compare: null,
     region: 'flash', addr: '0x08000000', length: '0x1000', format: 'bin', base: '0x08000000'
   };
-  const TRANSPORTS = () => [['swd', 'SWD'], ['jtag', 'JTAG'], ['uart', t('UART (sistem bootloader)')], ['dfu', 'USB DFU']];
+  const TRANSPORTS = () => [['swd', 'SWD'], ['jtag', 'JTAG'], ['uart', t('UART (sistem bootloader)')], ['dfu', 'USB DFU'], ['esboot', t('UART (Embedded Studio bootloader)')]];
 
   function mount(parent) {
     parent.append(h('main', { id: 'programmer', class: 'tab-pane' },
@@ -34,7 +34,8 @@
   const num = (s) => Number(String(s).trim());
 
   const BAUDS = ['115200', '57600', '38400', '19200', '9600'];
-  const isUart = () => P.transport === 'uart';
+  const isUart = () => P.transport === 'uart' || P.transport === 'esboot';
+  const isEs = () => P.transport === 'esboot';
   const isDfu = () => P.transport === 'dfu';
   /** Bağlantı durumu: Debug ile ortak prob bağlantısı ya da bootloader */
   function sync() {
@@ -46,7 +47,7 @@
     const bootOn = !!(P.boot && P.boot.connected);
     const ports = (P.bootInfo && P.bootInfo.ports) || [];
     const state = bootOn
-      ? `${P.boot.device} · ${t('bootloader')} v${P.boot.version} · ${P.boot.port}`
+      ? `${P.boot.device} · ${P.boot.kind === 'esboot' ? 'Embedded Studio bootloader' : t('bootloader')} v${P.boot.version} · ${P.boot.port}`
       : P.connected ? `${P.info ? P.info.mcu + ' · ' : ''}${P.mode === 'sim' ? t('simülasyon') : 'OpenOCD'} · ${P.state || ''}` : t('bağlı değil');
     put($('pg-bar'),
       h('label', { class: 'hint', for: 'pg-transport', text: t('Bağlantı') }),
@@ -56,8 +57,10 @@
         ...(ports.length ? ports : [{ path: '', name: t('port yok') }]).map((x) => h('option', { value: x.path, selected: x.path === P.port, text: x.path === 'SIM' ? t('Simülasyon (bootloader)') : x.name && x.name !== x.path ? `${x.path} · ${x.name}` : x.path }))) : null,
       isUart() && !P.connected ? h('button', { class: 'ghost small icon-only', id: 'pg-ports', title: t('Portları yenile'), onclick: () => post({ type: 'prog.bootInfo' }) }, '↻') : null,
       isUart() && !P.connected ? h('select', { id: 'pg-baud', 'aria-label': 'Baud', onchange: (e) => (P.baud = e.target.value) }, ...BAUDS.map((b) => h('option', { value: b, selected: b === P.baud, text: b }))) : null,
-      isUart() && !P.connected ? h('select', { id: 'pg-entry', 'aria-label': t('Bootloader\'a giriş'), title: t('DTR/RTS: dönüştürücünün RTS hattı BOOT0\'a, DTR hattı NRST\'ye bağlıysa bootloader\'a kendiliğinden girilir'), onchange: (e) => (P.entry = e.target.value) },
+      isUart() && !P.connected && !isEs() ? h('select', { id: 'pg-entry', 'aria-label': t('Bootloader\'a giriş'), title: t('DTR/RTS: dönüştürücünün RTS hattı BOOT0\'a, DTR hattı NRST\'ye bağlıysa bootloader\'a kendiliğinden girilir'), onchange: (e) => (P.entry = e.target.value) },
         h('option', { value: 'manual', selected: P.entry === 'manual', text: t('BOOT0 elle') }), h('option', { value: 'dtr-rts', selected: P.entry === 'dtr-rts', text: t('DTR → NRST, RTS → BOOT0') })) : null,
+      isEs() && !P.connected ? h('select', { id: 'pg-entry', 'aria-label': t('Bootloader\'a giriş'), onchange: (e) => (P.esEntry = e.target.value) },
+        h('option', { value: 'manual', selected: P.esEntry !== 'dtr', text: t('Kartı elle resetle') }), h('option', { value: 'dtr', selected: P.esEntry === 'dtr', text: t('DTR → NRST ile reset') })) : null,
       isDfu() ? null : P.connected
         ? h('button', { class: 'small', id: 'pg-disconnect', onclick: () => post({ type: bootOn ? 'prog.bootDisconnect' : 'debug.disconnect' }) }, t('Bağlantıyı kes'))
         : h('button', { class: 'small', id: 'pg-connect', disabled: P.connecting || (isUart() && !P.port), onclick: () => connect('openocd') }, P.connecting ? t('Bağlanıyor…') : t('Bağlan')),
@@ -80,23 +83,25 @@
     P.note = '';
     P.compare = null;
     renderBar();
-    if (isUart()) post({ type: 'prog.connect', transport: 'uart', port: P.port, baud: Number(P.baud), entry: P.entry });
+    if (isEs()) post({ type: 'prog.connect', transport: 'esboot', port: P.port, baud: Number(P.baud), entry: P.esEntry || 'manual' });
+    else if (isUart()) post({ type: 'prog.connect', transport: 'uart', port: P.port, baud: Number(P.baud), entry: P.entry });
     else post({ type: 'prog.connect', mode, transport: P.transport });
   }
 
   /** Dosya yaz: bütün bağlantılarda (DFU'da araçla) */
   function renderWrite() {
-    const off = (isDfu() ? !dfuTool() : !P.connected) || busy();
+    const off = (isDfu() ? !dfuTool() : !P.connected) || busy() || (isEs() && !(P.boot && P.boot.kind === 'esboot'));
     const check = (id, key, label, title) => h('label', { class: 'check', title: title || '' }, h('input', { type: 'checkbox', id, checked: P[key], onchange: (e) => (P[key] = e.target.checked) }), h('span', { text: label }));
     put($('pg-write'),
       h('h3', { text: t('Dosya yaz') }),
       h('div', { class: 'pg-row' },
-        isDfu() ? null : check('pg-w-erase', 'wErase', t('Gerekli sektörleri sil'), P.mode === 'openocd' && !P.boot ? t('OpenOCD program komutu gereken sektörleri kendisi siler') : ''),
-        isDfu() ? null : check('pg-w-verify', 'wVerify', t('Doğrula')),
+        isDfu() || isEs() ? null : check('pg-w-erase', 'wErase', t('Gerekli sektörleri sil'), P.mode === 'openocd' && !P.boot ? t('OpenOCD program komutu gereken sektörleri kendisi siler') : ''),
+        isDfu() || isEs() ? null : check('pg-w-verify', 'wVerify', t('Doğrula')),
+        isEs() ? h('span', { class: 'hint', text: t('Bootloader yazarken her paketi CRC ile denetler, sonda imajı doğrular ve commit yazar.') }) : null,
         check('pg-w-run', 'wRun', t('Sonra çalıştır'))),
       h('div', { class: 'pg-row' },
-        h('label', { class: 'hint', for: 'pg-w-base', text: t('.bin başlangıç adresi') }),
-        h('input', { id: 'pg-w-base', class: 'mono', value: P.base, oninput: (e) => (P.base = e.target.value) }),
+        isEs() ? null : h('label', { class: 'hint', for: 'pg-w-base', text: t('.bin başlangıç adresi') }),
+        isEs() ? null : h('input', { id: 'pg-w-base', class: 'mono', value: P.base, oninput: (e) => (P.base = e.target.value) }),
         h('button', { class: 'small', id: 'pg-write-go', disabled: off, onclick: () => post(isDfu()
           ? { type: 'prog.dfu', op: 'write', base: num(P.base), run: P.wRun }
           : { type: 'prog.write', base: num(P.base), erase: P.wErase, verify: P.wVerify, run: P.wRun }) }, t('Dosya seç ve yaz (.elf / .hex / .bin)…'))),
@@ -106,10 +111,29 @@
   const dfuTool = () => { const x = P.bootInfo && P.bootInfo.tools; return x && (x.dfuutil.found ? 'dfu-util' : x.cubeprog.found ? 'STM32_Programmer_CLI' : ''); };
 
   /** UART / DFU: bootloader'a giriş talimatı, AN2606 arayüzleri, DFU araçları ve aygıtları */
+  /** ES-303: Embedded Studio bootloader bilgisi */
+  function renderEs(box) {
+    const b = P.boot && P.boot.connected && P.boot.kind === 'esboot' ? P.boot : null;
+    const d = ES.state.design || {};
+    const on = d.boot && d.boot.enabled;
+    put(box,
+      h('h3', { text: t('Embedded Studio bootloader') }),
+      b ? h('div', { class: `pg-result ${b.app === 0 ? 'ok' : 'diff'}`, id: 'pg-es-info' },
+        h('div', { text: t('Bootloader v{0} · yuva {1} ({2} KB)', b.version, hex(b.slotBase), b.slotSize / 1024) }),
+        h('div', { id: 'pg-es-app', text: t('Uygulama: {0}', b.appText) + (b.header ? ` · v${b.header.version} · ${b.header.buildId} · ${b.header.size} B` : '') })) : null,
+      on ? null : h('p', { class: 'dbg-msg error', text: t('Bu projede bootloader kapalı (Proje Ayarları > Bootloader). Karttaki bootloader başka bir projeden olabilir.') }),
+      h('ol', { class: 'pg-steps', id: 'pg-steps' },
+        h('li', { text: t('Bootloader ile uygulama birlikte bir kez SWD ile yüklenir (Yükle düğmesi _full.hex yazar).') }),
+        h('li', { text: t('Güncelleme modu: açılış penceresinde (kartı resetleyin), uygulama es_boot_request_update() çağırınca ya da geçerli imaj yokken.') }),
+        h('li', { text: t('"Dosya seç ve yaz" başlıklı uygulama imajını (<proje>.bin / .hex / .elf) gönderir; "Sonra çalıştır" bootloader\'ı yeniden başlatır.') }),
+        h('li', { text: t('Güncelleme yarıda kalırsa imaj commit almaz: bootloader uygulamayı çalıştırmaz, yeni güncelleme bekler.') })));
+  }
+
   function renderBoot() {
     const box = $('pg-boot');
     box.hidden = !(isUart() || isDfu());
     if (box.hidden) return;
+    if (isEs()) return renderEs(box);
     const bi = P.bootInfo;
     if (!bi) return put(box, h('h3', { text: t('Sistem bootloader\'ı') }), h('p', { class: 'hint', text: t('Okunuyor…') }));
     const i = bi.info;
@@ -263,7 +287,7 @@
     renderBoot();
     renderWrite();
     // DFU'da okuma, karşılaştırma ve silme DFU kartında (araçla); bu kartlar prob / bootloader bağlantısı içindir
-    for (const id of ['pg-read', 'pg-compare', 'pg-ob', 'pg-sectors']) $(id).hidden = isDfu();
+    for (const id of ['pg-read', 'pg-compare', 'pg-ob', 'pg-sectors']) $(id).hidden = isDfu() || isEs();
     renderRead();
     renderCompare();
     renderOb();

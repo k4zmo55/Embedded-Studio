@@ -51,7 +51,9 @@ const fault = require('./debug/fault');
 const trace = require('./debug/trace');
 const rtos = require('./debug/rtos');
 const prog = require('./debug/programmer');
+const bl = require('./codegen/bootloader');
 const sysboot = require('./debug/sysboot');
+const esboot = require('./debug/esboot');
 const { DEV_IDS } = require('./debug/stm32id');
 const A = require('./analyzer');
 const serial = require('./monitor/serial');
@@ -254,6 +256,7 @@ function migrate(design, lib) {
   d.build = cm.normalizeBuild(d.build);
   d.regDrivers = Array.isArray(d.regDrivers) ? d.regDrivers.filter((x) => typeof x === 'string') : [];
   if (!lib.mcus[d.mcuId]) d.mcuId = lib.mcus.stm32f411ceu6 ? 'stm32f411ceu6' : Object.keys(lib.mcus)[0];
+  d.boot = bl.normalizeBoot(d.boot, lib.mcus[d.mcuId]); // ES-303
   d.clock = { ...lib.mcus[d.mcuId].clock.default, ...(d.clock || {}) };
   return d;
 }
@@ -307,6 +310,7 @@ class Studio {
       this.dropTrace();
       this.target?.disconnect().catch(() => {});
       this.bootTarget?.disconnect().catch(() => {});
+      if (this.esboot) Promise.resolve(this.esboot.close()).catch(() => {});
       clearInterval(this.flushTimer);
       Studio.current = undefined;
     });
@@ -355,7 +359,9 @@ class Studio {
       const fam = familyOf(m);
       // Örnek register sürücüleri: bu işlemcide üretilebilenler (ör. DAC'siz işlemcide DAC yok)
       const regDriverIds = REG_DRIVERS.filter((d) => !d.needs || d.needs(m)).map((d) => d.id);
-      return [id, { ...m, fpu: fam.fpu, apbCount: fam.apbCount, series: fam.series, regDriverIds }];
+      // ES-303: bootloader bölge boyutları ve UART seçenekleri
+      const boot = { sizes: bl.sizeOptions(m), uarts: bl.uartOptions(m), defaultKB: bl.defaultSize(m) };
+      return [id, { ...m, fpu: fam.fpu, apbCount: fam.apbCount, series: fam.series, regDriverIds, boot }];
     }));
     return { mcus, components: comps };
   }
@@ -1119,6 +1125,7 @@ class Studio {
 
   async progConnect(m) {
     if (m.transport === 'uart') return this.bootConnect(m);
+    if (m.transport === 'esboot') return this.esbootConnect(m);
     await this.bootDisconnect();
     const mode = m.mode === 'sim' ? 'sim' : 'openocd';
     this.progLog('info', mode === 'sim' ? t('Simülasyona bağlanılıyor…') : t('Proba bağlanılıyor ({0})…', (m.transport || 'swd').toUpperCase()));
@@ -1188,6 +1195,14 @@ class Studio {
   }
 
   async bootDisconnect(note) {
+    const es = this.esboot;
+    if (es) {
+      this.esboot = null;
+      await Promise.resolve(es.close()).catch(() => {});
+      this.post({ type: 'prog.boot', connected: false, note });
+      this.progLog('info', note || t('Bootloader bağlantısı kapatıldı.'));
+      return;
+    }
     const tg = this.bootTarget;
     if (!tg) return;
     this.bootTarget = null;
@@ -1196,8 +1211,123 @@ class Studio {
     this.progLog('info', note || t('Bootloader bağlantısı kapatıldı.'));
   }
 
+  /**
+   * ES-303: Embedded Studio bootloader'ına UART ile bağlanır. Bootloader yalnızca açılış penceresinde, uygulama
+   * güncelleme isteyince ya da geçerli imaj yokken dinler: bağlanırken 15 sn boyunca INFO ile yoklanır (kartı resetleyin).
+   * @param {{ port: string, baud?: number, entry?: string }} m
+   */
+  async esbootConnect(m) {
+    await this.bootDisconnect();
+    if (this.target) {
+      await this.dropTrace();
+      await this.target.disconnect().catch(() => {});
+      this.target = null;
+      this.post({ type: 'debug.status', connected: false });
+    }
+    const mcu = this.lib.mcus[this.design.mcuId];
+    const boot = bl.normalizeBoot(this.design.boot, mcu);
+    const part = bl.partition(mcu, boot);
+    const baud = Number(m.baud) || boot.baud;
+    this.post({ type: 'prog.boot', connecting: true });
+    this.progLog('info', t('Embedded Studio bootloader\'ı bekleniyor: {0}, {1} baud. Kartı resetleyin (açılış penceresi {2} ms).', m.port, baud, boot.waitMs));
+    let client, close = () => {}, session = null;
+    try {
+      if (m.port === serial.SIM_PORT) {
+        // Sanal cihaz bağlantılar arasında korunur
+        const key = `${mcu.id}:${part.slotBase}`;
+        if (!this._simEs || this._simEs.key !== key) this._simEs = { key, dev: null };
+        client = new esboot.EsBootClient({ write: (b) => setImmediate(() => this._simEs.dev.receive(b)) }, { timeoutMs: 250, retries: 0 });
+        if (!this._simEs.dev) this._simEs.dev = new esboot.SimEsBoot({ slotBase: part.slotBase, slotSize: part.slotSize, progUnit: part.progUnit, deviceId: 0x431, out: (b) => setImmediate(() => client.feed(b)) });
+        else this._simEs.dev.o.out = (b) => setImmediate(() => client.feed(b));
+      } else {
+        session = new serial.SerialSession({ path: m.port, baud, dataBits: 8, parity: 'none', stopBits: 1, flow: 'none', dtr: false, rts: false });
+        await session.open();
+        client = new esboot.EsBootClient({ write: (b) => session.write(b) }, { timeoutMs: 250, retries: 0 });
+        session.on('data', (b) => client.feed(b));
+        close = () => session.close();
+        if (m.entry === 'dtr') {
+          // DTR → NRST: reset darbesi, bootloader açılış penceresinde yakalanır
+          session.signals(true, false);
+          await new Promise((r) => setTimeout(r, 50));
+          session.signals(false, false);
+        }
+      }
+      let info = null;
+      const until = Date.now() + 15000;
+      while (!info && Date.now() < until) {
+        try {
+          info = await client.info();
+        } catch (e) {
+          if (!e.timeout && !e.retry) throw e;
+        }
+      }
+      if (!info) throw new Error(t('Bootloader yanıt vermedi (15 sn). Kartı resetleyin ya da uygulamadan es_boot_request_update() çağırın; UART pinleri ve baud ayarını kontrol edin.'));
+      client.timeout = 1000;
+      client.retries = 3;
+      this.esboot = { client, close, info, part, port: m.port };
+      const dev = DEV_IDS[info.deviceId];
+      const match = info.slotBase === part.slotBase;
+      const status = {
+        connected: true, kind: 'esboot', port: m.port, baud, version: info.version, pid: info.deviceId, device: dev ? dev.name : t('bilinmiyor'), match: match && !!(dev && (dev.defines || []).includes(mcu.device.define)),
+        commands: ['INFO', 'START', 'DATA', 'END', 'BOOT'], app: info.app, appText: info.appText, slotBase: info.slotBase, slotSize: info.slotSize,
+        header: info.header && info.header.present ? { version: info.header.version, buildId: info.header.buildId, size: info.header.imageSize } : null
+      };
+      this.post({ type: 'prog.boot', ...status });
+      this.progLog('ok', t('Embedded Studio bootloader v{0}; yuva 0x{1} ({2} KB); uygulama: {3}{4}.', info.version, info.slotBase.toString(16).toUpperCase(), info.slotSize / 1024, info.appText,
+        status.header ? ` (v${status.header.version}, ${status.header.buildId})` : ''));
+      if (!match) this.progLog('warn', t('Cihazdaki yuva (0x{0}) projedekinden (0x{1}) farklı: bootloader başka ayarlarla derlenmiş.', info.slotBase.toString(16), part.slotBase.toString(16)));
+    } catch (e) {
+      if (session) await session.close().catch(() => {});
+      this.post({ type: 'prog.boot', connected: false, error: e.message });
+      this.progLog('error', e.message);
+    }
+  }
+
+  /** ES-303: INFO'yu yeniden sorgulayıp arayüze bildirir (Yenile, güncellemeden sonra) */
+  async esbootRefresh() {
+    const es = this.esboot;
+    try {
+      es.info = await es.client.info();
+    } catch (e) {
+      return this.progLog('error', e.message);
+    }
+    const i = es.info;
+    this.post({ type: 'prog.boot', connected: true, kind: 'esboot', port: es.port, version: i.version, pid: i.deviceId, device: (DEV_IDS[i.deviceId] || {}).name || t('bilinmiyor'), match: true,
+      commands: ['INFO', 'START', 'DATA', 'END', 'BOOT'], app: i.app, appText: i.appText, slotBase: i.slotBase, slotSize: i.slotSize,
+      header: i.header && i.header.present ? { version: i.header.version, buildId: i.header.buildId, size: i.header.imageSize } : null });
+  }
+
+  /** ES-303: başlıklı uygulama imajını (yuva başından) bootloader'a gönderir */
+  async esbootUpdate(m) {
+    const es = this.esboot;
+    const img = await this.progPickImage(es.info.slotBase, t('Yaz'));
+    if (!img) return;
+    const lo = Math.min(...img.segments.map((g) => g.addr));
+    const hi = Math.max(...img.segments.map((g) => g.addr + g.bytes.length));
+    if (lo !== es.info.slotBase) return this.progLog('error', t('{0} yuva başından (0x{1}) başlamıyor (0x{2}). Bootloader açıkken derlenen uygulamanın .bin / .hex / .elf dosyasını seçin; _full.hex ve _boot dosyaları değil.', path.basename(img.file), es.info.slotBase.toString(16).toUpperCase(), lo.toString(16).toUpperCase()));
+    const bytes = Buffer.alloc(hi - lo, 0xff);
+    for (const g of img.segments) Buffer.from(g.bytes).copy(bytes, g.addr - lo);
+    const chk = esboot.checkImage(bytes);
+    if (!chk.ok) return this.progLog('error', chk.error);
+    const started = Date.now();
+    this.progLog('info', t('Güncelleniyor: {0} (v{1}, {2}, {3})', path.basename(img.file), chk.header.version, chk.header.buildId, prog.sizeText(chk.total)));
+    try {
+      await es.client.update(bytes, {
+        boot: !!m.run,
+        progress: (stage, done, total) => this.post({ type: 'prog.progress', op: 'write', pct: stage === 'erase' ? 1 : Math.round((done * 100) / total) })
+      });
+      this.progLog('ok', t('Güncellendi ve doğrulandı: v{0}, {1} sn.', chk.header.version, ((Date.now() - started) / 1000).toFixed(1)));
+      if (m.run) await this.bootDisconnect(t('Bootloader yeniden başlatıldı: yeni uygulama doğrulanıp çalıştırılıyor.'));
+      else await this.esbootRefresh();
+    } catch (e) {
+      this.progLog('error', t('Güncelleme başarısız: {0}', e.message) + ' ' + t('Cihazdaki imaj commit almadığı için çalıştırılmaz; bootloader yeni güncelleme bekler.'));
+    }
+    this.post({ type: 'prog.progress', op: 'write', pct: null });
+  }
+
   /** Sektör listesi (OpenOCD'den; okunamazsa işlemci verisinden) ve option byte'lar */
   async progInfo() {
+    if (this.esboot) return this.esbootRefresh();
     const tg = this.progT();
     if (!tg) return this.post({ type: 'prog.info', error: t('Önce bağlanın.') });
     const mcu = this.lib.mcus[this.design.mcuId];
@@ -1336,6 +1466,7 @@ class Studio {
    * @param {{ base?: number, erase?: boolean, verify?: boolean, run?: boolean }} m
    */
   async progWrite(m) {
+    if (this.esboot) return this.esbootUpdate(m);
     const tg = this.progT();
     if (!tg) return this.progLog('error', t('Önce bağlanın.'));
     const img = await this.progPickImage(m.base, t('Yaz'));
@@ -1376,6 +1507,14 @@ class Studio {
 
   /** Reset ve çalıştır; bootloader'da GO komutu (bağlantı biter) */
   async progReset() {
+    if (this.esboot) {
+      try {
+        await this.esboot.client.request(esboot.CMD.BOOT);
+      } catch (e) {
+        return this.progLog('error', e.message);
+      }
+      return this.bootDisconnect(t('Bootloader yeniden başlatıldı: uygulama doğrulanıp çalıştırılıyor.'));
+    }
     const tg = this.progT();
     if (!tg) return;
     try {

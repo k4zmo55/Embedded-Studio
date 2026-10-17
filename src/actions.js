@@ -207,7 +207,8 @@ class ProjectActions {
     const p = this.project();
     if (!p || this.state.running) return false;
     if (!(await this.build({ quiet: true }))) return false;
-    const elf = path.join(p.root, cm.elfRel(p.design));
+    // ES-303: bootloader açıksa bootloader + uygulama (_full.hex)
+    const elf = path.join(p.root, cm.flashRel(p.design));
     if (!(await this.confirm(p, elf))) return false;
     return this.flashFileAt(p, elf, { reset: !!opts.run });
   }
@@ -234,7 +235,8 @@ class ProjectActions {
       serial: multiple ? probe.serial : undefined, svd: fs.existsSync(svd) ? rel(svd) : undefined,
       toolchainPath: p.design.build.toolchain?.gccPath || undefined, rtos: !!p.design.rtos,
       speedKHz: flashSettings().speedKHz || undefined,
-      cpuHz: Math.round(computeClock(mcu, p.design.clock).freq.hclk * 1e6), swo: !/cortex-m0/.test(familyOf(mcu).core)
+      cpuHz: Math.round(computeClock(mcu, p.design.clock).freq.hclk * 1e6), swo: !/cortex-m0/.test(familyOf(mcu).core),
+      loadFiles: cm.bootOn(p.design) ? [rel(path.join(p.root, cm.flashRel(p.design)))] : undefined
     };
   }
 

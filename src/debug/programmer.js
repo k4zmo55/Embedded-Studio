@@ -306,7 +306,10 @@ function readRange(mcu, region, addr, length) {
 }
 
 /** Sektör tablosu için kısa boyut metni */
-const sizeText = (n) => (n >= 1024 * 1024 ? `${n / 1024 / 1024} MB` : n >= 1024 ? `${n / 1024} KB` : `${n} B`);
+const sizeText = (n) => {
+  const f = (x) => (Number.isInteger(x) ? String(x) : x.toFixed(1));
+  return n >= 1024 * 1024 ? `${f(n / 1024 / 1024)} MB` : n >= 1024 ? `${f(n / 1024)} KB` : `${n} B`;
+};
 
 module.exports = {
   FLASH_BASE, RAM_BASE, flashLayout, parseFlashInfo, layoutFromBanks, eraseRanges, rdpLevel, obSpec, decodeOptionBytes,

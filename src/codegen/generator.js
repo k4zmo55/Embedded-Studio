@@ -17,6 +17,16 @@ const cm = require('./build');
 const { familyOf } = require('./families');
 const { regDriverFiles } = require('./regdrivers');
 const { launchConfigs, buildTaskLabel } = require('../debug/launch');
+const bl = require('./bootloader');
+
+/** ES-303: tasarımda USB-UART komponentinin bağlı olduğu UART (bootloader için varsayılan) */
+function preferredBootUart(result) {
+  const tx = result.connections.find((c) => /^(?:US|U)ART\d+_TX$/.test(c.signal || ''));
+  if (!tx) return undefined;
+  const inst = tx.signal.replace(/_TX$/, '');
+  const rx = result.connections.find((c) => c.signal === `${inst}_RX`);
+  return rx ? { inst, tx: tx.mcuPin, rx: rx.mcuPin } : undefined;
+}
 const { cIdent, indent } = bsp;
 
 const GENERATOR_VERSION = 6; // 3: bare-metal sade klasör yapısı; 4: cmake/embedded-studio.cmake + CMakePresets.json; 5: çoklu aile (ES-106); 6: örnek register sürücüleri, H7 .dma_buffer
@@ -414,14 +424,22 @@ ${indent(userBlock('PostInit'))}
   if (framework === 'hal') add(`${P.inc}/${fam.halConf}`, halConf(opts.halConfTemplate, x, stamp, fam));
 
   // ---- Derleme sistemi ----
+  // ES-303: bootloader açıksa uygulama yuvada (bölümleme, başlık, bootloader hedefi)
+  const boot = design.boot && design.boot.enabled ? bl.normalizeBoot(design.boot, mcu, preferredBootUart(result)) : null;
+  const part = boot && bl.partition(mcu, boot);
   // Ayarlar cmake/embedded-studio.cmake'te; CMakeLists.txt ya Embedded Studio'nun (USER CODE bloklu) ya da kullanıcının
   const userCmake = build.cmake === 'user';
-  add('cmake/embedded-studio.cmake', cm.cmakeModule({ name, mcu, framework, rtos: !!design.rtos, hseHz: Math.round(clock.config.hseMHz * 1e6), P, build }));
+  add('cmake/embedded-studio.cmake', cm.cmakeModule({ name, mcu, framework, rtos: !!design.rtos, hseHz: Math.round(clock.config.hseMHz * 1e6), P, build, boot, part }));
   add('cmake/arm-none-eabi.cmake', cm.toolchainFile(build));
   if (userCmake) add('CMakeLists.txt', cm.cmakeListsStarter(name), 'once');
-  else add('CMakeLists.txt', cm.cmakeListsManaged(name, userBlock), 'user');
+  else add('CMakeLists.txt', cm.cmakeListsManaged(name, userBlock, !!boot), 'user');
   add('CMakePresets.json', cm.cmakePresets(), userCmake ? 'once' : 'generated');
-  add(join(P.linkerDir, `${mcu.name}_FLASH.ld`), linkerScript(mcu));
+  // ---- ES-303: bootloader ve bölümleme ----
+  add(join(P.linkerDir, `${mcu.name}_FLASH.ld`), linkerScript(mcu, part ? bl.appLinker(part) : undefined));
+  if (boot) {
+    add(join(P.linkerDir, `${mcu.name}_BOOT.ld`), linkerScript(mcu, bl.bootLinker(part)));
+    for (const f of bl.bootFiles({ design, mcu, clock, P, boot, userBlock })) add(f.path, f.content, /** @type {any} */ (f.kind || 'generated'));
+  }
   add('.vscode/tasks.json', tasksJson(name, mcu), 'once');
   add('.vscode/launch.json', launchJson(design, mcu, clock), 'once');
   add('.vscode/settings.json', JSON.stringify({ 'files.autoSave': 'afterDelay', 'files.autoSaveDelay': 1000, 'cmake.configureOnOpen': false }, null, 2) + '\n', 'once');
@@ -578,19 +596,28 @@ ${userBlock('Config')}
 `;
 }
 
-function linkerScript(mcu) {
+/**
+ * @param {any} mcu
+ * @param {{ origin: number, length: number, header: boolean, shared: boolean, ramOffset: number }} [part]
+ *   ES-303 bölümleme: bootloader ya da uygulama yuvası (başlık bölgesi .es_header), RAM sonunda ortak 16 bayt
+ */
+function linkerScript(mcu, part) {
   const h7 = familyOf(mcu).key === 'h7';
-  return `/* Embedded Studio: ${mcu.name} bağlayıcı betiği (${mcu.device.flashKB} KB flash, ${mcu.device.ramKB} KB RAM) */
+  const hx = (v) => '0x' + (v >>> 0).toString(16).toUpperCase().padStart(8, '0');
+  const ram = mcu.device.ramKB * 1024 - (part ? part.ramOffset : 0);
+  const what = !part ? '' : part.header ? ' — uygulama yuvası (bootloader açık)' : ' — bootloader';
+  return `/* Embedded Studio: ${mcu.name} bağlayıcı betiği (${mcu.device.flashKB} KB flash, ${mcu.device.ramKB} KB RAM)${what} */
 ENTRY(Reset_Handler)
 
-_estack = ORIGIN(RAM) + LENGTH(RAM);
+${part && part.shared ? `/* RAM'in son 16 baytı bootloader ile uygulama arasında ortak (güncelleme isteği); yığın bunun altından başlar */
+_estack = ORIGIN(RAM) + LENGTH(RAM) - 16;` : '_estack = ORIGIN(RAM) + LENGTH(RAM);'}
 _Min_Heap_Size = 0x200;
 _Min_Stack_Size = 0x400;
 
 MEMORY
 {
-  RAM   (xrw) : ORIGIN = 0x20000000, LENGTH = ${mcu.device.ramKB}K
-  FLASH (rx)  : ORIGIN = 0x08000000, LENGTH = ${mcu.device.flashKB}K${h7 ? `
+  RAM   (xrw) : ORIGIN = ${part && part.ramOffset ? `${hx(0x20000000 + part.ramOffset)}, LENGTH = ${ram} /* Cortex-M0: ilk ${part.ramOffset} bayt vektör tablosu kopyası */` : `0x20000000, LENGTH = ${mcu.device.ramKB}K`}
+  FLASH (rx)  : ORIGIN = ${part ? `${hx(part.origin)}, LENGTH = ${part.length / 1024}K` : `0x08000000, LENGTH = ${mcu.device.flashKB}K`}${h7 ? `
   RAM_D1 (xrw) : ORIGIN = 0x24000000, LENGTH = 128K /* AXI SRAM: DMA1/DMA2 DTCM'e erişemez */` : ''}
 }
 ${h7 ? `
@@ -606,14 +633,21 @@ SECTIONS
 }
 ` : ''}
 SECTIONS
-{
+{${part && part.header ? `
+  /* Yuvanın başında 1 KB imaj başlığı (es_image.c); vektör tablosu hemen arkasında */
+  .es_header :
+  {
+    KEEP(*(.es_header))
+  } >FLASH
+` : ''}
   .isr_vector :
   {
     . = ALIGN(4);
     KEEP(*(.isr_vector))
     . = ALIGN(4);
   } >FLASH
-
+${part && part.header ? `  ASSERT(ADDR(.isr_vector) == ORIGIN(FLASH) + 0x400, "Vektör tablosu yuva + 0x400'de olmalı (.es_header 1 KB)")
+` : ''}
   .text :
   {
     . = ALIGN(4);
@@ -734,9 +768,31 @@ function launchJson(design, mcu, clock) {
     configurations: launchConfigs({
       project: design.project.name, cwd: '${workspaceFolder}', elf: '${workspaceFolder}/' + cm.elfRel(design),
       mcuName: mcu.name, targetCfg: mcu.device.openocdTarget, rtos: !!design.rtos, preLaunchTask: buildTaskLabel(cm.normalizeBuild(design.build).type),
+      loadFiles: cm.bootOn(design) ? ['${workspaceFolder}/' + cm.flashRel(design)] : undefined,
       ...traceInputs(mcu, clock)
     })
   }, null, 2) + '\n';
+}
+
+/** ES-303: AGENTS.md'de bootloader bölümü (yalnızca açıksa) */
+function bootGuide(design, mcu) {
+  if (!(design.boot && design.boot.enabled)) return '';
+  const b = bl.normalizeBoot(design.boot, mcu);
+  const p = bl.partition(mcu, b);
+  const hx = (v) => '0x' + v.toString(16).toUpperCase().padStart(8, '0');
+  return `
+## Bootloader (ES-303)
+
+Flash bölümlü: bootloader ${hx(p.bootBase)} (${b.sizeKB} KB), uygulama yuvası ${hx(p.slotBase)}: 1 KB imaj başlığı, vektör tablosu ${hx(p.vectors)}.
+Güncelleme ${b.uart} (TX ${b.tx}, RX ${b.rx}, ${b.baud} baud) üzerinden; uygulama sürümü ${b.version} (Proje Ayarları > Bootloader).
+
+- \`bootloader/\` altındaki dosyalar üretilir; yalnızca \`bootloader/main.c\` içindeki USER CODE blokları kullanıcınındır.
+- Uygulamada \`es_image.c\` (başlık, \`.es_header\`) silinmemeli; boyut ve CRC derlemeden sonra \`cmake/es-image.cmake\` ile yazılır.
+- Vektör tablosu adresini (VTOR) elle değiştirmeyin: \`VECT_TAB_OFFSET\` CMake'te tanımlı.${p.remapVectors ? ' Cortex-M0: bootloader vektörleri RAM başına kopyalar, uygulama RAM\'i 0xC0\'dan başlar.' : ''}
+- RAM'in son 16 baytı bootloader ile ortak; yığın bunun altından başlar.
+- Uygulamadan güncelleme moduna geçmek: \`#include "es_boot.h"\` ve \`es_boot_request_update();\`
+- Karta ilk yükleme: \`<proje>_full.hex\` (bootloader + uygulama). Güncelleme: başlıklı \`<proje>.bin\`.
+`;
 }
 
 function agentGuide(design, lib, result, mcu, framework, name, files) {
@@ -790,7 +846,7 @@ ${regRow}${cmakeRow}` : `| Amaç | Dosya / blok |
 | ${design.rtos ? 'Kendi FreeRTOS task\'ları | `app.c` → `Tasks` (vTaskStartScheduler öncesi xTaskCreate)' : 'Ana döngü işi | `app.c` → `Loop`'} |
 | Kesme işleyicileri | \`${familyOf(mcu).itFile}\` → \`Handlers\` |
 ${regRow}${cmakeRow}`}
-
+${bootGuide(design, mcu)}
 ## Donanım özeti
 
 - MCU: ${mcu.name} (${mcu.board}), altyapı: ${framework === 'hal' ? 'STM32 HAL' : 'bare-metal (CMSIS register)'}, ${design.rtos ? 'FreeRTOS' : 'RTOS yok (süper döngü)'}

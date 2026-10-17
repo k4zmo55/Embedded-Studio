@@ -1515,6 +1515,90 @@ edge: { sourcename: "Task_A" targetname: "__indirect_call" label: "a.c:9:40" }
     passed++;
     console.log('  ✓ Sistem bootloader\'ı (ES-302): AN3155 simülasyonda (GET, GET_ID, READ, WRITE, ERASE/EXT_ERASE, GO; F4, F1, H7 ikinci bank), hatalar, DTR/RTS sırası, dfu-util/CubeProgrammer komutları ve çıktıları, AN2606 tablosu');
   }
+  {
+    // ES-303: güvenli bootloader şablonu
+    const bl = require('../src/codegen/bootloader');
+    const eb = require('../src/debug/esboot');
+    const cmb = require('../src/codegen/build');
+    const f411 = lib.mcus.stm32f411ceu6;
+    assert.deepStrictEqual(bl.sizeOptions(f411), [16, 32, 48, 64, 128, 256]);
+    assert.strictEqual(bl.defaultSize(lib.mcus.stm32h743zit6), 128);
+    assert.strictEqual(bl.defaultSize(lib.mcus.stm32f767zit6), 32);
+    assert.deepStrictEqual(bl.sizeOptions(lib.mcus.stm32f030c8t6), [4, 8, 12, 16, 24, 32]);
+    for (const m of Object.values(lib.mcus)) {
+      const b = bl.normalizeBoot({ enabled: true }, m);
+      const part = bl.partition(m, b);
+      assert.ok(b.uart && b.tx && b.rx, `${m.id}: UART`);
+      assert.strictEqual(part.slotBase + part.slotSize, 0x08000000 + m.device.flashKB * 1024, `${m.id}: yuva flash sonuna kadar`);
+      assert.ok(part.units.length && part.units[0].addr === part.slotBase, `${m.id}: ilk silme birimi yuva başında`);
+      assert.strictEqual(part.vectors % 0x200, 0, `${m.id}: VTOR hizası`);
+    }
+    // USB-UART komponentinin UART'ı tercih edilir; geçersiz seçim düzeltilir
+    assert.deepStrictEqual((({ uart, tx, rx }) => [uart, tx, rx])(bl.normalizeBoot({ enabled: true }, f411, { inst: 'USART2', tx: 'PA2', rx: 'PA3' })), ['USART2', 'PA2', 'PA3']);
+    assert.deepStrictEqual((({ uart, tx, rx }) => [uart, tx, rx])(bl.normalizeBoot({ enabled: true, uart: 'USART9', tx: 'PZ1' }, f411)), ['USART1', 'PA9', 'PA10']);
+    assert.strictEqual(bl.normalizeBoot({ sizeKB: 20 }, f411).sizeKB, 16, 'sektör sınırında olmayan boyut düzeltilir');
+    assert.strictEqual(bl.versionWord('2.1.5'), 0x02010005);
+    const f0 = bl.partition(lib.mcus.stm32f030c8t6, bl.normalizeBoot({ enabled: true }, lib.mcus.stm32f030c8t6));
+    assert.deepStrictEqual([f0.remapVectors, f0.appRamOffset], [true, 0xc0], 'Cortex-M0: vektörler RAM\'e');
+    // Üretim: bootloader dosyaları, iki linker betiği, CMake hedefi, Yükle / Debug dosyası
+    const dB = design([inst('usb_uart'), inst('led')], { framework: 'register', mode: 'pro', boot: { enabled: true, version: '3.2.1' } });
+    const gB = generate(dB, lib, assign(dB, lib), computeClock(mcu, dB.clock), {});
+    const byPath = Object.fromEntries(gB.files.map((f) => [f.path, f]));
+    for (const f of ['bootloader/main.c', 'bootloader/es_boot_core.c', 'bootloader/es_boot_port.c', 'bootloader/es_image.h', 'bootloader/reg/es_flash.c', 'bootloader/reg/es_uart.c', 'src/es_image.c', 'src/es_boot.c', 'inc/es_boot.h', 'cmake/es-image.cmake', 'linker/STM32F411CEU6_BOOT.ld']) assert.ok(byPath[f], f);
+    assert.strictEqual(byPath['bootloader/main.c'].kind, 'user');
+    const appLd = byPath['linker/STM32F411CEU6_FLASH.ld'].content, bootLd = byPath['linker/STM32F411CEU6_BOOT.ld'].content;
+    assert.match(appLd, /FLASH \(rx\) {2}: ORIGIN = 0x08004000, LENGTH = 496K/);
+    assert.match(appLd, /KEEP\(\*\(\.es_header\)\)[\s\S]*ASSERT\(ADDR\(\.isr_vector\) == ORIGIN\(FLASH\) \+ 0x400/);
+    assert.match(bootLd, /FLASH \(rx\) {2}: ORIGIN = 0x08000000, LENGTH = 16K/);
+    assert.ok(!/es_header/.test(bootLd));
+    for (const ld of [appLd, bootLd]) assert.match(ld, /_estack = ORIGIN\(RAM\) \+ LENGTH\(RAM\) - 16;/);
+    const cfg = byPath['bootloader/es_boot_config.h'].content;
+    assert.match(cfg, /ES_SLOT_BASE {5}0x08004000U/);
+    assert.match(cfg, /ES_BOOT_UART {5}USART\d/);
+    assert.match(cfg, /ES_BOOT_HW_CRC {3}0/, 'F4: yazılım CRC');
+    const mod = byPath['cmake/embedded-studio.cmake'].content;
+    assert.match(mod, /ES_APP_VECTORS=0x08004400U/);
+    assert.match(mod, /VECT_TAB_OFFSET=0x00004400U/);
+    assert.match(mod, /ES_FW_VERSION=0x03020001U/);
+    assert.match(mod, /function\(embedded_studio_bootloader app\)/);
+    assert.match(mod, /-DMODE=header/);
+    assert.match(byPath['CMakeLists.txt'].content, /embedded_studio_bootloader\(\$\{PROJECT_NAME\}\)/);
+    assert.match(JSON.parse(byPath['.vscode/launch.json'].content).configurations[0].loadFiles[0], /build\/debug\/smoke_full\.hex$/);
+    assert.ok(!JSON.parse(byPath['.vscode/launch.json'].content).configurations[2].loadFiles, 'attach: yükleme yok');
+    assert.strictEqual(cmb.flashRel(dB), 'build/debug/smoke_full.hex');
+    assert.strictEqual(cmb.flashRel(design([inst('led')])), 'build/debug/smoke.elf');
+    // Kapalıyken hiçbir bootloader dosyası yok, linker eskisi gibi
+    const gN = generate(design([inst('led')], { framework: 'register', mode: 'pro' }), lib, assign(design([inst('led')]), lib), computeClock(mcu, undefined), {});
+    assert.ok(!gN.files.some((f) => /bootloader|es_image|es-image/.test(f.path)));
+    assert.match(gN.files.find((f) => /_FLASH\.ld$/.test(f.path)).content, /ORIGIN = 0x08000000, LENGTH = 512K/);
+    // H7: donanım CRC, 32 baytlık yazma birimi; U5: VTOR sistem dosyasında koşulsuz (VECT_TAB_OFFSET tanımı yeter)
+    const h7 = lib.mcus.stm32h743zit6;
+    const ph7 = bl.partition(h7, bl.normalizeBoot({ enabled: true }, h7));
+    assert.deepStrictEqual([ph7.slotBase, ph7.progUnit], [0x08020000, 32]);
+    // İstemci ↔ JS benzetimi: güncelleme, sürüm, yarıda kalma, bozuk imaj
+    const img = eb.buildImage({ slotBase: 0x08004000, size: 5000, version: '1.4.2', buildId: 'deadbeef' });
+    assert.ok(eb.checkImage(img).ok);
+    assert.strictEqual(eb.parseHeader(img).version, '1.4.2');
+    const bad = Buffer.from(img); bad[eb.REGION + 9] ^= 1;
+    assert.match(eb.checkImage(bad).error, /CRC-32 tutmuyor/);
+    assert.match(eb.checkImage(Buffer.alloc(2048)).error, /başlığı yok/);
+    const { client, dev } = eb.simEsBoot({ slotBase: 0x08004000, slotSize: 496 * 1024, progUnit: 4 });
+    assert.strictEqual((await client.info()).app, 1);
+    const r = await client.update(img, { boot: true });
+    assert.strictEqual(r.total, img.length);
+    assert.deepStrictEqual([dev.validate(true), dev.booted], [0, 1]);
+    const info2 = await client.info();
+    assert.deepStrictEqual([info2.app, info2.header.version, info2.header.buildId], [0, '1.4.2', 'deadbeef']);
+    await client.request(eb.CMD.START, Buffer.from(Uint32Array.of(img.length).buffer));
+    assert.strictEqual(dev.validate(true), 1, 'START yuvayı siler');
+    const part1 = Buffer.alloc(4 + 1024); img.copy(part1, 4, 0, 1024);
+    await client.request(eb.CMD.DATA, part1);
+    assert.strictEqual(dev.validate(true), 4, 'yarıda: commit yok');
+    await assert.rejects(() => client.request(eb.CMD.END), /sıra hatası/);
+    await assert.rejects(() => client.update(eb.buildImage({ slotBase: 0x08008000 })), /başka bir yuva/);
+    passed++;
+    console.log('  ✓ Güvenli bootloader (ES-303): 15 işlemcide bölümleme ve UART, F0 vektör kopyası, üretilen dosyalar, linker betikleri, CMake hedefi, Yükle/Debug _full.hex, istemci ↔ benzetim (güncelleme, yarıda kalma, bozuk imaj, yanlış yuva)');
+  }
   const { OpenOcdTarget, freePort } = require('../src/debug/session');
   const port = await freePort();
   assert.ok(port > 0 && port !== 6666, String(port));

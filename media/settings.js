@@ -174,6 +174,50 @@
       })) : null);
   }
 
+  /** ES-303: güvenli bootloader şablonu (bölümleme, UART, sürüm) */
+  function bootSection() {
+    const mcu = state.lib.mcus[state.design.mcuId];
+    const o = mcu.boot || { sizes: [], uarts: [], defaultKB: 16 };
+    const b = state.design.boot || {};
+    const set = (mutate) => {
+      const next = { ...b };
+      mutate(next);
+      state.design.boot = next;
+      update();
+      render();
+    };
+    const hx = (v) => '0x' + (v >>> 0).toString(16).toUpperCase().padStart(8, '0');
+    const sizeKB = o.sizes.includes(Number(b.sizeKB)) ? Number(b.sizeKB) : o.defaultKB;
+    const u = o.uarts.find((x) => x.inst === b.uart) || o.uarts[0];
+    const slot = 0x08000000 + sizeKB * 1024;
+    const field = (id, label, input) => h('div', { class: 'field' }, h('label', { for: id, text: label }), input);
+    return h('section', { class: 'wizard-card', id: 'set-boot' },
+      h('h3', { text: t('Bootloader') }),
+      h('p', { class: 'hint', text: t('Güvenli bootloader şablonu: flash\'ın başına bir bootloader, ardından uygulama yuvası. Uygulama imajının başlığı (sürüm, boyut, CRC-32, derleme kimliği) derlemeden sonra yazılır; bootloader açılışta CRC\'yi doğrular, UART üzerinden güncellemeyi (Programlayıcı > Embedded Studio bootloader) kabul eder. Yarıda kalan güncellemede uygulama çalıştırılmaz, bootloader yeni güncelleme bekler.') }),
+      h('label', { class: 'check' }, h('input', { type: 'checkbox', id: 'set-boot-on', checked: !!b.enabled, onchange: (e) => set((x) => { x.enabled = e.target.checked; }) }), h('span', { text: t('Bootloader kullan') })),
+      b.enabled ? h('div', { class: 'set-grid' },
+        field('set-boot-size', t('Bootloader bölgesi'), h('select', { id: 'set-boot-size', onchange: (e) => set((x) => { x.sizeKB = Number(e.target.value); }) },
+          ...o.sizes.map((kb) => h('option', { value: kb, selected: kb === sizeKB, text: `${kb} KB` })))),
+        field('set-boot-uart', t('Güncelleme UART\'ı'), h('select', { id: 'set-boot-uart', onchange: (e) => set((x) => { const n = o.uarts.find((y) => y.inst === e.target.value); Object.assign(x, { uart: n.inst, tx: n.tx[0].pin, rx: n.rx[0].pin }); }) },
+          ...o.uarts.map((x) => h('option', { value: x.inst, selected: u && x.inst === u.inst, text: x.inst })))),
+        u ? field('set-boot-tx', 'TX', h('select', { id: 'set-boot-tx', onchange: (e) => set((x) => { x.uart = u.inst; x.tx = e.target.value; }) },
+          ...u.tx.map((p) => h('option', { value: p.pin, selected: p.pin === b.tx, text: `${p.pin} (AF${p.af})` })))) : null,
+        u ? field('set-boot-rx', 'RX', h('select', { id: 'set-boot-rx', onchange: (e) => set((x) => { x.uart = u.inst; x.rx = e.target.value; }) },
+          ...u.rx.map((p) => h('option', { value: p.pin, selected: p.pin === b.rx, text: `${p.pin} (AF${p.af})` })))) : null,
+        field('set-boot-baud', 'Baud', h('select', { id: 'set-boot-baud', onchange: (e) => set((x) => { x.baud = Number(e.target.value); }) },
+          ...[9600, 19200, 38400, 57600, 115200, 230400, 460800].map((v) => h('option', { value: v, selected: v === Number(b.baud || 115200), text: String(v) })))),
+        field('set-boot-wait', t('Açılış penceresi (ms)'), h('input', { id: 'set-boot-wait', type: 'number', min: 0, max: 5000, step: 50, value: b.waitMs ?? 300, title: t('Açılışta bu süre UART dinlenir; paket gelirse güncelleme moduna geçilir. 0: yalnızca uygulama isteyince ya da imaj geçersizse.'), onchange: (e) => set((x) => { x.waitMs = Number(e.target.value); }) })),
+        field('set-boot-version', t('Uygulama sürümü'), h('input', { id: 'set-boot-version', class: 'mono', value: b.version || '1.0.0', placeholder: '1.0.0', onchange: (e) => set((x) => { x.version = e.target.value.trim(); }) })),
+        h('label', { class: 'check' }, h('input', { type: 'checkbox', id: 'set-boot-hwcrc', checked: b.hwCrc !== false, onchange: (e) => set((x) => { x.hwCrc = e.target.checked; }) }), h('span', { text: t('Donanım CRC birimi (F1/F4 dışında)') }))) : null,
+      b.enabled ? h('table', { class: 'regs pg-obt', id: 'set-boot-map' },
+        h('tbody', {},
+          h('tr', {}, h('td', { text: t('Bootloader') }), h('td', { class: 'mono', text: `0x08000000 – ${hx(slot - 1)} (${sizeKB} KB)` })),
+          h('tr', {}, h('td', { text: t('İmaj başlığı') }), h('td', { class: 'mono', text: `${hx(slot)} (1 KB)` })),
+          h('tr', {}, h('td', { text: t('Uygulama (vektör tablosu)') }), h('td', { class: 'mono', text: `${hx(slot + 0x400)} – ${hx(0x08000000 + mcu.device.flashKB * 1024 - 1)} (${mcu.device.flashKB - sizeKB} KB)` })),
+          h('tr', {}, h('td', { text: t('Ortak RAM (güncelleme isteği)') }), h('td', { class: 'mono', text: `${hx(0x20000000 + mcu.device.ramKB * 1024 - 16)} (16 B)` })))) : null,
+      b.enabled ? h('p', { class: 'hint', text: t('"Kod Üret" bootloader/ klasörünü, linker betiklerini ve cmake/es-image.cmake\'i üretir. Derle: <proje>_boot.elf, <proje>.bin (başlıklı uygulama) ve <proje>_full.hex (ikisi birlikte; Yükle ve Debug bunu yazar). Uygulamadan güncelleme moduna geçmek için es_boot_request_update().') }) : null);
+  }
+
   function buildSection() {
     const b = state.design.build;
     const mcu = state.lib.mcus[state.design.mcuId];
@@ -308,7 +352,8 @@
         h('button', { class: 'ghost', id: 'set-cancel', disabled: !changed(), onclick: () => { draft = null; preview = null; render(); } }, t('Vazgeç')),
         h('button', { id: 'set-apply', disabled: !changed() || !preview, onclick: apply }, t('Uygula'))),
       buildSection(),
-      regDriverSection());
+      regDriverSection(),
+      bootSection());
     if (focused && $(focused)) $(focused).focus();
     if ($('settings')) $('settings').scrollTop = scroll;
   }
