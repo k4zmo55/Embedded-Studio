@@ -109,6 +109,28 @@ Bare-metal kullanıcı için yalnızca cihaz başlığına (`stm32xxxx.h`) bağ�
 - [ ] Her sürücü için kısa açıklama ve ilgili reference manual bölüm numarası
 - [ ] Aile farkları (F1 ve F4 GPIO yapısı gibi) için açık `#if` blokları veya aileye göre ayrı dosyalar
 
+### ES-108 · Derleme temiz olduğu halde editörde onlarca hata (RCC tanımsız)
+`etiketler: tip:hata, alan:derleme, öncelik:yüksek, seviye:hepsi`
+
+2026-10-17: STM32F407 + register + FreeRTOS projesinde (0.4.x'ten yükseltilmiş) Sorunlar panelinde 55 hata: `use of undeclared identifier 'RCC'`, `'board.h' file not found` gibi. `cmake --build build/debug` hatasız geçiyor; hatalar derleyiciden değil, editörün dil sunucusundan (clangd / C/C++ IntelliSense) geliyor.
+
+**Kök neden:** üretilen proje editöre derleme veritabanının yerini söylemiyor. CMake `compile_commands.json`'u `build/<tip>/` altına yazıyor; clangd ise varsayılan olarak `build/compile_commands.json`'a bakıyor. Yükseltilen projede orada 0.4.x'ten kalma eski veritabanı (eski `Core/` yapısı, `src/*.c` yok) duruyor; clangd `src/` dosyaları için komutu tahmin ediyor, `-DSTM32F407xx` ve include yolları gelmiyor. Yeni projede ise veritabanı hiç bulunamıyor. Ayrıca `-fcallgraph-info=su` clang tarafından tanınmıyor.
+
+- [ ] `.clangd`: `CompilationDatabase: build/<tip>`, clang'ın bilmediği gcc bayrakları (`-fcallgraph-info`, `-fstack-usage`) çıkarılır; derleme tipi değişince güncellenir, kullanıcının kendi `.clangd` dosyasına dokunulmaz
+- [ ] `.vscode/settings.json`: `C_Cpp.default.compileCommands` (Microsoft C/C++ eklentisi için); kullanıcının farklı değerine dokunulmaz
+- [ ] Kod Üret'ten sonra derleme klasörü yoksa arka planda yalnızca CMake yapılandırması (derlemeden önce de IntelliSense doğru)
+- [ ] Birim testleri; clangd `--check` ile üretilen projede sıfır hata
+
+### ES-109 · Farklı işlemci ve altyapılarla yeni proje matris testi
+`etiketler: tip:iyileştirme, alan:kalite, öncelik:yüksek, seviye:hepsi`
+
+ES-108'deki hatanın yalnızca yükseltilen projede mi yoksa sıfırdan oluşturulan projede de mi çıktığı ve farklı işlemci/başlatma şekillerinde tekrarlanıp tekrarlanmadığı kontrol edilmeli.
+
+- [ ] Sıfırdan yeni proje: en az F0/F1/F4/G0/G4/L4/H7 ailelerinden işlemciler
+- [ ] Her biri için HAL, bare-metal (register) acemi ve profesyonel mod, FreeRTOS açık/kapalı
+- [ ] Her varyantta: CMake derlemesi hatasız, clangd `--check` ile bütün kaynak ve başlıklarda sıfır hata
+- [ ] Matris otomatik test olarak (`test/intellisense.js`), sonuç tablosu bu issue'ya
+
 ---
 
 ## M2 · Test ve debug (ana öncelik)
@@ -496,6 +518,17 @@ Uluslararası katkı ve kullanım için arayüz metinlerinin çevrilebilir olmas
 
 - [ ] Metinlerin tek bir sözlük dosyasında toplanması
 - [ ] VS Code dil ayarına göre Türkçe / İngilizce
+
+### ES-804 · Ayarlar: arayüz sekmelerini gizleme ve geri getirme
+`etiketler: tip:özellik, alan:arayüz, öncelik:orta, seviye:hepsi`
+
+Kullanıcı kullanmadığı sekmeleri (ör. Monitör, Komponent oluşturucu) üst çubuktan gizleyebilmeli, istediğinde geri getirebilmeli.
+
+- [ ] Ayarlar sekmesinde "Görünen sekmeler" bölümü: her sekme için aç/kapat, varsayılana dön
+- [ ] Ayarlar sekmesi gizlenemez (geri getirmenin yolu kaybolmasın); en az bir çalışma sekmesi açık kalır
+- [ ] Seçim kullanıcı başına hatırlanır (bütün projelerde geçerli), çalışma moduna (acemi / profesyonel) göre ayrı
+- [ ] Gizli sekmenin kısayolu (Ctrl+1…9) atlanır; gizli sekme etkinken gizlenirse ana sekmeye geçilir
+- [ ] Birim ve arayüz testi
 
 ---
 
