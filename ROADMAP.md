@@ -262,6 +262,16 @@ Harici programa (Tera Term, PuTTY, RealTerm) gerek kalmamalı.
 - [ ] Option bytes görüntüleme ve düzenleme: RDP seviyesi, WRP/PCROP, BOR, boot ayarları (yanlışlıkla RDP 2'ye geçişe karşı çift onay)
 - [ ] İşlem günlüğü
 
+### ES-306 · Option byte yazma: RDP, WRP/PCROP, BOR, boot
+`etiketler: tip:özellik, alan:flash, öncelik:yüksek, seviye:profesyonel`
+
+ES-301'de option byte'lar yalnızca okunup gösteriliyor (F0/F1/F3/F4/F7/G0/G4/L4/U5/H7). Yazma, kart üzerinde denenmeden yayınlanmamalı: yanlış RDP ya da WRP kartı kilitleyebilir.
+
+- [ ] Aileye göre yazma sırası (OPTKEYR kilidi açma, OPTCR/OPTR yazma, OPTSTRT, BSY bekleme, OBL_LAUNCH ya da reset); F0/F1/F3'te option byte alanını silip yeniden yazma
+- [ ] Programlayıcı sekmesinde düzenleme: RDP seviyesi, sektör/sayfa bazında WRP, BOR seviyesi, kullanıcı bitleri, boot adresleri; değişiklik önizlemesi
+- [ ] RDP 1 → 0 geçişinin flash'ı tamamen sileceği uyarısı; RDP 2'ye geçişte çift onay (işlemci adını yazdırma)
+- [ ] Her ailede en az bir kartla deneme (Nucleo/Discovery); denenmeyen aileler salt okunur kalır
+
 ### ES-302 · ST sistem bootloader'ı üzerinden yükleme (UART / USB DFU)
 `etiketler: tip:özellik, alan:flash, öncelik:orta, seviye:hepsi`
 

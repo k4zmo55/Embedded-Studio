@@ -50,6 +50,7 @@ const { readRegion, toIntelHex, checkWrite, simSymbols, MAX_SAVE } = require('./
 const fault = require('./debug/fault');
 const trace = require('./debug/trace');
 const rtos = require('./debug/rtos');
+const prog = require('./debug/programmer');
 const A = require('./analyzer');
 const serial = require('./monitor/serial');
 const i18n = require('./i18n');
@@ -391,6 +392,7 @@ class Studio {
       case 'ready': {
         this.post({ type: 'init', lib: this.libForWebview() });
         this.postHiddenTabs();
+        this.post({ type: 'prog.history', entries: this.progEntries || [] });
         this.design = this.loadDesign();
         if (this.design) this.pushState();
         else this.post({ type: 'welcome', ...welcomeInfo(this.context) });
@@ -515,6 +517,27 @@ class Studio {
       // ---- debug ----
       case 'debug.connect':
         await this.connectDebug(m.mode);
+        break;
+      case 'prog.connect':
+        await this.progConnect(m);
+        break;
+      case 'prog.info':
+        await this.progInfo();
+        break;
+      case 'prog.read':
+        await this.progRead(m);
+        break;
+      case 'prog.compare':
+        await this.progCompare(m);
+        break;
+      case 'prog.erase':
+        await this.progErase(m);
+        break;
+      case 'prog.reset':
+        if (!this.target) break;
+        await this.target.reset();
+        this.progLog('info', t('Hedef resetlendi ve çalışıyor.'));
+        this.post({ type: 'debug.status', connected: true, mode: this.target.mode, state: await this.target.state() });
         break;
       case 'debug.disconnect':
         await this.dropTrace();
@@ -829,8 +852,23 @@ class Studio {
   prepareCodeIntel() {
     const type = cm.normalizeBuild(this.design.build).type;
     syncCodeIntel(this.root, type, this.design.framework === 'hal' ? `${familyOf(this.lib.mcus[this.design.mcuId]).prefix}_hal_def.h` : undefined);
-    if (fs.existsSync(path.join(this.root, cm.buildDir(this.design.build), 'compile_commands.json'))) return;
-    require('child_process').exec(cm.configureCommand(type), { cwd: this.root, windowsHide: true, timeout: 120000 }, () => {});
+    const dest = path.join(this.root, cm.buildDir(this.design.build), 'compile_commands.json');
+    if (fs.existsSync(dest)) return;
+    // Geçici klasörde: hemen ardından başlayan derleme build/<tip>/ altındaki CMake önbelleğiyle çakışmasın.
+    // Yollar mutlak olduğundan veritabanı kopyalanınca da geçerlidir; ilk derleme üzerine yazar.
+    const root = this.root;
+    const tmp = fs.mkdtempSync(path.join(require('os').tmpdir(), 'es-cc-'));
+    const args = ['-S', root, '-B', tmp, '-G', 'Ninja', `-DCMAKE_TOOLCHAIN_FILE=${path.join(root, 'cmake', 'arm-none-eabi.cmake')}`, `-DCMAKE_BUILD_TYPE=${type}`];
+    require('child_process').execFile('cmake', args, { cwd: root, windowsHide: true, timeout: 120000 }, () => {
+      try {
+        const db = path.join(tmp, 'compile_commands.json');
+        if (fs.existsSync(db) && !fs.existsSync(dest)) {
+          fs.mkdirSync(path.dirname(dest), { recursive: true });
+          fs.copyFileSync(db, dest);
+        }
+      } catch { /* derleme sırasında klasör değişmiş olabilir */ }
+      fs.rmSync(tmp, { recursive: true, force: true });
+    });
   }
 
   /** "CMake'i ben yönetiyorum": kullanıcının CMakeLists.txt'si üretilen ayarları içermiyorsa nasıl ekleneceğini söyle. */
@@ -1001,7 +1039,8 @@ class Studio {
     this.postFavorites();
   }
 
-  async connectDebug(mode) {
+  /** @param {'sim'|string} mode @param {{ transport?: string }} [opts] transport: swd (varsayılan) | jtag */
+  async connectDebug(mode, opts = {}) {
     await this.dropTrace();
     await this.target?.disconnect().catch(() => {});
     this.target = null;
@@ -1022,7 +1061,7 @@ class Studio {
       const probes = actions?.state.probes || [];
       const probe = probes.find((x) => x.interfaceCfg);
       const target = new OpenOcdTarget({
-        targetCfg: mcu.device.openocdTarget, interfaceCfg: probe?.interfaceCfg,
+        targetCfg: mcu.device.openocdTarget, interfaceCfg: probe?.interfaceCfg, transport: opts.transport,
         serial: probe && probes.filter((x) => x.kind === probe.kind).length > 1 ? probe.serial : undefined,
         speedKHz: vscode.workspace.getConfiguration?.('embeddedStudio').get('flash.speedKHz', 0) || undefined,
         log: (s) => out && out.append(s),
@@ -1048,6 +1087,168 @@ class Studio {
     this.trace = new trace.TraceSession(this.target, (x) => this.post(x));
     this.post({ type: 'debug.status', connected: true, mode, state: await this.target.state() });
     this.postTraceInfo();
+  }
+
+  // ------------------------------------------------------------------ ES-301: programlayıcı
+  /** İşlem günlüğü: sekmede ve "Embedded Studio: Programlayıcı" çıktı panelinde */
+  progLog(level, text) {
+    const entry = { at: Date.now(), level, text };
+    this.progEntries = [...(this.progEntries || []), entry].slice(-500);
+    if (vscode.window.createOutputChannel) {
+      if (!this._progOut) this._progOut = vscode.window.createOutputChannel('Embedded Studio: Programlayıcı');
+      this._progOut.appendLine(`[${new Date(entry.at).toLocaleTimeString()}] ${level === 'error' ? 'HATA ' : ''}${text}`);
+    }
+    this.post({ type: 'prog.log', entry });
+  }
+
+  async progConnect(m) {
+    const mode = m.mode === 'sim' ? 'sim' : 'openocd';
+    this.progLog('info', mode === 'sim' ? t('Simülasyona bağlanılıyor…') : t('Proba bağlanılıyor ({0})…', (m.transport || 'swd').toUpperCase()));
+    await this.connectDebug(mode, { transport: m.transport });
+    if (!this.target) return this.progLog('error', t('Bağlanılamadı.'));
+    if (this.target.mode === 'sim') {
+      const spec = prog.obSpec(this.lib.mcus[this.design.mcuId]);
+      if (spec) for (const [name, addr] of Object.entries(spec.regs)) await this.target.writeMemory(addr, 32, spec.sim[name] >>> 0);
+    }
+    this.progLog('info', t('Bağlandı: {0}', this.lib.mcus[this.design.mcuId].name));
+    await this.progInfo();
+  }
+
+  /** Sektör listesi (OpenOCD'den; okunamazsa işlemci verisinden) ve option byte'lar */
+  async progInfo() {
+    if (!this.target) return this.post({ type: 'prog.info', error: t('Önce bağlanın.') });
+    const mcu = this.lib.mcus[this.design.mcuId];
+    let sectors, source = 'openocd';
+    try {
+      sectors = prog.layoutFromBanks(await this.target.flashBanks());
+      if (this.target.mode === 'sim') source = 'sim';
+    } catch (e) {
+      sectors = prog.flashLayout(mcu);
+      source = 'static';
+      this.progLog('warn', t('Sektörler cihazdan okunamadı, işlemci verisi kullanılıyor: {0}', e.message));
+    }
+    let ob = null;
+    const spec = prog.obSpec(mcu);
+    if (spec) {
+      try {
+        const values = {};
+        for (const [name, addr] of Object.entries(spec.regs)) values[name] = (await this.target.readMemory(addr, 1))[0];
+        ob = prog.decodeOptionBytes(mcu, values, sectors);
+        for (const i of ob.wrp) if (sectors[i]) sectors[i].protected = true;
+      } catch (e) {
+        ob = { error: e.message };
+      }
+    }
+    this.progSectors = sectors;
+    this.post({ type: 'prog.info', sectors, ob, source, flashKB: mcu.device.flashKB, ramKB: mcu.device.ramKB, mcu: mcu.name });
+  }
+
+  /** Cihazdan parça parça okur (ilerleme bildirimiyle) */
+  async progReadBytes(addr, length, op) {
+    const chunk = 16 * 1024;
+    const out = new Uint8Array(length);
+    for (let off = 0; off < length; off += chunk) {
+      const n = Math.min(chunk, length - off);
+      out.set(await readRegion(this.target, addr + off, n), off);
+      this.post({ type: 'prog.progress', op, pct: Math.round(((off + n) * 100) / length) });
+    }
+    return out;
+  }
+
+  async progRead(m) {
+    if (!this.target) return this.progLog('error', t('Önce bağlanın.'));
+    const mcu = this.lib.mcus[this.design.mcuId];
+    let r;
+    try {
+      r = prog.readRange(mcu, m.region, Number(m.addr), Number(m.length));
+    } catch (e) {
+      return this.progLog('error', e.message);
+    }
+    const name = `${mcu.name}_${m.region === 'custom' ? '0x' + r.addr.toString(16).padStart(8, '0') : m.region}`;
+    const uri = await vscode.window.showSaveDialog({
+      defaultUri: vscode.Uri.file(path.join(this.root || require('os').homedir(), `${name}.${m.format === 'hex' ? 'hex' : 'bin'}`)),
+      filters: { [t('Ham ikili')]: ['bin'], 'Intel HEX': ['hex'] }
+    });
+    if (!uri) return;
+    const started = Date.now();
+    this.progLog('info', t('Okunuyor: 0x{0}, {1}', r.addr.toString(16).toUpperCase().padStart(8, '0'), prog.sizeText(r.length)));
+    try {
+      const bytes = await this.progReadBytes(r.addr, r.length, 'read');
+      fs.writeFileSync(uri.fsPath, /\.hex$/i.test(uri.fsPath) ? toIntelHex(bytes, r.addr) : bytes);
+      this.progLog('ok', t('{0} kaydedildi ({1}, {2} sn).', path.basename(uri.fsPath), prog.sizeText(r.length), ((Date.now() - started) / 1000).toFixed(1)));
+    } catch (e) {
+      this.progLog('error', t('Okuma başarısız: {0}', e.message));
+    }
+    this.post({ type: 'prog.progress', op: 'read', pct: null });
+  }
+
+  /** Dosya (.bin / .hex / .elf) ↔ cihaz karşılaştırması */
+  async progCompare(m) {
+    if (!this.target) return this.progLog('error', t('Önce bağlanın.'));
+    const pick = await vscode.window.showOpenDialog({
+      canSelectMany: false, defaultUri: this.root ? vscode.Uri.file(this.root) : undefined,
+      filters: { [t('Firmware')]: ['elf', 'hex', 'bin'] }
+    });
+    if (!pick || !pick[0]) return;
+    const file = pick[0].fsPath;
+    let segments;
+    try {
+      if (/\.hex$/i.test(file)) segments = prog.parseIntelHex(fs.readFileSync(file, 'utf8'));
+      else if (/\.elf$/i.test(file)) {
+        const tmp = path.join(require('os').tmpdir(), `es-cmp-${Date.now()}.hex`);
+        await new Promise((resolve, reject) => require('child_process').execFile(cm.gccTool(this.design.build, 'objcopy'), ['-O', 'ihex', file, tmp], { windowsHide: true },
+          (e, so, se) => (e ? reject(new Error(se || e.message)) : resolve(undefined))));
+        segments = prog.parseIntelHex(fs.readFileSync(tmp, 'utf8'));
+        fs.rmSync(tmp, { force: true });
+      } else segments = [{ addr: (Number(m.base) || prog.FLASH_BASE) >>> 0, bytes: new Uint8Array(fs.readFileSync(file)) }];
+    } catch (e) {
+      return this.progLog('error', t('{0} okunamadı: {1}', path.basename(file), e.message));
+    }
+    // Yalnızca kod bölgesi (flash); RAM'e yüklenen bölütler karşılaştırılmaz
+    segments = segments.filter((s) => s.addr < prog.RAM_BASE);
+    const size = segments.reduce((n, s) => n + s.bytes.length, 0);
+    if (!size) return this.progLog('error', t('{0} içinde flash\'a yazılacak veri yok.', path.basename(file)));
+    this.progLog('info', t('Karşılaştırılıyor: {0} ({1})', path.basename(file), prog.sizeText(size)));
+    try {
+      const device = [];
+      for (const s of segments) device.push({ addr: s.addr, bytes: await this.progReadBytes(s.addr, s.bytes.length, 'compare') });
+      const r = prog.compareImages(segments, device);
+      this.post({ type: 'prog.compare', file: path.basename(file), result: r });
+      if (r.same) this.progLog('ok', t('Aynı: {0} bayt cihazdakiyle birebir eşleşiyor.', r.total));
+      else this.progLog('warn', t('Farklı: {0} / {1} bayt, {2} bölgede.', r.diff, r.total, r.rangeCount) + (r.blankDevice ? ' ' + t('Cihazda bu bölge boş (silinmiş).') : ''));
+    } catch (e) {
+      this.progLog('error', t('Karşılaştırma başarısız: {0}', e.message));
+    }
+    this.post({ type: 'prog.progress', op: 'compare', pct: null });
+  }
+
+  /** Seçili sektörleri ya da bütün flash'ı siler (onaylı) */
+  async progErase(m) {
+    if (!this.target || !this.progSectors) return this.progLog('error', t('Önce bağlanın.'));
+    const all = !!m.all;
+    const indexes = all ? this.progSectors.map((s) => s.index) : (m.indexes || []);
+    const ranges = prog.eraseRanges(this.progSectors, indexes);
+    if (!ranges.length) return;
+    const size = ranges.reduce((n, r) => n + r.size, 0);
+    const what = all ? t('Bütün flash ({0}) silinecek.', prog.sizeText(size)) : t('{0} sektör ({1}) silinecek.', indexes.length, prog.sizeText(size));
+    const ok = t('Sil');
+    if ((await vscode.window.showWarningMessage(what + ' ' + t('Hedef durdurulur; bu işlem geri alınamaz.'), { modal: true }, ok)) !== ok) return;
+    const started = Date.now();
+    this.progLog('info', what);
+    try {
+      let done = 0;
+      for (const r of ranges) {
+        await this.target.eraseSectors(r.bank, r.first, r.last);
+        done += r.size;
+        this.post({ type: 'prog.progress', op: 'erase', pct: Math.round((done * 100) / size) });
+      }
+      this.progLog('ok', t('Silindi: {0} ({1} sn). Hedef durduruldu; çalıştırmak için "Reset ve çalıştır".', prog.sizeText(size), ((Date.now() - started) / 1000).toFixed(1)));
+    } catch (e) {
+      this.progLog('error', t('Silme başarısız: {0}', e.message));
+    }
+    this.post({ type: 'prog.progress', op: 'erase', pct: null });
+    if (this.target) this.post({ type: 'debug.status', connected: true, mode: this.target.mode, state: await this.target.state().catch(() => '') });
+    await this.progInfo();
   }
 
   /** VS Code debug oturumu başlamadan önce: panelin OpenOCD bağlantısı probu bırakır */
@@ -1629,7 +1830,7 @@ class Studio {
     const webview = this.panel.webview;
     const media = (f) => webview.asWebviewUri(vscode.Uri.joinPath(this.context.extensionUri, 'media', f));
     const nonce = [...Array(32)].map(() => Math.random().toString(36)[2]).join('');
-    const scripts = ['i18n.js', 'core.js', 'art.js', 'wizard.js', 'design.js', 'creator.js', 'clock.js', 'widgets.js', 'monitor.js', 'terminal.js', 'rtos.js', 'console.js', 'debug.js', 'analyzer.js', 'settings.js', 'genpreview.js', 'main.js'];
+    const scripts = ['i18n.js', 'core.js', 'art.js', 'wizard.js', 'design.js', 'creator.js', 'clock.js', 'widgets.js', 'monitor.js', 'terminal.js', 'rtos.js', 'console.js', 'debug.js', 'programmer.js', 'analyzer.js', 'settings.js', 'genpreview.js', 'main.js'];
     return `<!doctype html>
 <html lang="${i18n.getLanguage()}">
 <head>

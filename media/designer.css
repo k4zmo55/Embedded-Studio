@@ -750,3 +750,38 @@ body.mode-pro .note { padding: 3px 8px; }
 .term-send { display: flex; align-items: center; gap: 6px; padding: 6px 12px 10px; }
 .term-send #term-input { flex: 1; }
 .term-send select { width: auto; }
+
+/* Programlayıcı (ES-301) */
+#programmer { flex-direction: column; overflow: hidden; }
+#programmer.active { display: flex; }
+.pg-body { flex: 1; overflow: auto; display: grid; grid-template-columns: minmax(300px, 1fr) minmax(300px, 1fr); gap: 12px; padding: 12px; align-content: start; }
+.pg-col { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+.pg-card { border: 1px solid var(--border); border-radius: 6px; padding: 10px 12px; min-width: 0; }
+.pg-card h3 { display: flex; align-items: center; gap: 8px; margin: 0 0 8px; font-size: 12px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); }
+.pg-row { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin-bottom: 8px; }
+.pg-row select, .pg-row input { width: auto; }
+.pg-row input.mono { width: 110px; }
+.pg-state { font-size: 12px; color: var(--muted); }
+.pg-state.on { color: var(--ok); }
+.pg-progress { height: 4px; background: var(--border); border-radius: 2px; overflow: hidden; margin: 4px 0 8px; }
+.pg-progress > div { height: 100%; background: var(--btn); transition: width .2s; }
+.pg-result { font-size: 12px; padding: 6px 8px; border-radius: 4px; border-left: 3px solid var(--ok); background: color-mix(in srgb, var(--ok) 8%, transparent); display: flex; flex-direction: column; gap: 4px; }
+.pg-result.diff { border-left-color: var(--warn); background: color-mix(in srgb, var(--warn) 8%, transparent); }
+.pg-rdp { display: flex; gap: 8px; align-items: baseline; font-size: 12px; padding: 6px 8px; border-radius: 4px; margin-bottom: 8px; border-left: 3px solid var(--ok); background: color-mix(in srgb, var(--ok) 8%, transparent); }
+.pg-rdp.lvl1, .pg-rdp.lvl05 { border-left-color: var(--warn); background: color-mix(in srgb, var(--warn) 10%, transparent); }
+.pg-rdp.lvl2 { border-left-color: var(--err); background: color-mix(in srgb, var(--err) 10%, transparent); }
+.pg-obt td:first-child { white-space: nowrap; width: 1%; padding-right: 12px; }
+.pg-raw td { color: var(--muted); }
+.pg-table { max-height: 46vh; overflow: auto; border: 1px solid var(--border); border-radius: 4px; }
+.pg-table thead th { position: sticky; top: 0; background: var(--bg); }
+.pg-table tr.sel td { background: color-mix(in srgb, var(--btn) 18%, transparent); }
+.pg-table tbody tr { cursor: pointer; }
+.pg-table td.warn { color: var(--warn); }
+button.danger:not(:disabled) { background: var(--err); color: #fff; }
+button.ghost.danger:not(:disabled) { background: transparent; color: var(--err); border-color: var(--err); }
+.pg-logl { max-height: 30vh; overflow: auto; font-size: 12px; display: flex; flex-direction: column; gap: 2px; }
+.pg-le { display: flex; gap: 8px; }
+.pg-le.ok span:last-child { color: var(--ok); }
+.pg-le.warn span:last-child { color: var(--warn); }
+.pg-le.error span:last-child { color: var(--err); }
+@media (max-width: 760px) { .pg-body { grid-template-columns: 1fr; } }

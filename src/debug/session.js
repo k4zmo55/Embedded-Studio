@@ -15,6 +15,7 @@ const { t } = require('../i18n');
 const { familyOf, kernelClock } = require('../codegen/families');
 const { explainFlashError } = require('./flashcmd');
 const trace = require('./trace');
+const { parseFlashInfo, flashLayout } = require('./programmer');
 
 const CORE_REGS = ['r0', 'r1', 'r2', 'r3', 'r4', 'r5', 'r6', 'r7', 'r8', 'r9', 'r10', 'r11', 'r12', 'sp', 'lr', 'pc', 'xPSR'];
 
@@ -92,7 +93,7 @@ class TclClient {
 
 class OpenOcdTarget {
   /**
-   * @param {{ interfaceCfg?: string, targetCfg: string, serial?: string, speedKHz?: number, openocdPath?: string, port?: number,
+   * @param {{ interfaceCfg?: string, targetCfg: string, transport?: string, serial?: string, speedKHz?: number, openocdPath?: string, port?: number,
    *   log?: (s: string) => void, onExit?: (reason: string) => void }} opts  port 0/verilmezse boş bir port seçilir
    */
   constructor(opts) {
@@ -108,7 +109,9 @@ class OpenOcdTarget {
     const o = this.opts;
     // Sabit 6666 başka bir OpenOCD açıkken çakışıyordu
     const port = o.port || (await freePort());
-    const args = ['-f', o.interfaceCfg, ...(o.serial ? ['-c', `adapter serial ${o.serial}`] : []), '-f', o.targetCfg,
+    // ES-301: JTAG (ST-Link'te hla_jtag); SWD arayüz dosyasının varsayılanı
+    const transport = o.transport === 'jtag' ? ['-c', `transport select ${/stlink/.test(o.interfaceCfg) ? 'hla_jtag' : 'jtag'}`] : [];
+    const args = ['-f', o.interfaceCfg, ...transport, ...(o.serial ? ['-c', `adapter serial ${o.serial}`] : []), '-f', o.targetCfg,
       ...(o.speedKHz ? ['-c', `adapter speed ${o.speedKHz}`] : []),
       '-c', `tcl_port ${port}`, '-c', 'telnet_port disabled', '-c', 'gdb_port disabled'];
     let log = '', ready = false, timer;
@@ -221,6 +224,32 @@ class OpenOcdTarget {
       const r = await this.tcl.send(`[target current] write_memory 0x${(addr + k).toString(16)} 8 {${part}}`);
       if (/error|failed|invalid/i.test(r)) throw new Error(t('Yazılamadı @0x{0}: {1}', (addr + k).toString(16), r.trim().slice(0, 120)));
     }
+  }
+
+  // ---------------------------------------------------------------- ES-301: programlayıcı
+  /** OpenOCD'nin tanıdığı flash bankaları ve sektörleri (sürücü probe eder; hedef çalışırken de okunur) */
+  async flashBanks() {
+    const list = await this.tryCmd('flash list');
+    const count = list.ok ? (list.out.match(/\bname\b/g) || []).length : 1;
+    const banks = [];
+    for (let i = 0; i < Math.max(1, count); i++) {
+      const r = await this.tryCmd(`flash info ${i}`, 15000);
+      const info = r.ok && parseFlashInfo(r.out);
+      if (!info) {
+        if (i === 0) throw new Error(t('Flash bilgisi okunamadı: {0}', r.out.slice(0, 200)));
+        break;
+      }
+      banks.push(info);
+    }
+    return banks;
+  }
+
+  /** Durdurup (reset halt) sektör siler: flash erase_sector <bank> <ilk> <son> */
+  async eraseSectors(bank, first, last) {
+    await this.tryCmd('reset halt', 5000);
+    const r = await this.tryCmd(`flash erase_sector ${bank} ${first} ${last}`, 300000);
+    if (!r.ok || /error|failed/i.test(r.out)) throw new Error(r.out.slice(0, 300) || t('Silme başarısız.'));
+    return r.out;
   }
 
   /** Tcl komutu; hata yanıtını ayırt etmek için catch ile: { ok, out } */
@@ -498,12 +527,47 @@ class SimTarget {
   }
   async program() { return t('simülasyon: yükleme atlandı'); }
 
+  // ES-301: simülasyonda flash — silinmiş (0xFF) bellek ve başında örnek bir program
+  simFlash() {
+    if (this.flash) return this.flash;
+    const f = this.model.flash || { base: 0x08000000, size: 512 * 1024, layout: [] };
+    const bytes = new Uint8Array(f.size).fill(0xff);
+    const words = new DataView(bytes.buffer);
+    words.setUint32(0, 0x20020000, true); // ilk yığın işaretçisi
+    for (let i = 1; i < 98; i++) words.setUint32(i * 4, 0x08000400 + 0x10 * i + 1, true); // vektörler (Thumb)
+    let x = 0x1234567;
+    for (let i = 0x400; i < Math.min(f.size, 0x3000); i++) { x = (x * 1103515245 + 12345) >>> 0; bytes[i] = x >>> 24; }
+    this.flash = { ...f, bytes };
+    return this.flash;
+  }
+  async flashBanks() {
+    const f = this.simFlash();
+    const banks = [];
+    for (const s of f.layout) {
+      if (!banks[s.bank]) banks[s.bank] = { driver: 'sim', base: s.addr, size: 0, sectors: [] };
+      banks[s.bank].sectors.push({ num: s.num, addr: s.addr, size: s.size, protected: false });
+      banks[s.bank].size += s.size;
+    }
+    return banks;
+  }
+  async eraseSectors(bank, first, last) {
+    const f = this.simFlash();
+    this.halted = true;
+    for (const s of f.layout) if (s.bank === bank && s.num >= first && s.num <= last) f.bytes.fill(0xff, s.addr - f.base, s.addr - f.base + s.size);
+    return '';
+  }
+
   async readMemory(addr, words) {
     if (addr < SIM_RTT.end && addr + words * 4 > SIM_RTT.cb) this.rttTick();
     const ms = this.halted ? this.haltMs || 0 : Date.now() - this.t0;
     const out = [];
     for (let i = 0; i < words; i++) {
       const a = addr + i * 4;
+      const fl = this.flash || (this.model.flash && a >= this.model.flash.base && a < this.model.flash.base + this.model.flash.size ? this.simFlash() : null);
+      if (fl && a >= fl.base && a + 4 <= fl.base + fl.size) {
+        out.push(new DataView(fl.bytes.buffer).getUint32(a - fl.base, true));
+        continue;
+      }
       let v = this.model.expected.get(a);
       if (v === undefined) v = 0;
       // Canlı değişen register'lar
@@ -635,7 +699,8 @@ function simModel(design, lib, result, clock, peripherals) {
   for (const name of Object.keys(result.peripherals)) if (bits[name]) en[bits[name][0]] |= 1 << bits[name][1];
   en.APB1ENR |= 1 << 28;
   if (f4) for (const [k, v] of Object.entries(en)) set(reg('RCC', k), v);
-  return { peripherals, expected, dynamic };
+  const flash = { base: 0x08000000, size: mcu.device.flashKB * 1024, layout: flashLayout(mcu) };
+  return { peripherals, expected, dynamic, flash };
 }
 
 /** ELF içindeki global değişkenler (izleme listesi için). */

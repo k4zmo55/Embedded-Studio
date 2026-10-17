@@ -1337,6 +1337,80 @@ edge: { sourcename: "Task_A" targetname: "__indirect_call" label: "a.c:9:40" }
     passed++;
     console.log('  ✓ Seri port terminali (ES-211): port listesi, ayarlar, stty, hata açıklamaları, simülasyon aygıtı, log, Windows yardımcısı');
   }
+  {
+    // ES-301: programlayıcı
+    const pg = require('../src/debug/programmer');
+    const { toIntelHex } = require('../src/debug/memory');
+    for (const m of Object.values(lib.mcus)) {
+      const l = pg.flashLayout(m);
+      assert.strictEqual(l.reduce((n, s) => n + s.size, 0), m.device.flashKB * 1024, `${m.id}: sektör toplamı`);
+      assert.ok(l.every((s, i) => i === 0 || s.addr === l[i - 1].addr + l[i - 1].size), `${m.id}: bitişik`);
+      // Fabrika değerleri: RDP 0, yazma koruması yok
+      const spec = pg.obSpec(m);
+      assert.ok(spec, `${m.id}: option byte tanımı`);
+      const ob = pg.decodeOptionBytes(m, spec.sim, l);
+      assert.strictEqual(ob.rdp.level, 0, `${m.id}: RDP`);
+      assert.deepStrictEqual(ob.wrp, [], `${m.id}: WRP`);
+    }
+    const h743 = pg.flashLayout(lib.mcus.stm32h743zit6);
+    assert.deepStrictEqual([h743[8].bank, h743[8].num, h743[8].addr], [1, 0, 0x08100000], 'H7: ikinci bank ayrı OpenOCD bankası');
+    const l476 = pg.flashLayout(lib.mcus.stm32l476rgt6);
+    assert.deepStrictEqual([l476[256].bank, l476[256].num, l476[256].phys, l476[256].addr], [0, 256, 2, 0x08080000], 'L4: tek OpenOCD bankında sıralı');
+    // OpenOCD flash info
+    const info = pg.parseFlashInfo('#0 : stm32f2x at 0x08000000, size 0x00080000, buswidth 0, chipwidth 0\n\t#  0: 0x00000000 (0x4000 16kB) not protected\n\t#  1: 0x00004000 (0x4000 16kB) protected\n\t#  4: 0x00010000 (0x10000 64kB) not protected\nSTM32F4xx - Rev: A');
+    assert.strictEqual(info.driver, 'stm32f2x');
+    assert.deepStrictEqual(info.sectors.map((s) => [s.num, s.addr, s.size, s.protected]), [[0, 0x08000000, 0x4000, false], [1, 0x08004000, 0x4000, true], [4, 0x08010000, 0x10000, false]]);
+    assert.strictEqual(pg.parseFlashInfo('flash bank 3 does not exist'), null);
+    // Silme aralıkları: bitişik olanlar birleşir, bank sınırında bölünür
+    assert.deepStrictEqual(pg.eraseRanges(h743, [0, 1, 2, 5, 7, 8, 9]).map((r) => [r.bank, r.first, r.last]), [[0, 0, 2], [0, 5, 5], [0, 7, 7], [1, 0, 1]]);
+    // F411 option byte'lar: sektör 2 ve 5 korumalı, RDP 1 / 2, BOR, kullanıcı bitleri
+    const f411 = lib.mcus.stm32f411ceu6, fl = pg.flashLayout(f411);
+    let ob = pg.decodeOptionBytes(f411, { OPTCR: 0x0fdbbbed, OPTCR1: 0 }, fl);
+    assert.deepStrictEqual(ob.wrp, [2, 5]);
+    assert.strictEqual(ob.rdp.level, 1);
+    assert.match(ob.bor, /kapalı/);
+    assert.deepStrictEqual(ob.user.map((u) => [u.name, u.value]), [['WDG_SW', 1], ['nRST_STOP', 1], ['nRST_STDBY', 1]]);
+    assert.strictEqual(pg.decodeOptionBytes(f411, { OPTCR: 0x0fffcced }, fl).rdp.level, 2);
+    ob = pg.decodeOptionBytes(f411, { OPTCR: 0x8001aaed }, fl);
+    assert.deepStrictEqual([ob.wrp, ob.pcrop], [[], [0]], 'SPRMOD: PCROP');
+    // L476: WRP1A sayfa 3–5, WRP2A ikinci bankın 0–1. sayfası
+    const l4 = lib.mcus.stm32l476rgt6;
+    ob = pg.decodeOptionBytes(l4, { ...pg.obSpec(l4).sim, WRP1AR: 0x00050003, WRP2AR: 0x00010000 }, l476);
+    assert.deepStrictEqual(ob.wrp, [3, 4, 5, 256, 257]);
+    assert.strictEqual(pg.rdpLevel(0x55, 'u5'), 0.5);
+    assert.strictEqual(pg.rdpLevel(0x55, 'f4'), 1);
+    // F103 WRPR: bit 1 = 0 → sayfa 4–7 korumalı
+    ob = pg.decodeOptionBytes(lib.mcus.stm32f103c8t6, { OBR: 0x03fffffe, WRPR: 0xfffffffd }, pg.flashLayout(lib.mcus.stm32f103c8t6));
+    assert.deepStrictEqual([ob.wrp, ob.rdp.level], [[4, 5, 6, 7], 1]);
+    // Intel HEX: memory.toIntelHex ile gidiş-dönüş, 64 KB sınırı, sağlama toplamı hatası
+    const img = Uint8Array.from({ length: 300 }, (_, i) => (i * 7) & 0xff);
+    const back = pg.parseIntelHex(toIntelHex(img, 0x0800ff80));
+    assert.strictEqual(back.length, 1);
+    assert.strictEqual(back[0].addr, 0x0800ff80);
+    assert.deepStrictEqual([...back[0].bytes], [...img]);
+    assert.throws(() => pg.parseIntelHex(':0400000001020304F0\n'), /sağlama/);
+    // Karşılaştırma
+    const dev = Uint8Array.from(img); dev[10] ^= 1; dev[11] ^= 1; dev[200] ^= 1;
+    const c = pg.compareImages([{ addr: 0x100, bytes: img }], [{ addr: 0x100, bytes: dev }]);
+    assert.deepStrictEqual([c.same, c.diff, c.rangeCount, c.ranges[0], c.first[0].addr], [false, 3, 2, { start: 0x10a, end: 0x10c }, 0x10a]);
+    assert.ok(pg.compareImages([{ addr: 0, bytes: img }], [{ addr: 0, bytes: img }]).same);
+    assert.ok(pg.compareImages([{ addr: 0, bytes: img }], [{ addr: 0, bytes: new Uint8Array(300).fill(0xff) }]).blankDevice);
+    assert.deepStrictEqual(pg.readRange(f411, 'ram', 0, 0), { addr: 0x20000000, length: 128 * 1024 });
+    assert.throws(() => pg.readRange(f411, 'custom', NaN, 4), /Adres/);
+    // Simülasyon: bank listesi, okuma, silme
+    const d411 = design([inst('usb_uart')]);
+    const sm = new SimTarget(simModel(d411, lib, assign(d411, lib), computeClock(mcu, d411.clock), builtinStm32f4()));
+    const banks = await sm.flashBanks();
+    assert.deepStrictEqual(pg.layoutFromBanks(banks).map((s) => s.size), fl.map((s) => s.size));
+    assert.strictEqual((await sm.readMemory(0x08000000, 1))[0], 0x20020000, 'vektör tablosu');
+    assert.notStrictEqual((await sm.readMemory(0x08000800, 1))[0], 0xffffffff, 'örnek program');
+    assert.strictEqual((await sm.readMemory(0x08004000, 1))[0], 0xffffffff, 'boş sektör');
+    await sm.eraseSectors(0, 0, 0);
+    assert.deepStrictEqual(await sm.readMemory(0x08000000, 2), [0xffffffff, 0xffffffff], 'silindi');
+    assert.ok(await sm.state() === 'halted', 'silmeden önce durdurulur');
+    passed++;
+    console.log('  ✓ Programlayıcı (ES-301): 15 işlemcide sektör haritası ve fabrika option byte\'ları, flash info, silme aralıkları, RDP/WRP/PCROP/BOR, Intel HEX, karşılaştırma, simülasyon');
+  }
   const { OpenOcdTarget, freePort } = require('../src/debug/session');
   const port = await freePort();
   assert.ok(port > 0 && port !== 6666, String(port));
