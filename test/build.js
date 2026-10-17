@@ -54,7 +54,7 @@ const ALL = ['usb_uart', 'bme280', 'mpu6050', 'ssd1306', 'w25q32', 'neo6m', 'led
   const strict = { warnings: 'strict', werror: true };
   const f411 = 'stm32f411ceu6';
   const variants = [
-    ...[['hal', true], ['hal', false], ['register', true], ['register', false], ['register', true, 'pro'], ['register', false, 'pro']]
+    ...[['hal', true], ['hal', false], ['hal', true, 'pro'], ['register', true], ['register', false], ['register', true, 'pro'], ['register', false, 'pro']]
       .map(([framework, rtos, mode]) => ({ mcu: f411, framework, rtos, mode })),
     // ES-105: derleme tipleri, sıkı uyarı + -Werror (üretilen kod uyarısız olmalı), FPU seçenekleri
     { mcu: f411, framework: 'hal', rtos: true, build: { ...strict, type: 'Release' }, suffix: 'release_strict' },

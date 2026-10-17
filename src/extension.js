@@ -9,7 +9,7 @@ const { assign } = require('./engine/pinAssigner');
 const { computeClock, solveClock } = require('./engine/clock');
 const { analyze, ruleBasedProvider } = require('./ai/advisor');
 const { generate, GENERATOR_VERSION } = require('./codegen/generator');
-const { writeProject, designFingerprint, relocateLayout, relocateFamilyFiles, removeEmptyDirs, upgradeLegacyVscode, STATE_DIR } = require('./codegen/merge');
+const { writeProject, designFingerprint, relocateLayout, relocateFamilyFiles, removeEmptyDirs, upgradeLegacyVscode, syncCodeIntel, STATE_DIR } = require('./codegen/merge');
 const { layout } = require('./codegen/layout');
 const cm = require('./codegen/build');
 const { detectToolchains } = require('./toolchain');
@@ -64,6 +64,7 @@ function activate(context) {
   Studio.extensionPath = context.extensionPath;
   context.subscriptions.push(
     vscode.workspace.onDidChangeConfiguration?.((e) => {
+      if (e.affectsConfiguration('embeddedStudio.hiddenTabs')) Studio.current?.postHiddenTabs();
       if (!e.affectsConfiguration('embeddedStudio.language')) return;
       applyLanguage();
       Studio.current?.reloadHtml();
@@ -389,9 +390,17 @@ class Studio {
     switch (m.type) {
       case 'ready': {
         this.post({ type: 'init', lib: this.libForWebview() });
+        this.postHiddenTabs();
         this.design = this.loadDesign();
         if (this.design) this.pushState();
         else this.post({ type: 'welcome', ...welcomeInfo(this.context) });
+        break;
+      }
+      case 'tabs.hide': {
+        // ES-804: kullanıcı ayarı (bütün projeler), moda göre
+        const cfg = vscode.workspace.getConfiguration('embeddedStudio');
+        const cur = cfg.get('hiddenTabs', {}) || {};
+        await cfg.update('hiddenTabs', { ...cur, [m.mode === 'pro' ? 'pro' : 'beginner']: m.hidden }, vscode.ConfigurationTarget.Global);
         break;
       }
       case 'update': {
@@ -780,6 +789,7 @@ class Studio {
     relocateFamilyFiles(this.root, gen.files); // işlemci ailesi değiştiyse <aile>_it.c ve USER CODE blokları
     const report = writeProject(this.root, gen, info);
     report.updated.push(...upgradeLegacyVscode(this.root, this.design.project.name));
+    this.prepareCodeIntel();
     this.checkUserCmake();
     if (moved.length) {
       const old = moved[0].from.split('/')[0];
@@ -805,6 +815,22 @@ class Studio {
       const target = choice === t('Değişiklikler') ? `${STATE_DIR}/LAST_CHANGES.md` : appFile;
       await vscode.window.showTextDocument(vscode.Uri.file(path.join(this.root, target)));
     }
+  }
+
+  /** ES-804: üst çubukta gizlenen sekmeler */
+  postHiddenTabs() {
+    this.post({ type: 'tabs.hidden', hidden: vscode.workspace.getConfiguration?.('embeddedStudio').get('hiddenTabs', {}) || {} });
+  }
+
+  /**
+   * ES-108: clangd / C/C++ eklentisine derleme veritabanını gösterir; henüz derlenmediyse arka planda yalnızca CMake
+   * yapılandırması çalıştırır ki ilk derlemeden önce de editörde yanlış "tanımsız" hataları çıkmasın.
+   */
+  prepareCodeIntel() {
+    const type = cm.normalizeBuild(this.design.build).type;
+    syncCodeIntel(this.root, type, this.design.framework === 'hal' ? `${familyOf(this.lib.mcus[this.design.mcuId]).prefix}_hal_def.h` : undefined);
+    if (fs.existsSync(path.join(this.root, cm.buildDir(this.design.build), 'compile_commands.json'))) return;
+    require('child_process').exec(cm.configureCommand(type), { cwd: this.root, windowsHide: true, timeout: 120000 }, () => {});
   }
 
   /** "CMake'i ben yönetiyorum": kullanıcının CMakeLists.txt'si üretilen ayarları içermiyorsa nasıl ekleneceğini söyle. */

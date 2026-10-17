@@ -7,7 +7,7 @@ const { loadLibrary, validateComponent, componentTemplate } = require('../src/li
 const { assign } = require('../src/engine/pinAssigner');
 const { computeClock, solveClock } = require('../src/engine/clock');
 const { generate, GENERATOR_VERSION } = require('../src/codegen/generator');
-const { writeProject, designFingerprint, mergeUserBlocks, relocateLayout } = require('../src/codegen/merge');
+const { writeProject, designFingerprint, mergeUserBlocks, relocateLayout, syncCodeIntel } = require('../src/codegen/merge');
 const { parseLine } = require('../src/monitor/telemetry');
 const { simModel, SimTarget } = require('../src/debug/session');
 const { builtinStm32f4 } = require('../src/debug/registers');
@@ -127,6 +127,42 @@ test('ikinci kez orphan aynı kalır (iç içe #if 0 yok)', () => {
 test('mergeUserBlocks: CMake ve markdown blokları', () => {
   const r = mergeUserBlocks('a\n# USER CODE BEGIN X\n# USER CODE END X\n', 'z\n# USER CODE BEGIN X\nset(A 1)\n# USER CODE END X\n', 'CMakeLists.txt');
   assert.ok(r.content.includes('set(A 1)'));
+});
+test('ES-108: .clangd ve C_Cpp.default.compileCommands derleme tipine göre; kullanıcınınkine dokunulmaz', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'es-intel-'));
+  const settings = path.join(dir, '.vscode', 'settings.json');
+  fs.mkdirSync(path.dirname(settings));
+  fs.writeFileSync(settings, JSON.stringify({ 'files.autoSave': 'afterDelay' }));
+  let r = syncCodeIntel(dir, 'Debug');
+  assert.deepStrictEqual(r.changed, ['.clangd', '.vscode/settings.json']);
+  const clangd = fs.readFileSync(path.join(dir, '.clangd'), 'utf8');
+  assert.match(clangd, /CompilationDatabase: build\/debug\n/);
+  assert.match(clangd, /-fcallgraph-info=\*/);
+  let s = JSON.parse(fs.readFileSync(settings, 'utf8'));
+  assert.strictEqual(s['files.autoSave'], 'afterDelay');
+  assert.strictEqual(s['C_Cpp.default.compileCommands'], '${workspaceFolder}/build/debug/compile_commands.json');
+  assert.deepStrictEqual(syncCodeIntel(dir, 'Debug').changed, []);
+  r = syncCodeIntel(dir, 'Release');
+  assert.deepStrictEqual(r.changed, ['.clangd', '.vscode/settings.json']);
+  assert.match(fs.readFileSync(path.join(dir, '.clangd'), 'utf8'), /build\/release/);
+  // kullanıcının kendi .clangd'si ve farklı compileCommands değeri
+  fs.writeFileSync(path.join(dir, '.clangd'), 'CompileFlags:\n  Add: [-DX]\n');
+  fs.writeFileSync(settings, JSON.stringify({ 'C_Cpp.default.compileCommands': '${workspaceFolder}/out/cc.json' }));
+  r = syncCodeIntel(dir, 'Debug');
+  assert.deepStrictEqual(r.changed, []);
+  assert.deepStrictEqual(r.skipped, ['.clangd', '.vscode/settings.json']);
+  // yorumlu settings.json yeniden yazılmaz
+  fs.writeFileSync(settings, '{\n  // not\n  "a": 1\n}\n');
+  assert.deepStrictEqual(syncCodeIntel(dir, 'Debug').skipped, ['.clangd', '.vscode/settings.json']);
+  assert.ok(fs.readFileSync(settings, 'utf8').includes('// not'));
+  // eski tek build/ klasörünü gösteren değer güncellenir
+  fs.writeFileSync(settings, JSON.stringify({ 'C_Cpp.default.compileCommands': '${workspaceFolder}/build/compile_commands.json' }));
+  assert.ok(syncCodeIntel(dir, 'Debug').changed.includes('.vscode/settings.json'));
+  // HAL: *_hal_conf.h tek başına açılınca HAL türleri gelsin
+  fs.rmSync(path.join(dir, '.clangd'));
+  syncCodeIntel(dir, 'Debug', 'stm32f4xx_hal_def.h');
+  assert.match(fs.readFileSync(path.join(dir, '.clangd'), 'utf8'), /PathMatch: .*_hal_conf[\s\S]*-include, stm32f4xx_hal_def\.h/);
+  fs.rmSync(dir, { recursive: true, force: true });
 });
 test('bare-metal: sade klasör yapısı (inc/ src/ drivers/ linker/), HAL dosyası yok', () => {
   const d = design([inst('usb_uart'), inst('bme280'), inst('servo_sg90')], { framework: 'register', rtos: true });

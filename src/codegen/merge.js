@@ -14,7 +14,7 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const { layout } = require('./layout');
-const { normalizeBuild, buildCommand } = require('./build');
+const { normalizeBuild, buildCommand, clangdConfig, compileCommandsSetting, CLANGD_MARK } = require('./build');
 
 const STATE_DIR = '.embedded-studio';
 const sha1 = (s) => crypto.createHash('sha1').update(s).digest('hex');
@@ -311,6 +311,47 @@ function upgradeLegacyVscode(root, name) {
   return changed;
 }
 
+/**
+ * ES-108: editörün dil sunucusuna (clangd, Microsoft C/C++) derleme veritabanının yerini (build/<tip>/compile_commands.json)
+ * bildirir. Kullanıcının kendi .clangd dosyasına ve farklı bir C_Cpp.default.compileCommands değerine dokunmaz;
+ * yorum içeren settings.json yeniden yazılmaz (yorumlar kaybolmasın).
+ * @param {string} root @param {string} type derleme tipi (Debug, Release …) @param {string} [halHeader] HAL projesinde ör. stm32f4xx_hal_def.h
+ * @returns {{ changed: string[], skipped: string[] }}
+ */
+function syncCodeIntel(root, type, halHeader) {
+  const changed = [], skipped = [];
+  const clangd = path.join(root, '.clangd');
+  const want = clangdConfig(type, halHeader);
+  const cur = fs.existsSync(clangd) ? fs.readFileSync(clangd, 'utf8') : null;
+  if (cur === null || (cur.startsWith(CLANGD_MARK) && cur !== want)) {
+    fs.writeFileSync(clangd, want);
+    changed.push('.clangd');
+  } else if (!cur.startsWith(CLANGD_MARK)) skipped.push('.clangd');
+
+  const rel = '.vscode/settings.json';
+  const file = path.join(root, rel);
+  const key = 'C_Cpp.default.compileCommands';
+  const value = compileCommandsSetting(type);
+  let doc = {};
+  if (fs.existsSync(file)) {
+    const text = fs.readFileSync(file, 'utf8');
+    try {
+      doc = text.trim() ? JSON.parse(text) : {};
+    } catch {
+      skipped.push(rel);
+      return { changed, skipped };
+    }
+  }
+  const old = doc[key];
+  const ours = old === undefined || /^\$\{workspaceFolder\}\/build(\/[a-z]+)?\/compile_commands\.json$/.test(old);
+  if (!ours) skipped.push(rel);
+  else if (old !== value) {
+    write(file, JSON.stringify({ ...doc, [key]: value }, null, 2) + '\n');
+    changed.push(rel);
+  }
+  return { changed, skipped };
+}
+
 /** Boşalan klasörleri (ör. taşımadan sonra Core/Src) siler; içinde dosya kalan klasörlere dokunmaz. */
 function removeEmptyDirs(root, rels) {
   for (const rel of rels) {
@@ -322,4 +363,4 @@ function removeEmptyDirs(root, rels) {
   }
 }
 
-module.exports = { writeProject, mergeUserBlocks, extractBlocks, designFingerprint, diffSnapshots, relocateLayout, relocateFamilyFiles, removeEmptyDirs, upgradeLegacyVscode, STATE_DIR };
+module.exports = { writeProject, mergeUserBlocks, extractBlocks, designFingerprint, diffSnapshots, relocateLayout, relocateFamilyFiles, removeEmptyDirs, upgradeLegacyVscode, syncCodeIntel, STATE_DIR };

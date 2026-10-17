@@ -14,6 +14,7 @@ const fs = require('fs');
 const path = require('path');
 const { spawn } = require('child_process');
 const cm = require('./codegen/build');
+const { syncCodeIntel } = require('./codegen/merge');
 const { elfSize } = require('./toolchain');
 const { parseProbe } = require('./debug/probe');
 const { runFlash, flashSettings, resultText } = require('./flasher');
@@ -114,6 +115,7 @@ class ProjectActions {
     const p = this.project();
     if (!p || this.state.running) return false;
     const config = p.design.build.type;
+    syncCodeIntel(p.root, config, p.design.framework === 'hal' ? `${familyOf(p.lib.mcus[p.design.mcuId]).prefix}_hal_def.h` : undefined);
     this.set({ running: 'build' });
     const code = await this.runTask(p, 'build', t('Derle ({0})', config), cm.buildCommand(config));
     await new Promise((r) => setTimeout(r, 300)); // problem matcher tanılamaları görev bitişinden hemen sonra gelir

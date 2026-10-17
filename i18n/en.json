@@ -1151,5 +1151,9 @@
   "Veri (metin; \\r \\n \\xNN) ya da HEX baytlar": "Data (text; \\r \\n \\xNN) or HEX bytes",
   "HEX": "HEX",
   "Seçili satır sonunu ekle (metinde)": "Append the selected line ending (text)",
-  "Ad ve veri gerekli.": "Name and data are required."
+  "Ad ve veri gerekli.": "Name and data are required.",
+  "Görünen sekmeler": "Visible tabs",
+  "Kullanmadığınız sekmeleri gizleyin; bütün projelerde, {0} modu için geçerli. Ayarlar sekmesi her zaman görünür.": "Hide the tabs you don't use; applies to all projects in {0} mode. The Settings tab is always visible.",
+  "En az bir sekme açık kalmalı": "At least one tab must stay visible",
+  "Hepsini göster": "Show all"
 }

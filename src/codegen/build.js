@@ -325,14 +325,43 @@ const includeSnippet = (name) => `include(cmake/embedded-studio.cmake)
 add_executable(\${PROJECT_NAME})   # project(${name} C ASM) sonrası
 embedded_studio_target(\${PROJECT_NAME})`;
 
+/** Yalnızca CMake yapılandırması (compile_commands.json için; derlemez). */
+const configureCommand = (type) => `cmake -S . -B build/${presetName(type)} -G Ninja -DCMAKE_TOOLCHAIN_FILE=cmake/arm-none-eabi.cmake -DCMAKE_BUILD_TYPE=${type}`;
+
 /** Derleme komutu (VS Code görevi ve README için). */
 function buildCommand(type) {
-  const p = presetName(type);
-  return `cmake -S . -B build/${p} -G Ninja -DCMAKE_TOOLCHAIN_FILE=cmake/arm-none-eabi.cmake -DCMAKE_BUILD_TYPE=${type} && cmake --build build/${p}`;
+  return `${configureCommand(type)} && cmake --build build/${presetName(type)}`;
 }
+
+/** .clangd'nin ilk satırı: bu işaretle başlıyorsa dosya Embedded Studio'nundur ve güncellenebilir. */
+const CLANGD_MARK = '# Embedded Studio: clangd';
+
+/**
+ * ES-108: clangd (STM32Cube ve clangd eklentileri) derleme veritabanını varsayılan olarak build/ altında arar; CMake ise
+ * build/<tip>/ altına yazar. Bulamayınca komutu tahmin eder ve cihaz tanımı (-DSTM32F407xx) ile include yolları gelmez.
+ */
+function clangdConfig(type, halHeader) {
+  return `${CLANGD_MARK} için derleme veritabanı (Proje Ayarları > Derleme > tip). Derleme tipi değişince güncellenir.
+# Kendi ayarlarınızı yazmak için bu ilk satırı silin; Embedded Studio o zaman bu dosyaya dokunmaz.
+CompileFlags:
+  CompilationDatabase: build/${presetName(type)}
+  # clang'ın tanımadığı gcc bayrakları
+  Remove: [-fcallgraph-info=*, -fstack-usage]
+${halHeader ? `---
+# ST'nin *_hal_conf.h şablonu tek başına derlenmez (HAL türleri ${halHeader} içinde); açılınca hata göstermesin
+If:
+  PathMatch: .*_hal_conf\.h
+CompileFlags:
+  Add: [-include, ${halHeader}]
+` : ''}`;
+}
+
+/** Microsoft C/C++ eklentisi için compile_commands.json yolu (.vscode/settings.json). */
+const compileCommandsSetting = (type) => `\${workspaceFolder}/build/${presetName(type)}/compile_commands.json`;
 
 module.exports = {
   BUILD_TYPES, OPT_LEVELS, WARNINGS, DEFAULT_BUILD,
   normalizeBuild, presetName, buildDir, elfRel, gccTool, rtosPort, mcuFlags, effectiveFpu,
-  cmakeModule, toolchainFile, cmakePresets, cmakeListsManaged, cmakeListsStarter, includeSnippet, buildCommand
+  cmakeModule, toolchainFile, cmakePresets, cmakeListsManaged, cmakeListsStarter, includeSnippet, buildCommand,
+  configureCommand, clangdConfig, compileCommandsSetting, CLANGD_MARK
 };

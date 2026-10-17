@@ -44,7 +44,7 @@ const taskEndListeners = []; // test, görev bitişini (derleme sonrası boyut �
 const uriOf = (p) => ({ fsPath: p, path: p, toString: () => p });
 const vscodeFake = {
   Uri: { file: uriOf, parse: (u) => ({ fsPath: u, toString: () => u }), joinPath: (u, ...parts) => uriOf(path.join(u.fsPath, ...parts)) },
-  ViewColumn: { One: 1, Beside: 2 },
+  ViewColumn: { One: 1, Beside: 2 }, ConfigurationTarget: { Global: 1 },
   Position: class { constructor(line, character) { Object.assign(this, { line, character }); } },
   Range: class { constructor(start, end) { Object.assign(this, { start, end }); } }, StatusBarAlignment: { Left: 1 }, ProgressLocation: { Notification: 15 }, TaskScope: { Workspace: 2 },
   Task: class { constructor(def, scope, name, source, exec) { Object.assign(this, { def, definition: def, scope, name, source, exec }); } },
@@ -52,7 +52,10 @@ const vscodeFake = {
   commands: { registerCommand: () => ({ dispose() {} }), executeCommand: async (...a) => { if (a[0] === 'setContext') recorded.context[a[1]] = a[2]; else recorded.openFolder.push(a); } },
   workspace: {
     workspaceFolders: [{ uri: uriOf(PROJECT) }], openTextDocument: async (u) => ({ uri: u }),
-    getConfiguration: () => ({ get: (k, d) => (k in settings ? settings[k] : d) }),
+    getConfiguration: () => ({
+      get: (k, d) => (k in settings ? settings[k] : d),
+      update: async (k, v) => { settings[k] = v; configListeners.forEach((fn) => fn({ affectsConfiguration: (s) => s === `embeddedStudio.${k}` })); }
+    }),
     onDidChangeConfiguration: (fn) => { configListeners.push(fn); return { dispose() {} }; }
   },
   window: {
@@ -1221,6 +1224,39 @@ async function until(fn, ms = 8000, what = 'koşul') {
     await cdp.click(`(document.querySelector('input[name=set-mode][value=beginner]').closest('label'))`);
     await until(() => design().mode === 'beginner', 4000, 'acemi kaydedildi');
     await until(() => cdp.eval(`!document.body.classList.contains('mode-pro') && document.querySelector('#design').classList.contains('active')`), 3000, 'acemi: tasarım ana sekme');
+  });
+  await step('Ayarlar: sekme gizleme ve geri getirme (ES-804); seçim yeniden açılışta korunur', async () => {
+    const order = () => cdp.eval(`[...document.querySelectorAll('#topbar .tabs button')].filter((b) => getComputedStyle(b).display !== 'none').map((b) => b.id.slice(4))`);
+    await cdp.click('#tab-settings');
+    await until(() => cdp.eval(`!!document.querySelector('#set-tab-monitor')`), 3000, 'görünen sekmeler bölümü');
+    await cdp.click('#set-tab-monitor');
+    await until(() => JSON.stringify(settings.hiddenTabs) === '{"beginner":["monitor"]}', 3000, 'ayar kaydedildi');
+    assert.deepStrictEqual(await order(), ['design', 'clock', 'terminal', 'debug', 'analyzer', 'settings']);
+    // Alt+3 artık Terminal (gizli Monitör atlanır)
+    await cdp.send('Input.dispatchKeyEvent', { type: 'keyDown', key: '3', code: 'Digit3', windowsVirtualKeyCode: 51, modifiers: 1 });
+    await cdp.send('Input.dispatchKeyEvent', { type: 'keyUp', key: '3', code: 'Digit3', windowsVirtualKeyCode: 51, modifiers: 1 });
+    await until(() => cdp.eval(`document.querySelector('#terminal').classList.contains('active')`), 3000, 'Alt+3 → Terminal');
+    // Etkin sekme dışarıdan (VS Code ayarı) gizlenirse ana sekmeye, o da gizliyse ilk görünen sekmeye geçilir
+    await vscodeFake.workspace.getConfiguration('embeddedStudio').update('hiddenTabs', { beginner: ['monitor', 'terminal', 'design'] });
+    await until(() => cdp.eval(`document.querySelector('#clock').classList.contains('active')`), 3000, 'ilk görünen sekme');
+    assert.deepStrictEqual(await order(), ['clock', 'debug', 'analyzer', 'settings']);
+    // Hepsi gizlenemez: en az bir çalışma sekmesi kalır, Ayarlar her zaman görünür
+    await vscodeFake.workspace.getConfiguration('embeddedStudio').update('hiddenTabs', { beginner: ['design', 'clock', 'monitor', 'terminal', 'debug', 'analyzer', 'settings'] });
+    await until(async () => (await order()).length === 2, 3000, 'bir sekme + Ayarlar');
+    assert.deepStrictEqual(await order(), ['analyzer', 'settings']);
+    await cdp.click('#tab-settings');
+    assert.ok(await cdp.eval(`document.querySelector('#set-tab-analyzer').disabled`), 'son sekme kapatılamaz');
+    await cdp.shot('27-sekme-gizleme');
+    await cdp.click('#set-tabs-reset');
+    await until(() => JSON.stringify(settings.hiddenTabs) === '{"beginner":[]}', 3000, 'hepsini göster');
+    assert.deepStrictEqual(await order(), ['design', 'clock', 'monitor', 'terminal', 'debug', 'analyzer', 'settings']);
+    // Kalıcılık: yeniden açılınca ayar eklentiden gelir; mod başına ayrı (pro etkilenmez)
+    await vscodeFake.workspace.getConfiguration('embeddedStudio').update('hiddenTabs', { beginner: ['monitor'] });
+    await cdp.send('Page.navigate', { url: ORIGIN + '/' });
+    await until(() => cdp.eval(`!!document.querySelector('#tab-monitor') && document.querySelector('#tab-monitor').hidden && !document.querySelector('#tab-design').hidden`).catch(() => false), 15000, 'yeniden açılışta gizli');
+    await vscodeFake.workspace.getConfiguration('embeddedStudio').update('hiddenTabs', {});
+    await until(async () => (await order()).length === 7, 3000, 'hepsi görünür');
+    await cdp.click('#tab-design');
   });
   await step('Başka işlemci (ES-106): Nucleo-G474RE seçilir, saat ağacı M/N/R, kod G4 dosyalarıyla üretilir ve derlenir; F411\'e dönülür', async () => {
     const P = (p) => path.join(PROJECT, p);

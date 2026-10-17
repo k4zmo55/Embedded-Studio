@@ -522,12 +522,12 @@ Uluslararası katkı ve kullanım için arayüz metinlerinin çevrilebilir olmas
 ### ES-804 · Ayarlar: arayüz sekmelerini gizleme ve geri getirme
 `etiketler: tip:özellik, alan:arayüz, öncelik:orta, seviye:hepsi`
 
-Kullanıcı kullanmadığı sekmeleri (ör. Monitör, Komponent oluşturucu) üst çubuktan gizleyebilmeli, istediğinde geri getirebilmeli.
+Kullanıcı kullanmadığı sekmeleri (ör. Monitör, Bellek raporu) üst çubuktan gizleyebilmeli, istediğinde geri getirebilmeli.
 
 - [ ] Ayarlar sekmesinde "Görünen sekmeler" bölümü: her sekme için aç/kapat, varsayılana dön
 - [ ] Ayarlar sekmesi gizlenemez (geri getirmenin yolu kaybolmasın); en az bir çalışma sekmesi açık kalır
 - [ ] Seçim kullanıcı başına hatırlanır (bütün projelerde geçerli), çalışma moduna (acemi / profesyonel) göre ayrı
-- [ ] Gizli sekmenin kısayolu (Ctrl+1…9) atlanır; gizli sekme etkinken gizlenirse ana sekmeye geçilir
+- [ ] Gizli sekmenin kısayolu (Alt+1…9) atlanır; gizli sekme etkinken gizlenirse ana sekmeye geçilir
 - [ ] Birim ve arayüz testi
 
 ---

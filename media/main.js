@@ -36,6 +36,7 @@
     if (state.design) ES.tabs[tab].onShow && ES.tabs[tab].onShow();
   }
   ES.setTab = setTab;
+  ES.TABS = TABS;
 
   ES.showWelcome = (on) => {
     document.body.classList.toggle('welcome-mode', on);
@@ -47,12 +48,14 @@
 
   /** Moda göre sekme sırası, görünürlük, gövde sınıfı; mod değiştiyse modun ana sekmesine geç. */
   function applyMode() {
-    const id = (state.design && state.design.mode) === 'pro' ? 'pro' : 'beginner';
+    const id = ES.modeId();
     const m = ES.mode();
+    const tabs = ES.visibleTabs();
+    const home = tabs.includes(m.home) ? m.home : tabs[0];
     document.body.classList.toggle('mode-pro', id === 'pro');
     const nav = document.querySelector('#topbar .tabs');
-    TABS.forEach(([tab]) => ($(`tab-${tab}`).hidden = !m.tabs.includes(tab)));
-    m.tabs.forEach((tab, i) => {
+    TABS.forEach(([tab]) => ($(`tab-${tab}`).hidden = !tabs.includes(tab)));
+    tabs.forEach((tab, i) => {
       const b = $(`tab-${tab}`);
       b.title = `Alt+${i + 1}`;
       nav.append(b);
@@ -64,9 +67,17 @@
       ui.modeSeen = id;
       ui.assistantOpen = m.assistant;
       saveUi();
-      setTab(m.home);
-    } else if (!m.tabs.includes(ui.tab)) setTab(m.home);
+      setTab(home);
+    } else if (!tabs.includes(ui.tab)) setTab(home);
   }
+
+  // ES-804: gizlenen sekmeler (bütün projelerde, moda göre)
+  ES.on('tabs.hidden', (m) => {
+    state.hiddenTabs = m.hidden || {};
+    if (!state.design) return;
+    applyMode();
+    ES.tabs.settings.render();
+  });
 
   ES.on('state', (m) => {
     ES.showWelcome(false);
@@ -106,7 +117,7 @@
   document.addEventListener('keydown', (e) => {
     if (!e.altKey || e.ctrlKey || e.metaKey || !state.design || document.body.classList.contains('welcome-mode')) return;
     const n = Number(e.key);
-    const tab = n >= 1 && ES.mode().tabs[n - 1];
+    const tab = n >= 1 && ES.visibleTabs()[n - 1];
     if (tab) { e.preventDefault(); setTab(tab); }
   });
 

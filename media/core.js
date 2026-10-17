@@ -232,6 +232,14 @@ window.ES = (function () {
     pro: { tabs: ['debug', 'terminal', 'analyzer', 'monitor', 'clock', 'design', 'settings'], home: 'debug', art: false, assistant: false }
   };
   const mode = () => MODES[state.design && state.design.mode] || MODES.beginner;
+  const modeId = () => ((state.design && state.design.mode) === 'pro' ? 'pro' : 'beginner');
+  // ES-804: kullanıcının gizlediği sekmeler (embeddedStudio.hiddenTabs, moda göre). Ayarlar gizlenemez, en az bir çalışma sekmesi kalır.
+  const hiddenTabs = (id = modeId()) => {
+    const all = MODES[id].tabs.filter((x) => x !== 'settings');
+    const hid = ((state.hiddenTabs || {})[id] || []).filter((x) => all.includes(x));
+    return hid.length >= all.length ? hid.slice(0, all.length - 1) : hid;
+  };
+  const visibleTabs = () => mode().tabs.filter((x) => !hiddenTabs().includes(x));
 
   const isTyping = () => {
     const a = document.activeElement;
@@ -240,5 +248,5 @@ window.ES = (function () {
   const hex = (v, w = 8) => '0x' + (v >>> 0).toString(16).toUpperCase().padStart(w, '0');
   const KIND_LABEL = { i2c: 'I2C', spi: 'SPI', uart: 'UART', gpio: 'GPIO', adc: 'ADC', pwm: 'PWM' };
 
-  return { t, h, s, $, cIdent, on, emit, post, state, ui, saveUi, update, undo, redo, canUndo: () => hist.undo.length > 0, canRedo: () => hist.redo.length > 0, icon, contextMenu, closeMenu, modal, showTip, placeTip, hideTip, toast, isTyping, hex, KIND_LABEL, MODES, mode, tabs: {} };
+  return { t, h, s, $, cIdent, on, emit, post, state, ui, saveUi, update, undo, redo, canUndo: () => hist.undo.length > 0, canRedo: () => hist.redo.length > 0, icon, contextMenu, closeMenu, modal, showTip, placeTip, hideTip, toast, isTyping, hex, KIND_LABEL, MODES, mode, modeId, hiddenTabs, visibleTabs, tabs: {} };
 })();

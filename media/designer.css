@@ -107,6 +107,7 @@ header#topbar .save-state { min-width: 0; overflow: hidden; text-overflow: ellip
 .tabs { display: flex; margin-left: auto; border: 1px solid var(--border); border-radius: 4px; overflow: hidden; }
 .tabs button { background: transparent; color: var(--muted); border-radius: 0; padding: 4px 14px; border: none; }
 .tabs button.active { background: var(--btn); color: var(--btn-fg); }
+.tabs button[hidden] { display: none; }
 body.welcome-mode header#topbar > *:not(.brand) { display: none; }
 body.welcome-mode .panes { display: none; }
 .welcome { display: none; }
@@ -291,6 +292,7 @@ table.pins select { width: 100%; font-size: 12px; padding: 1px 2px; }
 .wizard-card h2 { margin: 0 0 16px; font-size: 16px; }
 .choices { display: flex; flex-direction: column; gap: 8px; }
 .choices.two { display: grid; grid-template-columns: 1fr 1fr; }
+.tab-toggles { display: flex; flex-wrap: wrap; gap: 8px 18px; margin: 4px 0 8px; }
 .choice { display: flex; flex-direction: column; gap: 4px; padding: 10px 12px; border: 1px solid var(--border); border-radius: 6px; cursor: pointer; position: relative; background: var(--bg); }
 .choice:hover { border-color: color-mix(in srgb, var(--accent) 50%, var(--border)); }
 .choice.selected { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }

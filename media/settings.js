@@ -238,6 +238,34 @@
       h('p', { class: 'hint', text: t('Ayarlar hemen kaydedilir; dosyalar (cmake/embedded-studio.cmake, araç zinciri) "Kod Üret" ile güncellenir. Derle/Yükle seçili tipi kullanır: build/{0}/', preset) }));
   }
 
+  /** ES-804: üst çubukta görünen sekmeler; seçim bütün projelerde geçerli, moda göre ayrı (embeddedStudio.hiddenTabs). */
+  function tabsSection() {
+    const id = ES.modeId();
+    const labels = Object.fromEntries(ES.TABS);
+    const hidden = ES.hiddenTabs();
+    const tabs = ES.mode().tabs.filter((x) => x !== 'settings');
+    const save = (list) => {
+      state.hiddenTabs = { ...(state.hiddenTabs || {}), [id]: list };
+      post({ type: 'tabs.hide', mode: id, hidden: list });
+      ES.emit('tabs.hidden', { hidden: state.hiddenTabs });
+    };
+    const toggle = (tab, on) => save(on ? hidden.filter((x) => x !== tab) : [...hidden, tab]);
+    return h('section', { class: 'wizard-card', id: 'set-tabs' },
+      h('h3', { text: t('Görünen sekmeler') }),
+      h('p', { class: 'hint', text: t('Kullanmadığınız sekmeleri gizleyin; bütün projelerde, {0} modu için geçerli. Ayarlar sekmesi her zaman görünür.', id === 'pro' ? t('Profesyonel') : t('Acemi')) }),
+      h('div', { class: 'tab-toggles' },
+        ...tabs.map((tab) => {
+          const shown = !hidden.includes(tab);
+          const last = shown && tabs.filter((x) => !hidden.includes(x)).length === 1;
+          return h('label', { class: 'check', title: last ? t('En az bir sekme açık kalmalı') : '' },
+            h('input', { type: 'checkbox', id: `set-tab-${tab}`, checked: shown, disabled: last, onchange: (e) => toggle(tab, e.target.checked) }),
+            h('span', { text: labels[tab] }));
+        }),
+        h('label', { class: 'check' }, h('input', { type: 'checkbox', checked: true, disabled: true }), h('span', { text: labels.settings }))),
+      h('div', { class: 'wizard-actions' },
+        h('button', { class: 'ghost small', id: 'set-tabs-reset', disabled: !hidden.length, onclick: () => save([]) }, t('Hepsini göster'))));
+  }
+
   function render() {
     const box = $('settings-body');
     if (!box || !state.design || !state.lib) return;
@@ -258,6 +286,7 @@
             modeChoice('beginner', t('Acemi'), t('Görsel tasarım: komponent seç, şemada bağla, pinleri ve saati asistan atasın, örnek kod üretilsin.')),
             modeChoice('pro', t('Profesyonel'), t('Debug ve test öncelikli, yoğun ve sade arayüz. Tasarım ekranı isteğe bağlı bir araç olarak kalır.')))),
         h('p', { class: 'hint', text: t('Mod sadece arayüzü değiştirir; dosyalara dokunmaz.') })),
+      tabsSection(),
       h('section', { class: 'wizard-card' },
         h('p', { class: 'hint', text: t('Bu ayarlar projenin kimliğidir ve üretilen dosyaların yapısını belirler. Değiştirmeden önce etkilenen dosyaları kontrol edin.') }),
         h('div', { class: 'field' },
