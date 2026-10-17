@@ -1,5 +1,18 @@
 # Değişiklik günlüğü
 
+## 0.6.2 (önizleme)
+
+- **Programlayıcı sekmesi (ES-301):** STM32CubeProgrammer'ın temel işleri VS Code içinde. Bağlantı Debug sekmesiyle ortak (aynı prob, aynı OpenOCD); kart yokken simülasyon.
+  - **Bağlantı:** SWD ya da JTAG (ST-Link'te `hla_jtag`). UART ve USB DFU listede, sistem bootloader'ı ile ES-302'de gelecek.
+  - **Oku ve kaydet:** bütün flash, bütün RAM ya da adres + uzunluk; `.bin` ya da Intel HEX, ilerleme çubuğuyla.
+  - **Dosyayla karşılaştır:** `.elf` (objcopy ile), `.hex` ya da `.bin` (başlangıç adresi seçilir); farklı bayt sayısı, farklı bölgeler, ilk farklar ve cihazın boş (silinmiş) olup olmadığı.
+  - **Sektörler:** liste OpenOCD'den canlı okunur (`flash info`; okunamazsa işlemci verisinden). F2/F4/F7/H7 sektörleri ve F0/F1/F3/G0/G4/L4/U5 sayfaları, çift bankta bank numarası, yazma korumalı olanlar işaretli. Shift + tık ile aralık seçimi; seçili sektörleri ya da tamamını silme (onaylı, hedef önce durdurulur; bitişik sektörler tek komutta).
+  - **Option bytes (salt okunur):** RDP seviyesi (0 / 0,5 / 1 / 2, açıklamalı ve renkli), BOR, sektör/sayfa bazında yazma koruması (WRP), PCROP (F4 SPRMOD), kullanıcı bitleri (watchdog, STOP/STANDBY/SHUTDOWN reseti, boot bitleri, çift bank) ve ham register değerleri; 15 işlemcinin hepsinde. Yazma kartla denendikten sonra: yeni madde ES-306.
+  - **İşlem günlüğü:** zaman damgalı, sekmede ve "Embedded Studio: Programlayıcı" çıktı panelinde.
+- Sekme sırası: Acemi — …, Debug, Programlayıcı, Bellek raporu, Ayarlar; Profesyonel — Debug, Programlayıcı, Terminal, … (Alt+1…8). Programlayıcı da Ayarlar > Görünen sekmeler'den gizlenebilir.
+- **Düzeltme:** Kod Üret'ten sonra arka planda çalışan CMake yapılandırması (ES-108) hemen başlatılan derlemeyle aynı klasörde çakışabiliyordu; artık geçici klasörde çalışır, yalnızca `compile_commands.json` kopyalanır.
+- Testler: birim 71 (15 işlemcide sektör haritası ve fabrika option byte'ları, `flash info` çözümü, silme aralıkları, RDP/WRP/PCROP/BOR çözümü, Intel HEX, karşılaştırma, simülasyonda silme), arayüz 43 (UART uyarısı, simülasyona bağlanma, flash okuma, karşılaştırma, silme, günlük). Önceki iki arayüz testindeki bozuk `null` denetimi de düzeltildi. Gerçek kartla henüz denenmedi (bu makinede kart yok).
+
 ## 0.6.1 (önizleme)
 
 - **Düzeltme — derleme temizken editörde onlarca hata (ES-108):** `use of undeclared identifier 'RCC'`, `'board.h' file not found` gibi hatalar derleyiciden değil, editörün dil sunucusundan geliyordu. CMake derleme veritabanını `build/<tip>/compile_commands.json`'a yazıyor, clangd ise `build/` altında arıyordu; 0.4.x'ten yükseltilen projelerde orada eski yapıya ait bir veritabanı kalmıştı. Artık:

@@ -2,7 +2,7 @@
   "name": "embedded-studio",
   "displayName": "Embedded Studio",
   "description": "STM32 için görsel gömülü sistem tasarımı: komponent seçimi, otomatik pin/saat ataması, HAL veya bare-metal + FreeRTOS kod üretimi, canlı monitör ve debug.",
-  "version": "0.6.1",
+  "version": "0.6.2",
   "publisher": "mhmtakfseckin",
   "license": "MIT",
   "repository": {
@@ -219,8 +219,8 @@
           "type": "object",
           "default": {},
           "properties": {
-            "beginner": { "type": "array", "items": { "type": "string", "enum": ["design", "clock", "monitor", "terminal", "debug", "analyzer"] }, "uniqueItems": true },
-            "pro": { "type": "array", "items": { "type": "string", "enum": ["design", "clock", "monitor", "terminal", "debug", "analyzer"] }, "uniqueItems": true }
+            "beginner": { "type": "array", "items": { "type": "string", "enum": ["design", "clock", "monitor", "terminal", "debug", "programmer", "analyzer"] }, "uniqueItems": true },
+            "pro": { "type": "array", "items": { "type": "string", "enum": ["design", "clock", "monitor", "terminal", "debug", "programmer", "analyzer"] }, "uniqueItems": true }
           },
           "additionalProperties": false,
           "description": "%config.hiddenTabs%"
