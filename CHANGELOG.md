@@ -1,5 +1,16 @@
 # Değişiklik günlüğü
 
+## 0.6.3 (önizleme)
+
+- **ST sistem bootloader'ı ile yükleme (ES-302):** ST-Link olmadan, yongadaki ROM bootloader üzerinden; Programlayıcı sekmesinde.
+  - **UART (AN3155):** port, baud (9600–115200), 8E1; senkron (0x7F), GET, GET_ID, READ, WRITE, ERASE / EXTENDED ERASE, GO. Bağlanınca bootloader sürümü, PID ve desteklenen komutlar; bağlanan işlemci projedekinden farklıysa uyarı. Oku / kaydet, karşılaştır ve sektör silme SWD'deki gibi bootloader üzerinden de çalışır (option byte'lar bootloader'dan okunmaz).
+  - **Bootloader'a giriş:** "BOOT0 elle" ya da USB-UART dönüştürücünün DTR → NRST, RTS → BOOT0 bağlantısıyla otomatik (yüklemeden sonra BOOT0 düşük, reset). "Reset ve çalıştır" bootloader'da GO komutudur.
+  - **USB DFU (AN3156):** dfu-util ya da STM32_Programmer_CLI ile (VS Code'dan doğrudan USB erişimi yok): aygıt arama (DfuSe bellek haritası çözülür), yazma (ELF/HEX dfu-util için .bin'e çevrilir), okuma, tamamını silme; ilerleme çubuğu ve anlaşılır hatalar (aygıt yok, WinUSB sürücüsü, birden fazla aygıt). dfu-util araç algılamaya eklendi.
+  - **Dosya yaz:** bütün bağlantılarda (SWD/JTAG'da OpenOCD `program`, bootloader ve simülasyonda blok blok): gerekli sektörleri sil, yaz (0xFF blokları atlanır), doğrula, sonra çalıştır.
+  - **Kart talimatları ve AN2606 tablosu:** 15 işlemcinin her biri için bootloader UART'ları ve pinleri, USB DFU pinleri, CAN/I2C/SPI arayüzleri; kart başına BOOT0'a giriş adımları (Black Pill düğmeleri, Blue Pill köprüleri, Nucleo-64/144 CN7/CN11 pinleri, ST-LINK sanal COM portunun bootloader UART'ına bağlı olup olmadığı). CAN/I2C/SPI ile yükleme köprü gerektirdiği için ES-307'ye ayrıldı.
+  - **Simülasyon:** "Simülasyon (bootloader)" portu protokolün cihaz tarafını taklit eder (silinmeden yazılamayan flash, NACK'ler, GO); yeniden bağlanınca flash içeriği korunur.
+- Testler: birim 72 (AN3155 F4, F1 eski ERASE, H7 ikinci bank; NACK, zaman aşımı, çöp bayt; DTR/RTS sırası; dfu-util/CubeProgrammer komutları ve çıktıları; 15 işlemcide AN2606 kaydı), arayüz 44 (UART talimatları, bootloader'a bağlanma, dosya yazma + doğrulama + GO, yeniden bağlanıp karşılaştırma, DFU araç durumu). Gerçek kartla, USB-UART dönüştürücüyle ve dfu-util ile denenmedi (bu makinede yok).
+
 ## 0.6.2 (önizleme)
 
 - **Programlayıcı sekmesi (ES-301):** STM32CubeProgrammer'ın temel işleri VS Code içinde. Bağlantı Debug sekmesiyle ortak (aynı prob, aynı OpenOCD); kart yokken simülasyon.
