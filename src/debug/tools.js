@@ -31,6 +31,12 @@ const tools = () => [
     required: true
   },
   {
+    // ES-302: USB DFU (sistem bootloader'ı)
+    id: 'dfuutil', name: 'dfu-util', bin: 'dfu-util', args: ['-V'], version: /dfu-util\s+v?([\d.]+)/i,
+    dirs: () => [], install: 'https://dfu-util.sourceforge.net/releases/',
+    hint: process.platform === 'darwin' ? 'brew install dfu-util' : process.platform === 'win32' ? t('dfu-util-*-binaries.tar.xz arşivini açıp klasörü PATH\'e ekleyin; aygıt için WinUSB sürücüsü (Zadig)') : 'sudo apt install dfu-util'
+  },
+  {
     id: 'pyocd', name: 'pyOCD', bin: 'pyocd', args: ['--version'], version: /([\d.]+)/,
     dirs: () => [], install: 'https://pyocd.io', hint: 'pip install pyocd'
   },

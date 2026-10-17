@@ -1411,6 +1411,110 @@ edge: { sourcename: "Task_A" targetname: "__indirect_call" label: "a.c:9:40" }
     passed++;
     console.log('  ✓ Programlayıcı (ES-301): 15 işlemcide sektör haritası ve fabrika option byte\'ları, flash info, silme aralıkları, RDP/WRP/PCROP/BOR, Intel HEX, karşılaştırma, simülasyon');
   }
+  {
+    // ES-302: sistem bootloader'ı
+    const sb = require('../src/debug/sysboot');
+    const pg = require('../src/debug/programmer');
+    const f411 = lib.mcus.stm32f411ceu6;
+    // UART protokolü (AN3155) simülasyonda: GET, GET_ID, yazma/okuma, silme, GO
+    const { boot, dev } = sb.simBoot(f411, 0x431);
+    const bt = new sb.BootTarget(boot, f411);
+    const info = await bt.connect();
+    assert.strictEqual(info.pid, 0x431);
+    assert.strictEqual(info.version, 0x31);
+    assert.ok(info.commands.includes('EXT_ERASE') && info.commands.includes('GO'));
+    await boot.sync(); // zaten senkron: NACK da kabul
+    const img = Buffer.from(Array.from({ length: 1030 }, (_, i) => (i * 31 + 7) & 0xff));
+    img.fill(0xff, 256, 512); // 0xFF blok atlanır
+    await bt.writeFlash(0x08000000, img);
+    assert.ok((await bt.readBytes(0x08000000, 1030)).equals(img), 'yazılan okunur');
+    assert.strictEqual(dev.log.filter((c) => c === 'WRITE').length, 4, '256 baytlık bloklar, 0xFF bloğu atlandı');
+    assert.strictEqual((await bt.readMemory(0x08000000, 1))[0], img.readUInt32LE(0));
+    // Silmeden yazma: flash bitleri yalnızca 1 → 0
+    await bt.writeFlash(0x08000000, Buffer.from([0x0f, 0xf0, 0, 0]));
+    assert.strictEqual((await bt.readBytes(0x08000000, 1))[0], img[0] & 0x0f);
+    await bt.eraseSectors(0, 0, 0);
+    assert.strictEqual((await bt.readMemory(0x08000000, 1))[0], 0xffffffff, 'sektör 0 silindi');
+    // Geçersiz adres → NACK ve anlaşılır hata
+    await assert.rejects(() => boot.read(0x60000000, 4), /NACK/);
+    await assert.rejects(() => boot.read(0x08000000, 0), /read/);
+    // Programlayıcı ile aynı arayüz: flashBanks → sektörler
+    assert.deepStrictEqual(pg.layoutFromBanks(await bt.flashBanks()).map((s) => s.size), pg.flashLayout(f411).map((s) => s.size));
+    await bt.writeFlash(0x08004000, Buffer.from([1, 2, 3, 4]));
+    await bt.reset();
+    assert.ok(dev.running, 'GO: uygulama çalışıyor');
+    assert.strictEqual(await bt.state(), 'running');
+    // Yeniden giriş (BOOT0 = 1 iken reset): aynı sanal cihaz, flash içeriği korunur
+    const again = sb.simBoot(f411, 0x431, { dev });
+    const bt2 = new sb.BootTarget(again.boot, f411);
+    await bt2.connect();
+    assert.ok(!dev.running);
+    assert.strictEqual((await bt2.readMemory(0x08004000, 1))[0], 0x04030201, 'flash korundu');
+    // Eski ERASE (F1) ve H7'nin ikinci bankı
+    const f103 = lib.mcus.stm32f103c8t6;
+    const s1 = sb.simBoot(f103, 0x410, { legacyErase: true });
+    const b1 = new sb.BootTarget(s1.boot, f103);
+    await b1.connect();
+    await b1.writeFlash(0x08000400, Buffer.alloc(8, 0x11));
+    await b1.eraseSectors(0, 1, 1);
+    assert.deepStrictEqual([...(await b1.readBytes(0x08000400, 8))], Array(8).fill(0xff));
+    assert.ok(s1.dev.log.includes('ERASE') && !s1.dev.log.includes('EXT_ERASE'));
+    const h7 = lib.mcus.stm32h743zit6;
+    const s7 = sb.simBoot(h7, 0x450);
+    const b7 = new sb.BootTarget(s7.boot, h7);
+    await b7.connect();
+    await b7.writeFlash(0x08100000, Buffer.alloc(4, 0));
+    await b7.eraseSectors(1, 0, 0); // bank 2'nin 0. sektörü = bootloader'da 8
+    assert.strictEqual((await b7.readMemory(0x08100000, 1))[0], 0xffffffff);
+    // Cihaz yokken: senkron zaman aşımı
+    const none = new sb.UartBootloader({ write: () => {} });
+    await assert.rejects(() => none.sync(2), /Bootloader bulunamadı/);
+    // Yanlış baud / parite: çöp bayt
+    const junk = new sb.UartBootloader({ write: () => setImmediate(() => junk.feed([0x55])) });
+    await assert.rejects(() => junk.sync(1), /Bootloader bulunamadı.*0x55/);
+    // DTR / RTS ile giriş ve çıkış: RTS → BOOT0 (etkin = düşük), DTR → NRST
+    const sig = [];
+    await sb.resetSequence((d, r) => sig.push([d, r]), 'enter', async () => {});
+    assert.deepStrictEqual(sig, [[false, false], [true, false], [false, false]], 'BOOT0 yüksek, NRST darbesi');
+    sig.length = 0;
+    await sb.resetSequence((d, r) => sig.push([d, r]), 'exit', async () => {});
+    assert.deepStrictEqual(sig, [[false, true], [true, true], [false, true]], 'BOOT0 düşük, NRST darbesi');
+    // USB DFU: dfu-util çıktıları ve komutları
+    const list = sb.parseDfuList('dfu-util 0.11\nFound DFU: [0483:df11] ver=2200, devnum=5, cfg=1, intf=0, path="1-2", alt=1, name="@Option Bytes  /0x1FFFC000/01*016 e", serial="3276365C3430"\nFound DFU: [0483:df11] ver=2200, devnum=5, cfg=1, intf=0, path="1-2", alt=0, name="@Internal Flash  /0x08000000/04*016Kg,01*064Kg,03*128Kg", serial="3276365C3430"\n');
+    assert.strictEqual(list.length, 2);
+    assert.ok(list[1].st);
+    assert.strictEqual(list[1].memory.base, 0x08000000);
+    assert.deepStrictEqual(list[1].memory.sectors.map((s) => s.size / 1024), [16, 16, 16, 16, 64, 128, 128, 128]);
+    assert.ok(list[1].memory.sectors.every((s) => s.readable && s.erasable && s.writable), 'g = okunur, silinir, yazılır');
+    assert.deepStrictEqual(sb.parseDfuProgress('Download\t[=========                ]  38%     196608 bytes'), { stage: 'program', percent: 38 });
+    assert.deepStrictEqual(sb.parseDfuProgress('Erase   \t[=========================] 100%'), { stage: 'erase', percent: 100 });
+    assert.strictEqual(sb.parseDfuProgress('Opening DFU capable USB device...'), null);
+    assert.deepStrictEqual(sb.dfuUtilArgs({ op: 'write', file: 'a.bin', addr: 0x08004000, leave: true }), ['-d', '0483:df11', '-a', '0', '-s', '0x08004000:leave', '-D', 'a.bin']);
+    assert.deepStrictEqual(sb.dfuUtilArgs({ op: 'read', file: 'r.bin', length: 524288 }).slice(-4), ['-s', '0x08000000:524288', '-U', 'r.bin']);
+    assert.ok(sb.dfuUtilArgs({ op: 'erase' }).includes('0x08000000:mass-erase:force'));
+    assert.deepStrictEqual(sb.cubeProgArgs({ port: 'usb1', op: 'write', file: 'a.hex', verify: true, go: true }), ['-c', 'port=usb1', '-w', 'a.hex', '-v', '-g', '0x08000000']);
+    assert.deepStrictEqual(sb.cubeProgArgs({ port: 'COM5', baud: 57600, op: 'write', file: 'a.bin', addr: 0x08000000 }), ['-c', 'port=COM5', 'br=57600', 'P=EVEN', '-w', 'a.bin', '0x08000000']);
+    assert.match(sb.explainDfu('dfu-util: No DFU capable USB device available'), /BOOT0/);
+    assert.match(sb.explainDfu('LIBUSB_ERROR_ACCESS'), /WinUSB/);
+    // AN2606 tablosu ve kart talimatları: 15 işlemcinin hepsi
+    for (const m of Object.values(lib.mcus)) {
+      const bi = sb.bootInfo(m);
+      assert.ok(sb.BOOT[m.id], `${m.id}: AN2606 kaydı`);
+      assert.ok(bi.uart.length && bi.uart[0].tx && bi.steps.length >= 2, `${m.id}: UART ve talimat`);
+    }
+    assert.strictEqual(sb.bootInfo(lib.mcus.stm32f103c8t6).dfu, null, 'F103C8: DFU yok');
+    assert.ok(sb.bootInfo(lib.mcus.stm32l476rgt6).steps.some((s) => /ST-LINK sanal COM portu bootloader/.test(s)), 'L476 Nucleo: VCP bootloader UART\'ında');
+    assert.ok(sb.bootInfo(f411).steps[0].includes('BOOT0 düğmesini'), 'Black Pill');
+    // Simülasyon hedefinde dosya yazma (Programlayıcı > Dosya yaz)
+    const d411 = design([inst('usb_uart')]);
+    const sm = new SimTarget(simModel(d411, lib, assign(d411, lib), computeClock(mcu, d411.clock), builtinStm32f4()));
+    await sm.eraseSectors(0, 1, 1);
+    await sm.writeFlash(0x08004000, Uint8Array.from([1, 2, 3, 4]));
+    assert.strictEqual((await sm.readMemory(0x08004000, 1))[0], 0x04030201);
+    await assert.rejects(() => sm.writeFlash(0x20000000, Uint8Array.from([1])), /flash dışında/);
+    passed++;
+    console.log('  ✓ Sistem bootloader\'ı (ES-302): AN3155 simülasyonda (GET, GET_ID, READ, WRITE, ERASE/EXT_ERASE, GO; F4, F1, H7 ikinci bank), hatalar, DTR/RTS sırası, dfu-util/CubeProgrammer komutları ve çıktıları, AN2606 tablosu');
+  }
   const { OpenOcdTarget, freePort } = require('../src/debug/session');
   const port = await freePort();
   assert.ok(port > 0 && port !== 6666, String(port));

@@ -1035,13 +1035,9 @@ async function until(fn, ms = 8000, what = 'koşul') {
     assert.ok(/Prob bulunamadı|openocd/i.test(msg), msg);
     await cdp.shot('17-debug-openocd-hata');
   });
-  await step('Programlayıcı (ES-301): UART/DFU uyarısı, simülasyona bağlan, sektörler ve option byte, flash okuma (.bin), karşılaştırma, seçili sektör silme, günlük', async () => {
+  await step('Programlayıcı (ES-301): simülasyona bağlan, sektörler ve option byte, flash okuma (.bin), karşılaştırma, seçili sektör silme, günlük', async () => {
     if (await cdp.eval(`document.querySelector('#dbg-conn').textContent !== 'Bağlan'`)) await cdp.click('#dbg-conn');
     await cdp.click('#tab-programmer');
-    await cdp.eval(`(() => { const s = document.querySelector('#pg-transport'); s.value = 'uart'; s.dispatchEvent(new Event('change')); })()`);
-    assert.ok(/ES-302/.test(await cdp.eval(`document.querySelector('#pg-msg').textContent`)), 'UART: ES-302 notu');
-    assert.ok(await cdp.eval(`document.querySelector('#pg-connect').disabled`), 'UART ile bağlanılamaz');
-    await cdp.eval(`(() => { const s = document.querySelector('#pg-transport'); s.value = 'swd'; s.dispatchEvent(new Event('change')); })()`);
     await cdp.click('#pg-sim');
     await until(() => cdp.eval(`document.querySelectorAll('#pg-sectors tbody tr').length === 8`), 8000, 'F411: 8 sektör');
     assert.ok(/RDP 0xAA/.test(await cdp.eval(`document.querySelector('#pg-rdp').textContent`)), 'RDP seviye 0');
@@ -1074,6 +1070,48 @@ async function until(fn, ms = 8000, what = 'koşul') {
     assert.ok(await cdp.eval(`document.querySelectorAll('#pg-log-list .pg-le').length`) >= 6, 'işlem günlüğü');
     await cdp.click('#pg-disconnect');
     await until(() => cdp.eval(`!!document.querySelector('#pg-connect') && document.querySelector('#dbg-conn').textContent === 'Bağlan'`), 5000, 'bağlantı kesildi');
+  });
+  await step('Sistem bootloader\'ı (ES-302): UART talimatları ve AN2606 pinleri, bootloader simülasyonuna bağlan, dosya yaz + doğrula + GO; DFU araç durumu', async () => {
+    const transport = (v) => cdp.eval(`(() => { const s = document.querySelector('#pg-transport'); s.value = '${v}'; s.dispatchEvent(new Event('change')); })()`);
+    await transport('uart');
+    await until(() => cdp.eval(`document.querySelectorAll('#pg-steps li').length >= 2`), 15000, 'bootloader talimatları');
+    assert.ok((await cdp.eval(`document.querySelector('#pg-steps').textContent`)).includes('BOOT0 düğmesini'), 'Black Pill talimatı');
+    assert.ok(/USART1 \(UART\)[\s\S]*PA9/.test(await cdp.eval(`document.querySelector('#pg-an2606').innerText`)), 'AN2606: USART1 PA9/PA10');
+    assert.strictEqual(await cdp.eval(`document.querySelector('#pg-port').value`), 'SIM', 'kart yokken simülasyon portu');
+    assert.ok(await cdp.eval(`!document.querySelector('#pg-sim') && !!document.querySelector('#pg-entry')`), 'UART: giriş yöntemi, ayrı simülasyon düğmesi yok');
+    await cdp.click('#pg-connect');
+    await until(() => cdp.eval(`(document.querySelector('#pg-boot-info') || {}).textContent || ''`).then((x) => /PID 0x431/.test(x)), 10000, 'bootloader bilgisi');
+    await until(() => cdp.eval(`document.querySelectorAll('#pg-sectors tbody tr').length === 8`), 8000, 'sektörler');
+    assert.ok(/bootloader/.test(await cdp.eval(`document.querySelector('#pg-state').textContent`)));
+    assert.ok(/SWD ile bağlanın/.test(await cdp.eval(`document.querySelector('#pg-ob').textContent`)), 'option byte: bootloader\'da okunmaz');
+    assert.ok(await cdp.eval(`document.querySelector('#dbg-conn').textContent === 'Bağlan'`), 'Debug sekmesi bootloader\'a bağlanmaz');
+    // Önceki adımda okunan flash.bin'i yaz: gerekli sektörler silinir, yazılır, doğrulanır, GO
+    const bin = path.join(WORK, 'flash.bin');
+    dialogQueue.push([vscodeFake.Uri.file(bin)]);
+    await cdp.click('#pg-write-go');
+    await until(() => cdp.eval(`[...document.querySelectorAll('#pg-log-list .pg-le.ok')].some((e) => /Yazıldı: flash\.bin.*doğrulandı/.test(e.textContent))`), 30000, 'yazıldı ve doğrulandı');
+    await until(() => cdp.eval(`[...document.querySelectorAll('#pg-log-list .pg-le')].some((e) => e.textContent.includes('Uygulama çalıştırıldı (GO'))`), 5000, 'GO');
+    await until(() => cdp.eval(`!!document.querySelector('#pg-connect')`), 5000, 'GO sonrası bağlantı kapandı');
+    await cdp.shot('29-bootloader-uart');
+    // Bootloader'a yeniden bağlan: yazılanlar duruyor mu (karşılaştır)
+    await cdp.click('#pg-connect');
+    await until(() => cdp.eval(`!!document.querySelector('#pg-boot-info')`), 10000, 'yeniden bağlandı');
+    dialogQueue.push([vscodeFake.Uri.file(bin)]);
+    await cdp.click('#pg-compare-go');
+    await until(() => cdp.eval(`(document.querySelector('#pg-compare-result') || {}).className === 'pg-result ok'`), 30000, 'cihazla aynı');
+    await cdp.click('#pg-disconnect');
+    await until(() => cdp.eval(`!!document.querySelector('#pg-connect')`), 5000, 'bağlantı kesildi');
+    // USB DFU: araç yoksa kurulum bilgisi, yazma düğmesi kapalı
+    await transport('dfu');
+    await until(() => cdp.eval(`!!document.querySelector('#pg-dfu-tool')`), 15000, 'DFU araç durumu');
+    const tool = await cdp.eval(`document.querySelector('#pg-dfu-tool').textContent`);
+    if (/bulunamadı/.test(tool)) {
+      assert.ok(await cdp.eval(`document.querySelector('#pg-write-go').disabled && document.querySelector('#pg-dfu-list').disabled`), 'araç yokken DFU işlemleri kapalı');
+      assert.ok(/dfu-util/.test(await cdp.eval(`document.querySelector('#pg-dfu').textContent`)), 'kurulum bilgisi');
+    }
+    await cdp.shot('30-bootloader-dfu');
+    assert.ok(!/\bnull\b|undefined/.test(await cdp.eval(`document.querySelector('#programmer').innerText`)), 'ekranda null/undefined metni');
+    await transport('swd');
     await cdp.click('#tab-debug');
   });
   await step('Dar pencere: sekmeler ve debug bellek paneli görünür', async () => {

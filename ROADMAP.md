@@ -282,6 +282,15 @@ ST-Link olmadan, yongadaki sistem bootloader'ı ile yükleme.
 - [ ] BOOT0 / reset ile bootloader'a girme talimatları, karta göre
 - [ ] Desteklenen işlemcilerde CAN / I2C / SPI bootloader (AN2606 tablosu)
 
+### ES-307 · CAN / I2C / SPI sistem bootloader'ı (köprü üzerinden)
+`etiketler: tip:özellik, alan:flash, öncelik:düşük, seviye:profesyonel`
+
+ES-302'de UART ve USB DFU var; AN2606'daki CAN, I2C ve SPI arayüzleri Programlayıcı'da yalnızca pin tablosu olarak gösteriliyor. Bunlar bilgisayardan doğrudan sürülemez, bir köprü gerekir.
+
+- [ ] Köprü seçenekleri: ikinci bir STM32 (Embedded Studio'nun ürettiği köprü firmware'i, USB CDC ↔ I2C/SPI/CAN) ya da piyasadaki USB-I2C/SPI/CAN dönüştürücüler
+- [ ] AN4221 (I2C), AN4286 (SPI), AN3154 (CAN) protokolleri; UART istemcisiyle aynı komut katmanı
+- [ ] Sahada (kart kutudayken) güncelleme senaryosu için belge
+
 ### ES-303 · Güvenli bootloader şablonu: imaj başlığı ve CRC32
 `etiketler: tip:özellik, alan:bootloader, öncelik:yüksek, seviye:profesyonel`
 

@@ -51,6 +51,8 @@ const fault = require('./debug/fault');
 const trace = require('./debug/trace');
 const rtos = require('./debug/rtos');
 const prog = require('./debug/programmer');
+const sysboot = require('./debug/sysboot');
+const { DEV_IDS } = require('./debug/stm32id');
 const A = require('./analyzer');
 const serial = require('./monitor/serial');
 const i18n = require('./i18n');
@@ -304,6 +306,7 @@ class Studio {
       this.termCloseAll();
       this.dropTrace();
       this.target?.disconnect().catch(() => {});
+      this.bootTarget?.disconnect().catch(() => {});
       clearInterval(this.flushTimer);
       Studio.current = undefined;
     });
@@ -534,10 +537,19 @@ class Studio {
         await this.progErase(m);
         break;
       case 'prog.reset':
-        if (!this.target) break;
-        await this.target.reset();
-        this.progLog('info', t('Hedef resetlendi ve çalışıyor.'));
-        this.post({ type: 'debug.status', connected: true, mode: this.target.mode, state: await this.target.state() });
+        await this.progReset();
+        break;
+      case 'prog.write':
+        await this.progWrite(m);
+        break;
+      case 'prog.bootInfo':
+        await this.progBootInfo();
+        break;
+      case 'prog.bootDisconnect':
+        await this.bootDisconnect();
+        break;
+      case 'prog.dfu':
+        await this.progDfu(m);
         break;
       case 'debug.disconnect':
         await this.dropTrace();
@@ -1041,6 +1053,7 @@ class Studio {
 
   /** @param {'sim'|string} mode @param {{ transport?: string }} [opts] transport: swd (varsayılan) | jtag */
   async connectDebug(mode, opts = {}) {
+    await this.bootDisconnect(); // prob ve bootloader aynı anda programlayıcı hedefi olmasın
     await this.dropTrace();
     await this.target?.disconnect().catch(() => {});
     this.target = null;
@@ -1089,7 +1102,7 @@ class Studio {
     this.postTraceInfo();
   }
 
-  // ------------------------------------------------------------------ ES-301: programlayıcı
+  // ------------------------------------------------------------------ ES-301 / ES-302: programlayıcı
   /** İşlem günlüğü: sekmede ve "Embedded Studio: Programlayıcı" çıktı panelinde */
   progLog(level, text) {
     const entry = { at: Date.now(), level, text };
@@ -1101,7 +1114,12 @@ class Studio {
     this.post({ type: 'prog.log', entry });
   }
 
+  /** Programlayıcının hedefi: sistem bootloader'ı bağlıysa o, değilse Debug ile ortak prob bağlantısı */
+  progT() { return this.bootTarget || this.target; }
+
   async progConnect(m) {
+    if (m.transport === 'uart') return this.bootConnect(m);
+    await this.bootDisconnect();
     const mode = m.mode === 'sim' ? 'sim' : 'openocd';
     this.progLog('info', mode === 'sim' ? t('Simülasyona bağlanılıyor…') : t('Proba bağlanılıyor ({0})…', (m.transport || 'swd').toUpperCase()));
     await this.connectDebug(mode, { transport: m.transport });
@@ -1114,14 +1132,78 @@ class Studio {
     await this.progInfo();
   }
 
+  /**
+   * ES-302: UART sistem bootloader'ı (AN3155). Port 'SIM' ise bellekte çalışan bootloader benzetimi.
+   * @param {{ port: string, baud?: number, entry?: 'manual'|'dtr-rts' }} m
+   */
+  async bootConnect(m) {
+    await this.bootDisconnect();
+    if (this.target) {
+      await this.dropTrace();
+      await this.target.disconnect().catch(() => {});
+      this.target = null;
+      this.post({ type: 'debug.status', connected: false });
+    }
+    const mcu = this.lib.mcus[this.design.mcuId];
+    const baud = Number(m.baud) || 115200;
+    this.post({ type: 'prog.boot', connecting: true });
+    this.progLog('info', t('Bootloader\'a bağlanılıyor: {0}, {1} baud, 8E1{2}…', m.port, baud, m.entry === 'dtr-rts' ? ', DTR/RTS' : ''));
+    let target, session = null;
+    try {
+      if (m.port === serial.SIM_PORT) {
+        const want = Object.entries(DEV_IDS).find(([, d]) => (d.defines || []).includes(mcu.device.define));
+        // Sanal cihaz bağlantılar arasında korunur (işlemci değişince yenisi)
+        const keep = this._simBoot && this._simBoot.mcu === mcu.id ? this._simBoot.dev : undefined;
+        const { boot, dev } = sysboot.simBoot(mcu, want ? Number(want[0]) : 0x431, { dev: keep });
+        this._simBoot = { mcu: mcu.id, dev };
+        target = new sysboot.BootTarget(boot, mcu);
+      } else {
+        session = new serial.SerialSession({ path: m.port, baud, dataBits: 8, parity: 'even', stopBits: 1, flow: 'none', dtr: false, rts: false });
+        await session.open();
+        const boot = new sysboot.UartBootloader({ write: (b) => session.write(b) });
+        session.on('data', (b) => boot.feed(b));
+        session.on('error', (e) => this.progLog('error', e.message));
+        const signals = (dtr, rts) => session.signals(dtr, rts);
+        if (m.entry === 'dtr-rts') await sysboot.resetSequence(signals, 'enter');
+        target = new sysboot.BootTarget(boot, mcu, {
+          close: () => session.close(),
+          exit: m.entry === 'dtr-rts' ? () => sysboot.resetSequence(signals, 'exit') : undefined
+        });
+      }
+      const info = await target.connect();
+      this.bootTarget = target;
+      this.bootPort = m.port;
+      const dev = DEV_IDS[info.pid];
+      const match = !!(dev && (dev.defines || []).includes(mcu.device.define));
+      const status = { connected: true, port: m.port, baud, version: `${info.version >> 4}.${info.version & 0xf}`, pid: info.pid, device: dev ? dev.name : t('bilinmiyor'), match, commands: info.commands };
+      this.post({ type: 'prog.boot', ...status });
+      this.progLog('ok', t('Bootloader v{0}, PID {1} ({2}).', status.version, '0x' + info.pid.toString(16).toUpperCase(), status.device));
+      if (!match) this.progLog('warn', t('Bağlanan işlemci projedekiyle ({0}) aynı görünmüyor; sektör haritası projedeki işlemciye göre.', mcu.name));
+      await this.progInfo();
+    } catch (e) {
+      if (session) await session.close().catch(() => {});
+      this.post({ type: 'prog.boot', connected: false, error: e.message });
+      this.progLog('error', e.message);
+    }
+  }
+
+  async bootDisconnect(note) {
+    const tg = this.bootTarget;
+    if (!tg) return;
+    this.bootTarget = null;
+    await tg.disconnect().catch(() => {});
+    this.post({ type: 'prog.boot', connected: false, note });
+    this.progLog('info', note || t('Bootloader bağlantısı kapatıldı.'));
+  }
+
   /** Sektör listesi (OpenOCD'den; okunamazsa işlemci verisinden) ve option byte'lar */
   async progInfo() {
-    if (!this.target) return this.post({ type: 'prog.info', error: t('Önce bağlanın.') });
+    const tg = this.progT();
+    if (!tg) return this.post({ type: 'prog.info', error: t('Önce bağlanın.') });
     const mcu = this.lib.mcus[this.design.mcuId];
-    let sectors, source = 'openocd';
+    let sectors, source = tg.mode === 'openocd' ? 'openocd' : tg.mode === 'sim' ? 'sim' : 'static';
     try {
-      sectors = prog.layoutFromBanks(await this.target.flashBanks());
-      if (this.target.mode === 'sim') source = 'sim';
+      sectors = prog.layoutFromBanks(await tg.flashBanks());
     } catch (e) {
       sectors = prog.flashLayout(mcu);
       source = 'static';
@@ -1129,10 +1211,11 @@ class Studio {
     }
     let ob = null;
     const spec = prog.obSpec(mcu);
-    if (spec) {
+    if (tg.mode === 'bootloader') ob = { error: t('Bootloader bağlantısında option byte\'lar okunmuyor (flash arayüzü register\'ları bootloader READ komutuyla erişilemez); SWD ile bağlanın.') };
+    else if (spec) {
       try {
         const values = {};
-        for (const [name, addr] of Object.entries(spec.regs)) values[name] = (await this.target.readMemory(addr, 1))[0];
+        for (const [name, addr] of Object.entries(spec.regs)) values[name] = (await tg.readMemory(addr, 1))[0];
         ob = prog.decodeOptionBytes(mcu, values, sectors);
         for (const i of ob.wrp) if (sectors[i]) sectors[i].protected = true;
       } catch (e) {
@@ -1143,20 +1226,30 @@ class Studio {
     this.post({ type: 'prog.info', sectors, ob, source, flashKB: mcu.device.flashKB, ramKB: mcu.device.ramKB, mcu: mcu.name });
   }
 
+  /** Bootloader / DFU bilgisi (AN2606) ve araçlar; Programlayıcı'da UART ya da DFU seçilince */
+  async progBootInfo() {
+    const mcu = this.lib.mcus[this.design.mcuId];
+    const tools = this._progTools || (this._progTools = await detectTools().catch(() => []));
+    const pick = (id) => { const x = tools.find((y) => y.id === id); return x ? { found: x.found, path: x.path, version: x.version, install: x.install, hint: x.hint } : { found: false }; };
+    let ports = [];
+    try { ports = await serial.listPorts(); } catch { /* port listesi alınamadı */ }
+    this.post({ type: 'prog.bootInfo', mcu: mcu.name, board: mcu.board, info: sysboot.bootInfo(mcu), ports, tools: { dfuutil: pick('dfuutil'), cubeprog: pick('cubeprog') } });
+  }
+
   /** Cihazdan parça parça okur (ilerleme bildirimiyle) */
   async progReadBytes(addr, length, op) {
-    const chunk = 16 * 1024;
+    const chunk = this.bootTarget ? 4096 : 16 * 1024;
     const out = new Uint8Array(length);
     for (let off = 0; off < length; off += chunk) {
       const n = Math.min(chunk, length - off);
-      out.set(await readRegion(this.target, addr + off, n), off);
+      out.set(await readRegion(this.progT(), addr + off, n), off);
       this.post({ type: 'prog.progress', op, pct: Math.round(((off + n) * 100) / length) });
     }
     return out;
   }
 
   async progRead(m) {
-    if (!this.target) return this.progLog('error', t('Önce bağlanın.'));
+    if (!this.progT()) return this.progLog('error', t('Önce bağlanın.'));
     const mcu = this.lib.mcus[this.design.mcuId];
     let r;
     try {
@@ -1182,38 +1275,47 @@ class Studio {
     this.post({ type: 'prog.progress', op: 'read', pct: null });
   }
 
-  /** Dosya (.bin / .hex / .elf) ↔ cihaz karşılaştırması */
-  async progCompare(m) {
-    if (!this.target) return this.progLog('error', t('Önce bağlanın.'));
+  /** Firmware dosyası seçtirir; dosya yolu ve flash bölütleri (.elf objcopy ile, .hex, .bin + başlangıç adresi) */
+  async progPickImage(base, title) {
     const pick = await vscode.window.showOpenDialog({
-      canSelectMany: false, defaultUri: this.root ? vscode.Uri.file(this.root) : undefined,
+      canSelectMany: false, openLabel: title, defaultUri: this.root ? vscode.Uri.file(this.root) : undefined,
       filters: { [t('Firmware')]: ['elf', 'hex', 'bin'] }
     });
-    if (!pick || !pick[0]) return;
+    if (!pick || !pick[0]) return null;
     const file = pick[0].fsPath;
     let segments;
     try {
       if (/\.hex$/i.test(file)) segments = prog.parseIntelHex(fs.readFileSync(file, 'utf8'));
       else if (/\.elf$/i.test(file)) {
-        const tmp = path.join(require('os').tmpdir(), `es-cmp-${Date.now()}.hex`);
+        const tmp = path.join(require('os').tmpdir(), `es-img-${Date.now()}.hex`);
         await new Promise((resolve, reject) => require('child_process').execFile(cm.gccTool(this.design.build, 'objcopy'), ['-O', 'ihex', file, tmp], { windowsHide: true },
           (e, so, se) => (e ? reject(new Error(se || e.message)) : resolve(undefined))));
         segments = prog.parseIntelHex(fs.readFileSync(tmp, 'utf8'));
         fs.rmSync(tmp, { force: true });
-      } else segments = [{ addr: (Number(m.base) || prog.FLASH_BASE) >>> 0, bytes: new Uint8Array(fs.readFileSync(file)) }];
+      } else segments = [{ addr: (Number(base) || prog.FLASH_BASE) >>> 0, bytes: new Uint8Array(fs.readFileSync(file)) }];
     } catch (e) {
-      return this.progLog('error', t('{0} okunamadı: {1}', path.basename(file), e.message));
+      this.progLog('error', t('{0} okunamadı: {1}', path.basename(file), e.message));
+      return null;
     }
-    // Yalnızca kod bölgesi (flash); RAM'e yüklenen bölütler karşılaştırılmaz
+    // Yalnızca kod bölgesi (flash); RAM'e yüklenen bölütler dışarıda
     segments = segments.filter((s) => s.addr < prog.RAM_BASE);
     const size = segments.reduce((n, s) => n + s.bytes.length, 0);
-    if (!size) return this.progLog('error', t('{0} içinde flash\'a yazılacak veri yok.', path.basename(file)));
-    this.progLog('info', t('Karşılaştırılıyor: {0} ({1})', path.basename(file), prog.sizeText(size)));
+    if (!size) {
+      this.progLog('error', t('{0} içinde flash\'a yazılacak veri yok.', path.basename(file)));
+      return null;
+    }
+    return { file, segments, size };
+  }
+
+  /** Dosya (.bin / .hex / .elf) ↔ cihaz karşılaştırması */
+  async progCompare(m) {
+    if (!this.progT()) return this.progLog('error', t('Önce bağlanın.'));
+    const img = await this.progPickImage(m.base);
+    if (!img) return;
+    this.progLog('info', t('Karşılaştırılıyor: {0} ({1})', path.basename(img.file), prog.sizeText(img.size)));
     try {
-      const device = [];
-      for (const s of segments) device.push({ addr: s.addr, bytes: await this.progReadBytes(s.addr, s.bytes.length, 'compare') });
-      const r = prog.compareImages(segments, device);
-      this.post({ type: 'prog.compare', file: path.basename(file), result: r });
+      const r = await this.progVerify(img.segments, 'compare');
+      this.post({ type: 'prog.compare', file: path.basename(img.file), result: r });
       if (r.same) this.progLog('ok', t('Aynı: {0} bayt cihazdakiyle birebir eşleşiyor.', r.total));
       else this.progLog('warn', t('Farklı: {0} / {1} bayt, {2} bölgede.', r.diff, r.total, r.rangeCount) + (r.blankDevice ? ' ' + t('Cihazda bu bölge boş (silinmiş).') : ''));
     } catch (e) {
@@ -1222,9 +1324,74 @@ class Studio {
     this.post({ type: 'prog.progress', op: 'compare', pct: null });
   }
 
+  async progVerify(segments, op) {
+    const device = [];
+    for (const s of segments) device.push({ addr: s.addr, bytes: await this.progReadBytes(s.addr, s.bytes.length, op) });
+    return prog.compareImages(segments, device);
+  }
+
+  /**
+   * Dosya yaz: gerekli sektörleri sil, yaz, doğrula, çalıştır. OpenOCD'de `program` (kendi silme ve doğrulamasıyla),
+   * bootloader ve simülasyonda blok blok.
+   * @param {{ base?: number, erase?: boolean, verify?: boolean, run?: boolean }} m
+   */
+  async progWrite(m) {
+    const tg = this.progT();
+    if (!tg) return this.progLog('error', t('Önce bağlanın.'));
+    const img = await this.progPickImage(m.base, t('Yaz'));
+    if (!img) return;
+    const name = path.basename(img.file);
+    const started = Date.now();
+    this.progLog('info', t('Yazılıyor: {0} ({1}, {2} bölüt)', name, prog.sizeText(img.size), img.segments.length));
+    try {
+      if (tg.mode === 'openocd') {
+        this.post({ type: 'prog.progress', op: 'write', pct: 5 });
+        await tg.programFile(img.file, /\.bin$/i.test(img.file) ? img.segments[0].addr : undefined, m.verify !== false);
+      } else {
+        const sectors = this.progSectors || prog.flashLayout(this.lib.mcus[this.design.mcuId]);
+        if (m.erase !== false) {
+          const need = sectors.filter((s) => img.segments.some((g) => s.addr < g.addr + g.bytes.length && g.addr < s.addr + s.size)).map((s) => s.index);
+          const ranges = prog.eraseRanges(sectors, need);
+          this.progLog('info', t('Siliniyor: {0} sektör ({1})', need.length, prog.sizeText(ranges.reduce((n, r) => n + r.size, 0))));
+          for (const r of ranges) await tg.eraseSectors(r.bank, r.first, r.last);
+        }
+        let done = 0;
+        for (const g of img.segments) {
+          await tg.writeFlash(g.addr, g.bytes, (n) => this.post({ type: 'prog.progress', op: 'write', pct: Math.round(((done + n) * 100) / img.size) }));
+          done += g.bytes.length;
+        }
+        if (m.verify !== false) {
+          const r = await this.progVerify(img.segments, 'write');
+          if (!r.same) throw new Error(t('Doğrulama başarısız: {0} bayt farklı (ilk {1}).', r.diff, '0x' + r.first[0].addr.toString(16).toUpperCase()));
+        }
+      }
+      this.progLog('ok', t('Yazıldı: {0}, {1} sn{2}.', name, ((Date.now() - started) / 1000).toFixed(1), m.verify !== false ? ', ' + t('doğrulandı') : ''));
+      if (m.run) await this.progReset();
+    } catch (e) {
+      this.progLog('error', t('Yazma başarısız: {0}', e.message));
+    }
+    this.post({ type: 'prog.progress', op: 'write', pct: null });
+    if (this.progT()) await this.progInfo();
+  }
+
+  /** Reset ve çalıştır; bootloader'da GO komutu (bağlantı biter) */
+  async progReset() {
+    const tg = this.progT();
+    if (!tg) return;
+    try {
+      await tg.reset();
+    } catch (e) {
+      return this.progLog('error', e.message);
+    }
+    if (tg === this.bootTarget) return this.bootDisconnect(t('Uygulama çalıştırıldı (GO {0}); bootloader bağlantısı kapandı.', '0x08000000'));
+    this.progLog('info', t('Hedef resetlendi ve çalışıyor.'));
+    this.post({ type: 'debug.status', connected: true, mode: tg.mode, state: await tg.state() });
+  }
+
   /** Seçili sektörleri ya da bütün flash'ı siler (onaylı) */
   async progErase(m) {
-    if (!this.target || !this.progSectors) return this.progLog('error', t('Önce bağlanın.'));
+    const tg = this.progT();
+    if (!tg || !this.progSectors) return this.progLog('error', t('Önce bağlanın.'));
     const all = !!m.all;
     const indexes = all ? this.progSectors.map((s) => s.index) : (m.indexes || []);
     const ranges = prog.eraseRanges(this.progSectors, indexes);
@@ -1238,7 +1405,7 @@ class Studio {
     try {
       let done = 0;
       for (const r of ranges) {
-        await this.target.eraseSectors(r.bank, r.first, r.last);
+        await tg.eraseSectors(r.bank, r.first, r.last);
         done += r.size;
         this.post({ type: 'prog.progress', op: 'erase', pct: Math.round((done * 100) / size) });
       }
@@ -1247,8 +1414,78 @@ class Studio {
       this.progLog('error', t('Silme başarısız: {0}', e.message));
     }
     this.post({ type: 'prog.progress', op: 'erase', pct: null });
-    if (this.target) this.post({ type: 'debug.status', connected: true, mode: this.target.mode, state: await this.target.state().catch(() => '') });
+    if (tg === this.target) this.post({ type: 'debug.status', connected: true, mode: tg.mode, state: await tg.state().catch(() => '') });
     await this.progInfo();
+  }
+
+  /**
+   * ES-302: USB DFU araçla (dfu-util ya da STM32_Programmer_CLI). op: list | write | read | erase
+   * @param {{ op: string, tool?: string, base?: number, length?: number, run?: boolean }} m
+   */
+  async progDfu(m) {
+    const tools = this._progTools || (this._progTools = await detectTools().catch(() => []));
+    const found = (id) => tools.find((x) => x.id === id && x.found);
+    const tool = (m.tool && found(m.tool)) || found('dfuutil') || found('cubeprog');
+    if (!tool) return this.progLog('error', t('USB DFU için dfu-util ya da STM32CubeProgrammer gerekir; ikisi de bulunamadı.'));
+    const mcu = this.lib.mcus[this.design.mcuId];
+    let file, args;
+    if (m.op === 'write') {
+      const img = await this.progPickImage(m.base, t('Yaz'));
+      if (!img) return;
+      // dfu-util ELF/HEX okumaz: bölütlerden tek .bin
+      if (tool.id === 'dfuutil' && !/\.bin$/i.test(img.file)) {
+        const lo = Math.min(...img.segments.map((s) => s.addr));
+        const hi = Math.max(...img.segments.map((s) => s.addr + s.bytes.length));
+        const bin = new Uint8Array(hi - lo).fill(0xff);
+        for (const s of img.segments) bin.set(s.bytes, s.addr - lo);
+        file = path.join(require('os').tmpdir(), `es-dfu-${Date.now()}.bin`);
+        fs.writeFileSync(file, bin);
+        m.base = lo;
+      } else file = img.file;
+    } else if (m.op === 'read') {
+      const uri = await vscode.window.showSaveDialog({ defaultUri: vscode.Uri.file(path.join(this.root || require('os').homedir(), `${mcu.name}_flash.bin`)), filters: { [t('Ham ikili')]: ['bin'] } });
+      if (!uri) return;
+      file = uri.fsPath;
+    } else if (m.op === 'erase') {
+      const ok = t('Sil');
+      if ((await vscode.window.showWarningMessage(t('Bütün flash ({0}) silinecek.', prog.sizeText(mcu.device.flashKB * 1024)) + ' ' + t('Bu işlem geri alınamaz.'), { modal: true }, ok)) !== ok) return;
+    }
+    const length = mcu.device.flashKB * 1024;
+    args = tool.id === 'dfuutil'
+      ? sysboot.dfuUtilArgs({ op: m.op, file, addr: m.base, length, leave: !!m.run })
+      : sysboot.cubeProgArgs({ port: 'usb1', op: m.op, file, addr: m.base, length, verify: true, go: !!m.run });
+    this.progLog('info', `> ${path.basename(tool.path)} ${args.join(' ')}`);
+    const out = await new Promise((resolve) => {
+      let log = '', buf = '';
+      const p = require('child_process').spawn(tool.path, args, { windowsHide: true });
+      const onText = (d) => {
+        const s = String(d);
+        log += s;
+        this._progOut && this._progOut.append(s);
+        buf += s;
+        const lines = buf.split(/\r?\n|\r/);
+        buf = lines.pop() || '';
+        for (const l of lines) {
+          const pr = sysboot.parseDfuProgress(l) || (/(\d{1,3})%/.exec(l) && { percent: Number(/(\d{1,3})%/.exec(l)[1]) });
+          if (pr) this.post({ type: 'prog.progress', op: 'dfu', pct: pr.percent });
+        }
+      };
+      p.stdout.on('data', onText);
+      p.stderr.on('data', onText);
+      p.on('error', (e) => resolve({ code: -1, log: e.message }));
+      p.on('exit', (code) => resolve({ code, log }));
+    });
+    this.post({ type: 'prog.progress', op: 'dfu', pct: null });
+    if (m.op === 'list') {
+      const devices = tool.id === 'dfuutil' ? sysboot.parseDfuList(out.log) : [];
+      this.post({ type: 'prog.dfu', devices, raw: tool.id === 'dfuutil' ? '' : out.log.slice(-2000) });
+      return this.progLog(devices.length || tool.id !== 'dfuutil' ? 'ok' : 'warn', devices.length ? t('{0} DFU aygıtı bulundu.', devices.length) : tool.id === 'dfuutil' ? t('DFU aygıtı bulunamadı. BOOT0 = 1 iken reset atın ve USB kablosunu (veri destekli) işlemcinin USB pinlerine (PA11/PA12) bağlayın.') : t('Liste çıktı panelinde.'));
+    }
+    // dfu-util ':leave' sonrası aygıt kaybolunca sıfır dışı kodla çıkabilir
+    const ok = out.code === 0 || (m.run && /File downloaded successfully|Download done/i.test(out.log));
+    if (ok) this.progLog('ok', t('DFU işlemi tamamlandı: {0}.', m.op));
+    else this.progLog('error', sysboot.explainDfu(out.log) || t('DFU işlemi başarısız (kod {0}); ayrıntı çıktı panelinde.', out.code));
+    if (file && m.op === 'write' && /es-dfu-\d+\.bin$/.test(file)) fs.rmSync(file, { force: true });
   }
 
   /** VS Code debug oturumu başlamadan önce: panelin OpenOCD bağlantısı probu bırakır */

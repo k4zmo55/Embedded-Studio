@@ -244,6 +244,13 @@ class OpenOcdTarget {
     return banks;
   }
 
+  /** ES-302: dosya yazma (OpenOCD program: gereken sektörleri siler; .bin için başlangıç adresi) */
+  async programFile(file, base, verify = true) {
+    const r = await this.tryCmd(`program {${file.replace(/\\/g, '/')}}${verify ? ' verify' : ''}${base !== undefined ? ` 0x${(base >>> 0).toString(16)}` : ''}`, 300000);
+    if (!r.ok || /error|failed|mismatch/i.test(r.out)) throw new Error(r.out.slice(0, 300) || t('Yazma başarısız.'));
+    return r.out;
+  }
+
   /** Durdurup (reset halt) sektör siler: flash erase_sector <bank> <ilk> <son> */
   async eraseSectors(bank, first, last) {
     await this.tryCmd('reset halt', 5000);
@@ -549,6 +556,13 @@ class SimTarget {
       banks[s.bank].size += s.size;
     }
     return banks;
+  }
+  /** Silinmiş flash'a yazma: bitler yalnızca 1 → 0 değişir (gerçek flash gibi) */
+  async writeFlash(addr, bytes, progress) {
+    const f = this.simFlash();
+    if (addr < f.base || addr + bytes.length > f.base + f.size) throw new Error(t('Adres flash dışında: 0x{0}', addr.toString(16)));
+    for (let i = 0; i < bytes.length; i++) f.bytes[addr - f.base + i] &= bytes[i];
+    progress && progress(bytes.length);
   }
   async eraseSectors(bank, first, last) {
     const f = this.simFlash();

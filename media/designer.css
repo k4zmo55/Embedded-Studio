@@ -785,3 +785,6 @@ button.ghost.danger:not(:disabled) { background: transparent; color: var(--err);
 .pg-le.warn span:last-child { color: var(--warn); }
 .pg-le.error span:last-child { color: var(--err); }
 @media (max-width: 760px) { .pg-body { grid-template-columns: 1fr; } }
+.pg-steps { margin: 4px 0 8px; padding-left: 20px; font-size: 12px; display: flex; flex-direction: column; gap: 3px; }
+.pg-dfu { margin-top: 8px; border-top: 1px solid var(--border); padding-top: 8px; }
+.pg-card[hidden] { display: none; }

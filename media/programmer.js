@@ -1,9 +1,12 @@
-/* Programlayıcı sekmesi (ES-301): bağlan / kes, flash ve RAM okuma, dosyayla karşılaştırma, sektör silme,
- * option byte'lar ve işlem günlüğü. Bağlantı Debug sekmesiyle ortaktır (aynı prob, aynı OpenOCD). */
+/* Programlayıcı sekmesi (ES-301, ES-302): bağlan / kes, flash ve RAM okuma, dosya yazma, dosyayla karşılaştırma,
+ * sektör silme, option byte'lar ve işlem günlüğü. SWD/JTAG bağlantısı Debug sekmesiyle ortaktır (aynı prob, aynı OpenOCD);
+ * UART'ta yongadaki sistem bootloader'ı (AN3155), USB DFU'da dfu-util ya da STM32CubeProgrammer. */
 (function () {
   const { t, h, $, post, hex } = ES;
   const P = {
     connected: false, connecting: false, mode: '', state: '', error: '', transport: 'swd',
+    dbg: false, boot: null, port: '', baud: '115200', entry: 'manual', bootInfo: null, dfu: null,
+    wErase: true, wVerify: true, wRun: true,
     info: null, sel: new Set(), last: null, log: [], progress: null, compare: null,
     region: 'flash', addr: '0x08000000', length: '0x1000', format: 'bin', base: '0x08000000'
   };
@@ -15,10 +18,12 @@
       h('div', { id: 'pg-msg', class: 'dbg-msg', hidden: true }),
       h('div', { class: 'pg-body' },
         h('div', { class: 'pg-col' },
+          h('section', { class: 'pg-card', id: 'pg-write' }),
           h('section', { class: 'pg-card', id: 'pg-read' }),
           h('section', { class: 'pg-card', id: 'pg-compare' }),
           h('section', { class: 'pg-card', id: 'pg-ob' })),
         h('div', { class: 'pg-col' },
+          h('section', { class: 'pg-card', id: 'pg-boot', hidden: true }),
           h('section', { class: 'pg-card pg-sectors', id: 'pg-sectors' }),
           h('section', { class: 'pg-card', id: 'pg-log' })))));
   }
@@ -28,32 +33,113 @@
   const busy = () => P.connecting || (P.progress && P.progress.pct !== null);
   const num = (s) => Number(String(s).trim());
 
+  const BAUDS = ['115200', '57600', '38400', '19200', '9600'];
+  const isUart = () => P.transport === 'uart';
+  const isDfu = () => P.transport === 'dfu';
+  /** Bağlantı durumu: Debug ile ortak prob bağlantısı ya da bootloader */
+  function sync() {
+    P.connected = P.dbg || !!(P.boot && P.boot.connected);
+    if (!P.connected) { P.info = null; P.sel.clear(); P.progress = null; }
+  }
+
   function renderBar() {
-    const ext = P.transport === 'uart' || P.transport === 'dfu';
-    put($('pg-bar'), 
+    const bootOn = !!(P.boot && P.boot.connected);
+    const ports = (P.bootInfo && P.bootInfo.ports) || [];
+    const state = bootOn
+      ? `${P.boot.device} · ${t('bootloader')} v${P.boot.version} · ${P.boot.port}`
+      : P.connected ? `${P.info ? P.info.mcu + ' · ' : ''}${P.mode === 'sim' ? t('simülasyon') : 'OpenOCD'} · ${P.state || ''}` : t('bağlı değil');
+    put($('pg-bar'),
       h('label', { class: 'hint', for: 'pg-transport', text: t('Bağlantı') }),
-      h('select', { id: 'pg-transport', disabled: P.connected || P.connecting, onchange: (e) => { P.transport = e.target.value; renderBar(); } },
+      h('select', { id: 'pg-transport', disabled: P.connected || P.connecting, onchange: (e) => { P.transport = e.target.value; P.error = ''; P.compare = null; if (isUart() || isDfu()) post({ type: 'prog.bootInfo' }); render(); } },
         ...TRANSPORTS().map(([v, l]) => h('option', { value: v, selected: v === P.transport, text: l }))),
-      P.connected
-        ? h('button', { class: 'small', id: 'pg-disconnect', onclick: () => post({ type: 'debug.disconnect' }) }, t('Bağlantıyı kes'))
-        : h('button', { class: 'small', id: 'pg-connect', disabled: P.connecting || ext, onclick: () => connect('openocd') }, P.connecting ? t('Bağlanıyor…') : t('Bağlan')),
-      P.connected ? null : h('button', { class: 'ghost small', id: 'pg-sim', disabled: P.connecting, title: t('Kart yokken: işlemci verisinden flash haritası ve örnek içerik'), onclick: () => connect('sim') }, t('Simülasyon')),
-      h('button', { class: 'ghost small', id: 'pg-refresh', disabled: !P.connected || busy(), onclick: () => post({ type: 'prog.info' }) }, t('Yenile')),
-      h('button', { class: 'ghost small', id: 'pg-reset', disabled: !P.connected || busy(), onclick: () => post({ type: 'prog.reset' }) }, t('Reset ve çalıştır')),
+      isUart() && !P.connected ? h('select', { id: 'pg-port', 'aria-label': t('Port'), onchange: (e) => (P.port = e.target.value) },
+        ...(ports.length ? ports : [{ path: '', name: t('port yok') }]).map((x) => h('option', { value: x.path, selected: x.path === P.port, text: x.path === 'SIM' ? t('Simülasyon (bootloader)') : x.name && x.name !== x.path ? `${x.path} · ${x.name}` : x.path }))) : null,
+      isUart() && !P.connected ? h('button', { class: 'ghost small icon-only', id: 'pg-ports', title: t('Portları yenile'), onclick: () => post({ type: 'prog.bootInfo' }) }, '↻') : null,
+      isUart() && !P.connected ? h('select', { id: 'pg-baud', 'aria-label': 'Baud', onchange: (e) => (P.baud = e.target.value) }, ...BAUDS.map((b) => h('option', { value: b, selected: b === P.baud, text: b }))) : null,
+      isUart() && !P.connected ? h('select', { id: 'pg-entry', 'aria-label': t('Bootloader\'a giriş'), title: t('DTR/RTS: dönüştürücünün RTS hattı BOOT0\'a, DTR hattı NRST\'ye bağlıysa bootloader\'a kendiliğinden girilir'), onchange: (e) => (P.entry = e.target.value) },
+        h('option', { value: 'manual', selected: P.entry === 'manual', text: t('BOOT0 elle') }), h('option', { value: 'dtr-rts', selected: P.entry === 'dtr-rts', text: t('DTR → NRST, RTS → BOOT0') })) : null,
+      isDfu() ? null : P.connected
+        ? h('button', { class: 'small', id: 'pg-disconnect', onclick: () => post({ type: bootOn ? 'prog.bootDisconnect' : 'debug.disconnect' }) }, t('Bağlantıyı kes'))
+        : h('button', { class: 'small', id: 'pg-connect', disabled: P.connecting || (isUart() && !P.port), onclick: () => connect('openocd') }, P.connecting ? t('Bağlanıyor…') : t('Bağlan')),
+      P.connected || isDfu() || isUart() ? null : h('button', { class: 'ghost small', id: 'pg-sim', disabled: P.connecting, title: t('Kart yokken: işlemci verisinden flash haritası ve örnek içerik'), onclick: () => connect('sim') }, t('Simülasyon')),
+      isDfu() ? null : h('button', { class: 'ghost small', id: 'pg-refresh', disabled: !P.connected || busy(), onclick: () => post({ type: 'prog.info' }) }, t('Yenile')),
+      isDfu() ? null : h('button', { class: 'ghost small', id: 'pg-reset', disabled: !P.connected || busy(), title: bootOn ? t('GO: uygulamayı 0x08000000\'dan çalıştırır, bootloader bağlantısı kapanır') : '', onclick: () => post({ type: 'prog.reset' }) }, t('Reset ve çalıştır')),
       h('span', { class: 'spacer' }),
-      h('span', { class: `pg-state${P.connected ? ' on' : ''}`, id: 'pg-state', text: P.connected ? `${P.info ? P.info.mcu + ' · ' : ''}${P.mode === 'sim' ? t('simülasyon') : 'OpenOCD'} · ${P.state || ''}` : t('bağlı değil') }));
+      h('span', { class: `pg-state${P.connected ? ' on' : ''}`, id: 'pg-state', text: isDfu() ? 'USB DFU' : state }));
     const msg = $('pg-msg');
-    const text = ext ? t('UART ve USB DFU üzerinden yükleme ST sistem bootloader\'ı ile yapılır (ES-302); şimdilik SWD ya da JTAG kullanın.') : P.error;
+    const warn = bootOn && !P.boot.match ? t('Bağlanan işlemci ({0}) projedekiyle aynı görünmüyor; sektör haritası projedeki işlemciye göre.', P.boot.device) : '';
+    const text = P.error || warn || P.note;
     msg.hidden = !text;
-    msg.className = `dbg-msg${P.error && !ext ? ' error' : ''}`;
+    msg.className = `dbg-msg${P.error ? ' error' : ''}`;
     msg.textContent = text || '';
   }
 
   function connect(mode) {
     P.connecting = true;
     P.error = '';
+    P.note = '';
+    P.compare = null;
     renderBar();
-    post({ type: 'prog.connect', mode, transport: P.transport });
+    if (isUart()) post({ type: 'prog.connect', transport: 'uart', port: P.port, baud: Number(P.baud), entry: P.entry });
+    else post({ type: 'prog.connect', mode, transport: P.transport });
+  }
+
+  /** Dosya yaz: bütün bağlantılarda (DFU'da araçla) */
+  function renderWrite() {
+    const off = (isDfu() ? !dfuTool() : !P.connected) || busy();
+    const check = (id, key, label, title) => h('label', { class: 'check', title: title || '' }, h('input', { type: 'checkbox', id, checked: P[key], onchange: (e) => (P[key] = e.target.checked) }), h('span', { text: label }));
+    put($('pg-write'),
+      h('h3', { text: t('Dosya yaz') }),
+      h('div', { class: 'pg-row' },
+        isDfu() ? null : check('pg-w-erase', 'wErase', t('Gerekli sektörleri sil'), P.mode === 'openocd' && !P.boot ? t('OpenOCD program komutu gereken sektörleri kendisi siler') : ''),
+        isDfu() ? null : check('pg-w-verify', 'wVerify', t('Doğrula')),
+        check('pg-w-run', 'wRun', t('Sonra çalıştır'))),
+      h('div', { class: 'pg-row' },
+        h('label', { class: 'hint', for: 'pg-w-base', text: t('.bin başlangıç adresi') }),
+        h('input', { id: 'pg-w-base', class: 'mono', value: P.base, oninput: (e) => (P.base = e.target.value) }),
+        h('button', { class: 'small', id: 'pg-write-go', disabled: off, onclick: () => post(isDfu()
+          ? { type: 'prog.dfu', op: 'write', base: num(P.base), run: P.wRun }
+          : { type: 'prog.write', base: num(P.base), erase: P.wErase, verify: P.wVerify, run: P.wRun }) }, t('Dosya seç ve yaz (.elf / .hex / .bin)…'))),
+      progressBar('write') || progressBar('dfu'));
+  }
+
+  const dfuTool = () => { const x = P.bootInfo && P.bootInfo.tools; return x && (x.dfuutil.found ? 'dfu-util' : x.cubeprog.found ? 'STM32_Programmer_CLI' : ''); };
+
+  /** UART / DFU: bootloader'a giriş talimatı, AN2606 arayüzleri, DFU araçları ve aygıtları */
+  function renderBoot() {
+    const box = $('pg-boot');
+    box.hidden = !(isUart() || isDfu());
+    if (box.hidden) return;
+    const bi = P.bootInfo;
+    if (!bi) return put(box, h('h3', { text: t('Sistem bootloader\'ı') }), h('p', { class: 'hint', text: t('Okunuyor…') }));
+    const i = bi.info;
+    const b = P.boot;
+    const tools = bi.tools;
+    put(box,
+      h('h3', { text: t('Sistem bootloader\'ı · {0}', bi.mcu) }),
+      b && b.connected ? h('div', { class: 'pg-result ok', id: 'pg-boot-info' },
+        h('div', { text: t('{0}, bootloader v{1}, PID 0x{2}', b.device, b.version, b.pid.toString(16).toUpperCase()) }),
+        h('div', { class: 'hint', text: t('Komutlar: {0}', b.commands.join(', ')) })) : null,
+      h('p', { class: 'hint', text: t('Bootloader\'a giriş ({0}):', bi.board) }),
+      h('ol', { class: 'pg-steps', id: 'pg-steps' }, ...i.steps.map((x) => h('li', { text: x }))),
+      i.note ? h('p', { class: 'hint', text: i.note }) : null,
+      h('table', { class: 'regs pg-obt', id: 'pg-an2606' },
+        h('thead', {}, h('tr', {}, h('th', { text: t('Arayüz') }), h('th', { text: t('Pinler') }))),
+        h('tbody', {},
+          ...i.uart.map((u) => h('tr', {}, h('td', { text: `${u.name} (UART)` }), h('td', { class: 'mono', text: `TX ${u.tx} · RX ${u.rx}` }))),
+          h('tr', {}, h('td', { text: 'USB DFU' }), h('td', { class: 'mono', text: i.dfu ? `DM ${i.dfu[0]} · DP ${i.dfu[1]}` : t('yok') })),
+          ...i.other.map((o) => h('tr', {}, h('td', { text: o.name }), h('td', { class: 'mono', text: o.pins }))))),
+      i.other.length ? h('p', { class: 'hint', text: t('CAN / I2C / SPI bootloader\'ı için bir köprü kart (ör. başka bir MCU ya da USB-I2C/SPI dönüştürücü) gerekir; bu sürümde yalnızca UART ve USB DFU kullanılır.') }) : null,
+      h('p', { class: 'hint', text: t('Pinler AN2606\'ya göredir (bootloader v{0}); işlemci revizyonunuz için AN2606\'yı doğrulayın.', i.version || '?') }),
+      isDfu() ? h('div', { class: 'pg-dfu', id: 'pg-dfu' },
+        h('div', { class: 'pg-row' },
+          h('span', { class: tools.dfuutil.found || tools.cubeprog.found ? 'pg-state on' : 'dbg-msg error', id: 'pg-dfu-tool', text: dfuTool() ? t('Araç: {0}', dfuTool()) : t('dfu-util ya da STM32CubeProgrammer bulunamadı.') }),
+          h('button', { class: 'ghost small', id: 'pg-dfu-list', disabled: !dfuTool() || busy(), onclick: () => post({ type: 'prog.dfu', op: 'list' }) }, t('Aygıtları ara')),
+          h('button', { class: 'ghost small', id: 'pg-dfu-read', disabled: !dfuTool() || busy(), onclick: () => post({ type: 'prog.dfu', op: 'read' }) }, t('Flash\'ı oku…')),
+          h('button', { class: 'ghost small danger', id: 'pg-dfu-erase', disabled: !dfuTool() || busy(), onclick: () => post({ type: 'prog.dfu', op: 'erase' }) }, t('Tamamını sil'))),
+        dfuTool() ? null : h('p', { class: 'hint', text: `dfu-util: ${tools.dfuutil.hint || ''} · ${tools.dfuutil.install || ''}` }),
+        dfuTool() ? null : h('p', { class: 'hint', text: `STM32CubeProgrammer: ${tools.cubeprog.install || ''}` }),
+        P.dfu ? h('div', { class: 'hint', id: 'pg-dfu-devices' }, ...(P.dfu.devices.length ? P.dfu.devices.map((d) => h('div', { class: 'mono', text: `${d.vid}:${d.pid} alt ${d.alt} · ${d.memory ? d.memory.name + ' @' + hex(d.memory.base) + ', ' + d.memory.sectors.length + ' ' + t('sektör') : d.name}${d.serial ? ' · ' + d.serial : ''}` })) : [h('div', { text: P.dfu.raw ? t('Liste çıktı panelinde.') : t('Aygıt yok.') })])) : null) : null);
   }
 
   function progressBar(op) {
@@ -174,6 +260,10 @@
   function render() {
     if (!$('programmer')) return;
     renderBar();
+    renderBoot();
+    renderWrite();
+    // DFU'da okuma, karşılaştırma ve silme DFU kartında (araçla); bu kartlar prob / bootloader bağlantısı içindir
+    for (const id of ['pg-read', 'pg-compare', 'pg-ob', 'pg-sectors']) $(id).hidden = isDfu();
     renderRead();
     renderCompare();
     renderOb();
@@ -182,13 +272,32 @@
   }
 
   ES.on('debug.status', (m) => {
-    P.connected = !!m.connected;
+    P.dbg = !!m.connected;
     P.connecting = !!m.connecting;
     if (m.mode) P.mode = m.mode;
     P.state = m.state || '';
     P.error = m.error || '';
-    if (!P.connected) { P.info = null; P.sel.clear(); P.progress = null; }
+    sync();
     render();
+  });
+  ES.on('prog.boot', (m) => {
+    P.connecting = !!m.connecting;
+    if (!m.connecting) P.boot = m.connected ? m : null;
+    if (m.error) P.error = m.error;
+    else if (m.connected) P.error = '';
+    P.note = m.note || '';
+    sync();
+    render();
+  });
+  ES.on('prog.bootInfo', (m) => {
+    P.bootInfo = m;
+    const ports = m.ports || [];
+    if (!ports.some((x) => x.path === P.port)) P.port = (ports.find((x) => x.vcp) || ports[0] || {}).path || '';
+    render();
+  });
+  ES.on('prog.dfu', (m) => {
+    P.dfu = m;
+    renderBoot();
   });
   ES.on('prog.info', (m) => {
     if (m.error) { P.error = m.error; return renderBar(); }
@@ -201,6 +310,7 @@
     renderBar();
     if (m.op === 'read') renderRead();
     else if (m.op === 'compare') renderCompare();
+    else if (m.op === 'write' || m.op === 'dfu') { renderWrite(); renderBoot(); }
     else renderSectors();
   });
   ES.on('prog.compare', (m) => {
