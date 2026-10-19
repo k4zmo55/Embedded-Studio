@@ -47,8 +47,10 @@ window.ES = (function () {
     hist.redo = [];
   };
   const send = () => { hist.echo++; post({ type: 'update', design: state.design }); };
+  // ES-1008: Design'daki Şema / Pinout seçimi projede saklanır ama geri al adımı değildir
+  const snapKey = (d) => JSON.stringify(d, (k, v) => (k === 'designView' ? undefined : v));
   const update = () => {
-    const now = JSON.stringify(state.design);
+    const now = snapKey(state.design);
     // Art arda gelen küçük değişiklikler (ör. sürükleme) tek adım sayılır
     if (hist.last && hist.last !== now && (Date.now() - hist.lastAt > 400 || !hist.undo.length)) remember(hist.last);
     hist.lastAt = Date.now();
@@ -57,10 +59,12 @@ window.ES = (function () {
   };
   function step(from, to) {
     if (!state.design || !from.length) return false;
-    to.push(JSON.stringify(state.design));
+    to.push(snapKey(state.design));
     hist.last = from.pop();
     hist.lastAt = 0;
+    const view = state.design.designView;
     state.design = JSON.parse(hist.last);
+    if (view) state.design.designView = view;
     send();
     return true;
   }
@@ -69,7 +73,7 @@ window.ES = (function () {
   on('state', (m) => {
     const root = m.project && m.project.root;
     if (root !== hist.root) Object.assign(hist, { undo: [], redo: [], last: null, root });
-    const now = JSON.stringify(m.design);
+    const now = snapKey(m.design);
     if (hist.echo > 0) hist.echo--;
     else if (hist.last && hist.last !== now) remember(hist.last);
     hist.last = now;

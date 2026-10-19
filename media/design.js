@@ -21,6 +21,11 @@
           h('input', { type: 'text', id: 'lib-search', placeholder: t('Ara: sensör, I2C, gps…'), oninput: (e) => { libFilter = e.target.value.toLocaleLowerCase('tr'); renderLibrary(); } })),
         h('div', { id: 'library' })),
       h('div', { class: 'canvas-wrap', id: 'canvas-wrap' },
+        // ES-1008: şema ile yalnızca işlemci (Pinout) görünümü arasında geçiş; aynı tasarım verisi
+        h('div', { class: 'view-toggle', role: 'tablist', 'aria-label': t('Görünüm') },
+          h('button', { id: 'view-schematic', role: 'tab', class: 'small', onclick: () => setView('schematic') }, t('Şema')),
+          h('button', { id: 'view-pinout', role: 'tab', class: 'small', onclick: () => setView('pinout') }, 'Pinout')),
+        h('div', { id: 'design-pinout', class: 'design-pinout', hidden: true }),
         s('svg', { id: 'schematic', tabindex: '0', 'aria-label': t('Devre şeması') }),
         h('div', { class: 'canvas-tools' },
           h('button', { class: 'ghost small icon', id: 'undo', title: t('Geri al (Ctrl+Z)'), 'aria-label': t('Geri al'), onclick: () => ES.undo() }, icon('undo', 14)),
@@ -56,6 +61,30 @@
     initCanvas();
     document.getElementById('notes-box').open = !!ui.notesOpen;
     applyLayout();
+  }
+
+  /** ES-1008: Design'daki görünüm; seçilmediyse Profesyonel modda Pinout, Acemi'de şema */
+  const designView = () => (state.design && state.design.designView) || (ES.modeId() === 'pro' ? 'pinout' : 'schematic');
+  function setView(v) {
+    if (!state.design || designView() === v) return;
+    state.design.designView = v;
+    update();
+    applyView();
+  }
+  function applyView() {
+    const wrap = $('canvas-wrap');
+    if (!wrap || !state.design) return;
+    const pin = designView() === 'pinout';
+    wrap.classList.toggle('pinout-view', pin);
+    $('design-pinout').hidden = !pin;
+    $('view-schematic').classList.toggle('active', !pin);
+    $('view-pinout').classList.toggle('active', pin);
+    $('view-schematic').setAttribute('aria-selected', String(!pin));
+    $('view-pinout').setAttribute('aria-selected', String(pin));
+    if (pin && ui.tab === 'design') {
+      ES.tabs.pinout.attach($('design-pinout'));
+      ES.tabs.pinout.draw();
+    }
   }
 
   function applyLayout() {
@@ -745,11 +774,11 @@
           class: `pin-name${p.pin.reserved ? ' reserved' : ''}${lbl ? ' pin-label' : ''}${labelIssues[name] ? ' bad' : ''}`, 'data-pin': name,
           x: left ? 6 : MW - 6, y: p.y + 3.5, 'text-anchor': left ? 'start' : 'end', text: shown || name, oncontextmenu: onPin
         }, s('title', { text: tip })));
-      const tag = p.pin.reserved || (c ? c.signal : '');
+      const tag = p.pin.reserved || (c ? c.signal : (state.result.pinModes || {})[name] || '');
       if (tag) {
         // Etiket uzunsa sinyal adı biraz içeri kayar (10 px mono ≈ 6 px / karakter)
         const off = Math.max(42, 6 + (shown || name).length * 6.2 + 8);
-        mcuG.append(s('text', { class: `pin-sig ${c ? `w-${c.kind}` : 'pin-name reserved'}`, x: left ? off : MW - off, y: p.y + 3.5, 'text-anchor': left ? 'start' : 'end', text: tag }));
+        mcuG.append(s('text', { class: `pin-sig ${c ? `w-${c.kind}` : p.pin.reserved ? 'pin-name reserved' : 'w-gpio pin-mode'}`, x: left ? off : MW - off, y: p.y + 3.5, 'text-anchor': left ? 'start' : 'end', text: tag }));
       }
     }
     g.append(mcuG);
@@ -902,8 +931,10 @@
       renderConnections();
       renderSchematic();
       renderDock();
+      applyView();
     },
-    onShow: () => renderSchematic(),
+    onShow: () => { renderSchematic(); applyView(); },
+    designView: () => designView(),
     // ES-1005: Pinout sekmesi aynı pencereleri kullanır
     labelDialog: (pin) => labelDialog(pin),
     confirmConflict: (key, ch, onMove, onCancel) => confirmConflict(key, ch, onMove, onCancel),

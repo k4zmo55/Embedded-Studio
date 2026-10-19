@@ -809,6 +809,55 @@ async function until(fn, ms = 8000, what = 'koşul') {
     await until(() => !Object.keys(design().pinModes || {}).length, 3000, 'temizlendi');
     await cdp.click('#tab-design');
   });
+  await step('Design\'da Şema / Pinout geçişi (ES-1008): aynı veri, etiket ve GPIO modu iki görünümde, geri al görünümü bozmaz, seçim projede, Pinout sekmesiyle ortak', async () => {
+    const pad = (pin) => `document.querySelector('#design-pinout .po-pad[data-pin="${pin}"]')`;
+    const mcuPin = (pin) => `document.querySelector('#schematic .mcu text[data-pin="${pin}"]')`;
+    const menuItem = (re) => `([...document.querySelectorAll('.ctx-menu .ctx-item:not(.disabled)')].find((e) => ${re}.test(e.querySelector('.ctx-label').textContent)))`;
+    await cdp.click('#tab-design');
+    // Acemi modda varsayılan şema
+    assert.ok(await cdp.eval(`document.querySelector('#view-schematic').classList.contains('active') && document.querySelector('#design-pinout').hidden`), 'şema etkin');
+    assert.ok(!design().designView, 'seçilmedi: moda göre varsayılan');
+    await cdp.click('#view-pinout');
+    await until(() => cdp.eval(`!document.querySelector('#design-pinout').hidden && document.querySelectorAll('#design-pinout .po-pad').length === 48`), 4000, 'Design içinde Pinout');
+    assert.ok(await cdp.eval(`getComputedStyle(document.querySelector('#schematic')).display === 'none'`), 'şema gizli');
+    assert.ok(await cdp.eval(`!!document.querySelector('#conns .conn-card')`), 'bağlantılar paneli yerinde');
+    await until(() => design().designView === 'pinout', 3000, 'seçim kaydedildi');
+    // Pinout görünümünde GPIO modu ve etiket ver
+    await cdp.click(`(${pad('PA8')}.querySelector('rect'))`);
+    await until(() => cdp.eval(`!!${menuItem('/^GPIO_Output$/')}`), 3000, 'işlev listesi');
+    await cdp.click(menuItem('/^GPIO_Output$/'));
+    await until(() => (design().pinModes || {}).PA8 === 'GPIO_Output', 3000, 'PA8 çıkış');
+    await cdp.click(`(${pad('PA8')}.querySelector('rect'))`, 'right');
+    await cdp.click(menuItem('/etiket gir/'));
+    await until(() => cdp.eval(`!!document.querySelector('#label-input')`), 3000, 'etiket penceresi');
+    await cdp.eval(`(() => { const i = document.querySelector('#label-input'); i.value = 'Role_1'; i.dispatchEvent(new Event('input')); })()`);
+    await cdp.click('#label-save');
+    await until(() => (design().pinLabels || {}).PA8 === 'Role_1', 3000, 'etiket');
+    await until(() => cdp.eval(`${pad('PA8')}.querySelector('.po-sig').textContent === 'Role_1'`), 3000, 'pinoutta etiket');
+    await cdp.shot('07-design-pinout');
+    // Geri al: etiket kalkar, görünüm Pinout'ta kalır
+    await cdp.key('z', 'KeyZ', 90, 2);
+    await until(() => !(design().pinLabels || {}).PA8, 3000, 'etiket geri alındı');
+    assert.ok(await cdp.eval(`!document.querySelector('#design-pinout').hidden`), 'geri al görünümü değiştirmez');
+    await cdp.key('y', 'KeyY', 89, 2);
+    await until(() => (design().pinLabels || {}).PA8 === 'Role_1', 3000, 'yinelendi');
+    // Şemaya dön: aynı etiket ve Pinout'ta verilen GPIO modu MCU pininde
+    await cdp.click('#view-schematic');
+    await until(() => cdp.eval(`getComputedStyle(document.querySelector('#schematic')).display !== 'none' && document.querySelector('#design-pinout').hidden`), 3000, 'şema');
+    await until(() => cdp.eval(`${mcuPin('PA8')}.firstChild.textContent === 'Role_1'`), 3000, 'şemada etiket');
+    assert.ok(await cdp.eval(`[...document.querySelectorAll('#schematic .mcu .pin-sig.pin-mode')].some((e) => e.textContent === 'GPIO_Output')`), 'şemada GPIO modu');
+    await until(() => design().designView === 'schematic', 3000, 'seçim kaydedildi');
+    // Pinout sekmesi aynı çizimi kullanır; Design'a dönünce yine Design'da
+    await cdp.click('#view-pinout');
+    await cdp.click('#tab-pinout');
+    await until(() => cdp.eval(`!!document.querySelector('#pinout #po-svg') && !document.querySelector('#design-pinout #po-svg')`), 3000, 'Pinout sekmesinde');
+    await cdp.click('#tab-design');
+    await until(() => cdp.eval(`!!document.querySelector('#design-pinout #po-svg')`), 3000, 'Design\'a döndü');
+    // Temizle: şemaya dön, etiket ve modu kaldır
+    await cdp.click('#view-schematic');
+    await cdp.eval(`(() => { ES.state.design.pinModes = {}; ES.state.design.pinLabels = {}; ES.update(); })()`);
+    await until(() => !Object.keys(design().pinModes || {}).length && !Object.keys(design().pinLabels || {}).length, 3000, 'temizlendi');
+  });
   await step('Monitör: canlı veri, 3B IMU, GPS, gösterge, task tablosu', async () => {
     scene('monitor');
     await cdp.click('#tab-monitor');

@@ -678,10 +678,10 @@ CubeMX'in sol panelindeki kategoriler: System Core (GPIO, NVIC, RCC, SYS), Analo
 
 Design sekmesinde şema ile Pinout görünümü arasında geçiş: kullanıcı komponent şemasını değil, yalnızca işlemciyi ve pinlerini görmek isteyebilir.
 
-- [ ] Design araç çubuğunda "Şema / Pinout" geçişi; seçim projede hatırlanır (Profesyonel modda varsayılan Pinout)
-- [ ] İki görünüm aynı tasarım verisini kullanır: komponent pinleri Pinout'ta komponent adı ya da etiketle, Pinout'ta atanan çıplak GPIO'lar şemada MCU pin etiketi olarak görünür
-- [ ] Etiket değişikliği (ör. PA12 → Pin_Led) iki görünümde de anında görünür
-- [ ] Arayüz testi: geçiş, senkronizasyon, geri al / yinele
+- [x] Design araç çubuğunda "Şema / Pinout" geçişi; seçim projede hatırlanır (Profesyonel modda varsayılan Pinout)
+- [x] İki görünüm aynı tasarım verisini kullanır: komponent pinleri Pinout'ta komponent adı ya da etiketle, Pinout'ta atanan çıplak GPIO'lar şemada MCU pin etiketi olarak görünür
+- [x] Etiket değişikliği (ör. PA12 → Pin_Led) iki görünümde de anında görünür
+- [x] Arayüz testi: geçiş, senkronizasyon, geri al / yinele
 
 ### ES-1009 · Pin listesi tablosu ve dışa aktarma
 `etiketler: tip:özellik, alan:pinout, öncelik:düşük, seviye:profesyonel`

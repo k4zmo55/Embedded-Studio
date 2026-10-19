@@ -1534,5 +1534,6 @@
   "{0} · çevre birimleri": "{0} · peripherals",
   "{0} üzerinde taşınacak komponent sinyali yok.": "There is no component signal on {0} to move.",
   "{0}: {1} uygun pin vurgulandı; birine tıklayın (Esc: vazgeç).": "{0}: {1} suitable pins highlighted; click one (Esc: cancel).",
-  "Pinout: {0}": "Pinout: {0}"
+  "Pinout: {0}": "Pinout: {0}",
+  "Şema": "Schematic"
 }

@@ -13,8 +13,9 @@
   let query = '';
   let drag = null;
 
+  let content = null; // çubuk + çizim: Pinout sekmesinde ya da Design'da (ES-1008) gösterilir
   function mount(parent) {
-    parent.append(h('main', { id: 'pinout', class: 'tab-pane' },
+    content = h('div', { class: 'po-content', id: 'po-content' },
       h('div', { class: 'po-bar' },
         h('span', { class: 'po-title', id: 'po-title' }),
         h('span', { class: 'spacer' }),
@@ -30,8 +31,9 @@
         h('div', { class: 'po-legend' },
           ...[['ok', t('Atanmış')], ['warn', t('Sorunlu (kilit / etiket)')], ['sys', t('Sistem (SWD, OSC, NRST)')], ['power', t('Besleme / özel')], ['free', t('Boş G/Ç')]]
             .map(([k, l]) => h('span', { class: `po-key ${k}` }, h('i'), l)),
-          h('span', { class: 'po-key' }, h('b', { text: '●' }), t('sabit pin'))))));
-    const svg = $('po-svg');
+          h('span', { class: 'po-key' }, h('b', { text: '●' }), t('sabit pin')))));
+    parent.append(h('main', { id: 'pinout', class: 'tab-pane' }, content));
+    const svg = content.querySelector('#po-svg');
     svg.addEventListener('wheel', (e) => { e.preventDefault(); zoom(e.deltaY > 0 ? 1.15 : 0.87, e); }, { passive: false });
     svg.addEventListener('mousedown', (e) => { if (e.button === 0) drag = { x: e.clientX, y: e.clientY, v: { ...view }, moved: false }; });
     window.addEventListener('mousemove', (e) => {
@@ -385,10 +387,21 @@
   /** Aynı pedin ikincil girdileri (G0: PA9 [PA11]) */
   const alternates = (mcu, pad) => mcu.package.pins.filter((p) => p.alt && p.pos === pad.pos);
 
+  /** İçeriği verilen kaba taşır (aynı DOM: arama, yakınlaştırma, Ctrl + tık durumu korunur) */
+  function attach(host) {
+    if (content && content.parentNode !== host) {
+      host.append(content);
+      view = null;
+    }
+  }
+  const visible = () => ui.tab === 'pinout' || (ui.tab === 'design' && ES.tabs.design.designView && ES.tabs.design.designView() === 'pinout');
+
   ES.tabs.pinout = {
     mount,
-    render: () => { if (ui.tab === 'pinout') render(); },
-    onShow: () => render(),
+    render: () => { if (visible()) render(); },
+    onShow: () => { attach($('pinout')); render(); },
+    attach,
+    draw: () => render(),
     alternates,
     resetView: () => { view = null; }
   };

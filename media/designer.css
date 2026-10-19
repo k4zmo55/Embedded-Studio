@@ -802,7 +802,16 @@ button.ghost.danger:not(:disabled) { background: transparent; color: var(--err);
 .pg-card[hidden] { display: none; }
 
 /* ---- Pinout (ES-1004): CubeMX renkleri ---- */
-#pinout { grid-template-rows: auto minmax(0, 1fr); }
+#pinout { grid-template-rows: minmax(0, 1fr); }
+.po-content { display: grid; grid-template-rows: auto minmax(0, 1fr); min-height: 0; height: 100%; }
+/* ES-1008: Design'da Şema / Pinout geçişi */
+.view-toggle { position: absolute; left: 10px; top: 10px; z-index: 2; display: flex; border: 1px solid var(--border); border-radius: 4px; overflow: hidden; background: var(--bg); }
+.view-toggle button { border: none; border-radius: 0; background: transparent; color: var(--muted); padding: 3px 12px; }
+.view-toggle button.active { background: var(--btn); color: var(--btn-fg); }
+.design-pinout { position: absolute; inset: 0; padding-top: 40px; display: grid; min-height: 0; background: var(--bg); }
+.design-pinout[hidden] { display: none; }
+.canvas-wrap.pinout-view #schematic, .canvas-wrap.pinout-view .canvas-tools, .canvas-wrap.pinout-view .legend, .canvas-wrap.pinout-view .canvas-hint { display: none; }
+.pin-sig.pin-mode { font-style: italic; }
 .po-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding: 6px 10px; border-bottom: 1px solid var(--border); }
 .po-title { font-weight: 600; }
 .po-search { width: 220px; max-width: 100%; }
