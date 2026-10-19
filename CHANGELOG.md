@@ -1,5 +1,11 @@
 # Değişiklik günlüğü
 
+## 0.6.13 (önizleme)
+
+- **Düzeltme: bootloader GCC 13 ile derlenmiyordu (0.6.4'ten beri).** `bootloader/es_boot_core.c`'de GCC 13.2'nin (Ubuntu / Debian `gcc-arm-none-eabi` paketi) verdiği `'len' may be used uninitialized` uyarısı `-Werror` ile hataya dönüşüyordu; GCC 14'te uyarı çıkmadığı için yerel testlerde görünmedi. Değişkenler ilklendirildi. Bootloader'ı açık projelerde "Kod Üret" ile düzeltme gelir.
+  - GitHub'daki "Testler" iş akışı bu yüzden 0.6.4'ten beri kırmızıydı (bütün derleme grupları). Bütün varyantlar GCC 13.2 ile yeniden derlendi: 88/88.
+  - İş akışı: derleme işleri `ubuntu-24.04`'e sabitlendi (ubuntu-latest Ubuntu 26'ya geçerken derleyici sürümü habersiz değişmesin); actions/checkout, setup-node ve cache v5'e (Node 20 eskime uyarısı).
+
 ## 0.6.12 (önizleme)
 
 - **Design'da Şema / Pinout geçişi (ES-1008):** tuvalin sol üstünde **Şema | Pinout**. Pinout seçilince komponent şeması yerine yalnızca işlemci paketi görünür; kütüphane ve Bağlantılar paneli yerinde kalır, aynı tasarım verisi kullanılır (pine tıklama, sağ tık, Ctrl + tık, arama Pinout sekmesindeki gibi).
