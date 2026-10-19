@@ -360,7 +360,8 @@ class Studio {
       // Örnek register sürücüleri: bu işlemcide üretilebilenler (ör. DAC'siz işlemcide DAC yok)
       const regDriverIds = REG_DRIVERS.filter((d) => !d.needs || d.needs(m)).map((d) => d.id);
       // ES-303: bootloader bölge boyutları ve UART seçenekleri
-      const boot = { sizes: bl.sizeOptions(m), uarts: bl.uartOptions(m), defaultKB: bl.defaultSize(m) };
+      const sizes = bl.sizeOptions(m);
+      const boot = { sizes, uarts: bl.uartOptions(m), defaultKB: bl.defaultSize(m), ab: Object.fromEntries(sizes.map((kb) => [kb, bl.abSplit(m, kb)])) }; // ES-304
       return [id, { ...m, fpu: fam.fpu, apbCount: fam.apbCount, series: fam.series, regDriverIds, boot }];
     }));
     return { mcus, components: comps };
@@ -445,6 +446,19 @@ class Studio {
         break;
       case 'build.detect':
         this.post({ type: 'build.toolchains', items: await detectToolchains() });
+        break;
+      // ---- ES-304: bootloader imza anahtarı ----
+      case 'boot.keyStatus':
+        this.postBootKey();
+        break;
+      case 'boot.keygen':
+        await this.bootKeygen();
+        break;
+      case 'boot.keyImport':
+        await this.bootKeyImport();
+        break;
+      case 'boot.keyExport':
+        await this.bootKeyExport();
         break;
       case 'build.pickDir': {
         const pick = await vscode.window.showOpenDialog({ canSelectFolders: true, canSelectFiles: false, openLabel: t('Bu klasörü kullan') });
@@ -1234,10 +1248,16 @@ class Studio {
     try {
       if (m.port === serial.SIM_PORT) {
         // Sanal cihaz bağlantılar arasında korunur
-        const key = `${mcu.id}:${part.slotBase}`;
+        const pub = boot.signing && boot.pubKey ? Buffer.from(boot.pubKey, 'hex') : null;
+        const key = `${mcu.id}:${part.slotBase}:${part.stageBase}:${boot.pubKey}:${boot.rollback}:${boot.minVersion}`;
         if (!this._simEs || this._simEs.key !== key) this._simEs = { key, dev: null };
         client = new esboot.EsBootClient({ write: (b) => setImmediate(() => this._simEs.dev.receive(b)) }, { timeoutMs: 250, retries: 0 });
-        if (!this._simEs.dev) this._simEs.dev = new esboot.SimEsBoot({ slotBase: part.slotBase, slotSize: part.slotSize, progUnit: part.progUnit, deviceId: 0x431, out: (b) => setImmediate(() => client.feed(b)) });
+        if (!this._simEs.dev) {
+          this._simEs.dev = new esboot.SimEsBoot({
+            slotBase: part.slotBase, slotSize: part.slotSize, stageBase: part.stageBase, stageSize: part.stageSize, progUnit: part.progUnit, deviceId: 0x431,
+            pubKey: pub, rollback: boot.rollback, minVersion: bl.versionWord(boot.minVersion), out: (b) => setImmediate(() => client.feed(b))
+          });
+        }
         else this._simEs.dev.o.out = (b) => setImmediate(() => client.feed(b));
       } else {
         session = new serial.SerialSession({ path: m.port, baud, dataBits: 8, parity: 'none', stopBits: 1, flow: 'none', dtr: false, rts: false });
@@ -1267,15 +1287,16 @@ class Studio {
       this.esboot = { client, close, info, part, port: m.port };
       const dev = DEV_IDS[info.deviceId];
       const match = info.slotBase === part.slotBase;
-      const status = {
-        connected: true, kind: 'esboot', port: m.port, baud, version: info.version, pid: info.deviceId, device: dev ? dev.name : t('bilinmiyor'), match: match && !!(dev && (dev.defines || []).includes(mcu.device.define)),
-        commands: ['INFO', 'START', 'DATA', 'END', 'BOOT'], app: info.app, appText: info.appText, slotBase: info.slotBase, slotSize: info.slotSize,
-        header: info.header && info.header.present ? { version: info.header.version, buildId: info.header.buildId, size: info.header.imageSize } : null
-      };
+      const status = { ...this.esbootStatus(this.esboot), baud, match: match && !!(dev && (dev.defines || []).includes(mcu.device.define)) };
       this.post({ type: 'prog.boot', ...status });
       this.progLog('ok', t('Embedded Studio bootloader v{0}; yuva 0x{1} ({2} KB); uygulama: {3}{4}.', info.version, info.slotBase.toString(16).toUpperCase(), info.slotSize / 1024, info.appText,
         status.header ? ` (v${status.header.version}, ${status.header.buildId})` : ''));
+      if (info.protocol >= 2) {
+        this.progLog('info', [info.ab ? t('A/B (hazırlık yuvası 0x{0})', info.stageBase.toString(16).toUpperCase()) : t('tek yuva'),
+          info.signed ? t('imza gerekli, anahtar {0}', info.keyId) : t('imzasız'), info.rollback ? t('en düşük sürüm v{0}', info.floorText) : t('geri dönüş koruması kapalı')].join(' · '));
+      }
       if (!match) this.progLog('warn', t('Cihazdaki yuva (0x{0}) projedekinden (0x{1}) farklı: bootloader başka ayarlarla derlenmiş.', info.slotBase.toString(16), part.slotBase.toString(16)));
+      if (info.signed && boot.signing && info.keyId !== bl.keyId(boot.pubKey)) this.progLog('warn', t('Cihazın imza anahtarı ({0}) projedekinden ({1}) farklı.', info.keyId, bl.keyId(boot.pubKey)));
     } catch (e) {
       if (session) await session.close().catch(() => {});
       this.post({ type: 'prog.boot', connected: false, error: e.message });
@@ -1291,10 +1312,79 @@ class Studio {
     } catch (e) {
       return this.progLog('error', e.message);
     }
+    this.post({ type: 'prog.boot', ...this.esbootStatus(es), match: true });
+  }
+
+  /** Programlayıcı arayüzü için bootloader durumu (INFO) */
+  esbootStatus(es) {
     const i = es.info;
-    this.post({ type: 'prog.boot', connected: true, kind: 'esboot', port: es.port, version: i.version, pid: i.deviceId, device: (DEV_IDS[i.deviceId] || {}).name || t('bilinmiyor'), match: true,
-      commands: ['INFO', 'START', 'DATA', 'END', 'BOOT'], app: i.app, appText: i.appText, slotBase: i.slotBase, slotSize: i.slotSize,
-      header: i.header && i.header.present ? { version: i.header.version, buildId: i.header.buildId, size: i.header.imageSize } : null });
+    const hdr = (x) => (x && x.present ? { version: x.version, buildId: x.buildId, size: x.imageSize } : null);
+    return {
+      connected: true, kind: 'esboot', port: es.port, version: i.version, pid: i.deviceId, device: (DEV_IDS[i.deviceId] || {}).name || t('bilinmiyor'),
+      commands: ['INFO', 'START', 'DATA', 'END', 'BOOT'], app: i.app, appText: i.appText, slotBase: i.slotBase, slotSize: i.slotSize, header: hdr(i.header),
+      protocol: i.protocol, ab: i.ab, signed: i.signed, rollback: i.rollback, keyId: i.keyId, floorText: i.floorText, stageBase: i.stageBase, stageSize: i.stageSize,
+      stage: i.stage ? { status: i.stage.status, statusText: i.stage.statusText, done: i.stage.done, header: i.stage.header && i.stage.header.present ? hdr(i.stage.header) : null } : null
+    };
+  }
+
+  // ---- ES-304: imza anahtarı. Özel anahtar yalnızca bu makinede (eklentinin genel depolama klasörü), açık anahtar projede.
+  keysDir() { return path.join(this.context.globalStorageUri.fsPath, 'keys'); }
+  keyFile(id) { return path.join(this.keysDir(), `es-boot-${id}.pem`); }
+  /** Anahtar kimliğine göre bu makinedeki özel anahtar (PEM) ya da null */
+  privateKey(id) {
+    try {
+      return id ? fs.readFileSync(this.keyFile(id), 'utf8') : null;
+    } catch {
+      return null;
+    }
+  }
+  saveKey(k) {
+    fs.mkdirSync(this.keysDir(), { recursive: true });
+    fs.writeFileSync(this.keyFile(k.keyId), k.pem, { mode: 0o600 });
+  }
+  postBootKey() {
+    const b = (this.design && this.design.boot) || {};
+    const id = bl.keyId(b.pubKey);
+    this.post({ type: 'boot.key', pubKey: b.pubKey || '', keyId: id, local: !!this.privateKey(id), file: id ? this.keyFile(id) : '' });
+  }
+  setBootKey(pub) {
+    this.design.boot = { ...(this.design.boot || {}), signing: true, pubKey: Buffer.from(pub).toString('hex') };
+    this.pushState();
+    this.scheduleSave();
+    this.postBootKey();
+  }
+  async bootKeygen() {
+    const cur = this.design.boot && this.design.boot.pubKey;
+    if (cur) {
+      const go = await vscode.window.showWarningMessage(t('Yeni anahtar üretilsin mi? Eski anahtarla ({0}) derlenmiş bootloader\'a sahip kartlar yeni anahtarla imzalanan güncellemeleri kabul etmez; önce bootloader\'ı yeni anahtarla SWD ile yüklemeniz gerekir.', bl.keyId(cur)), { modal: true }, t('Yeni anahtar üret'));
+      if (!go) return;
+    }
+    const k = esboot.generateKey();
+    this.saveKey(k);
+    this.setBootKey(k.pub);
+    this.toast('info', t('Ed25519 anahtarı üretildi ({0}). Özel anahtarı yedekleyin (Dışa aktar): kaybolursa bu bootloader\'lı kartlara güncelleme gönderilemez.', k.keyId));
+  }
+  async bootKeyImport() {
+    const pick = await vscode.window.showOpenDialog({ canSelectMany: false, filters: { [t('Ed25519 özel anahtarı (PEM)')]: ['pem', 'key'] }, openLabel: t('İçe aktar') });
+    if (!pick) return;
+    try {
+      const pem = fs.readFileSync(pick[0].fsPath, 'utf8');
+      const k = esboot.loadPrivateKey(pem);
+      this.saveKey({ keyId: k.keyId, pem: String(k.key.export({ type: 'pkcs8', format: 'pem' })) });
+      this.setBootKey(k.pub);
+      this.toast('info', t('Anahtar içe aktarıldı ({0}).', k.keyId));
+    } catch (e) {
+      this.toast('error', e.message);
+    }
+  }
+  async bootKeyExport() {
+    const id = bl.keyId(this.design.boot && this.design.boot.pubKey);
+    const pem = this.privateKey(id);
+    if (!pem) return this.toast('error', t('Bu makinede {0} anahtarının özel kısmı yok.', id || '—'));
+    const dest = await vscode.window.showSaveDialog({ defaultUri: vscode.Uri.file(path.join(require('os').homedir(), `es-boot-${id}.pem`)), filters: { PEM: ['pem'] }, saveLabel: t('Dışa aktar') });
+    if (!dest) return;
+    fs.writeFileSync(dest.fsPath, pem, { mode: 0o600 });
+    this.toast('info', t('Özel anahtar kaydedildi: {0}. Güvenli bir yerde saklayın; projeye (git) eklemeyin.', dest.fsPath));
   }
 
   /** ES-303: başlıklı uygulama imajını (yuva başından) bootloader'a gönderir */
@@ -1305,10 +1395,22 @@ class Studio {
     const lo = Math.min(...img.segments.map((g) => g.addr));
     const hi = Math.max(...img.segments.map((g) => g.addr + g.bytes.length));
     if (lo !== es.info.slotBase) return this.progLog('error', t('{0} yuva başından (0x{1}) başlamıyor (0x{2}). Bootloader açıkken derlenen uygulamanın .bin / .hex / .elf dosyasını seçin; _full.hex ve _boot dosyaları değil.', path.basename(img.file), es.info.slotBase.toString(16).toUpperCase(), lo.toString(16).toUpperCase()));
-    const bytes = Buffer.alloc(hi - lo, 0xff);
+    let bytes = Buffer.alloc(hi - lo, 0xff);
     for (const g of img.segments) Buffer.from(g.bytes).copy(bytes, g.addr - lo);
-    const chk = esboot.checkImage(bytes);
+    let chk = esboot.checkImage(bytes);
     if (!chk.ok) return this.progLog('error', chk.error);
+    // ES-304: cihaz imza istiyorsa ve imaj bu anahtarla imzalı değilse bu makinedeki özel anahtarla imzalanır
+    if (es.info.signed && !(chk.sig.present && chk.sig.keyId === es.info.keyId)) {
+      const pem = this.privateKey(es.info.keyId);
+      if (!pem) return this.progLog('error', t('Cihaz {0} anahtarıyla imzalı imaj bekliyor; bu makinede o anahtarın özel kısmı yok (Proje Ayarları > Bootloader > Anahtarı içe aktar).', es.info.keyId));
+      try {
+        bytes = esboot.signImage(bytes, pem).bytes;
+      } catch (e) {
+        return this.progLog('error', e.message);
+      }
+      chk = esboot.checkImage(bytes);
+      this.progLog('info', t('İmzalandı: Ed25519, anahtar {0}.', es.info.keyId));
+    }
     const started = Date.now();
     this.progLog('info', t('Güncelleniyor: {0} (v{1}, {2}, {3})', path.basename(img.file), chk.header.version, chk.header.buildId, prog.sizeText(chk.total)));
     try {
@@ -1316,11 +1418,11 @@ class Studio {
         boot: !!m.run,
         progress: (stage, done, total) => this.post({ type: 'prog.progress', op: 'write', pct: stage === 'erase' ? 1 : Math.round((done * 100) / total) })
       });
-      this.progLog('ok', t('Güncellendi ve doğrulandı: v{0}, {1} sn.', chk.header.version, ((Date.now() - started) / 1000).toFixed(1)));
+      this.progLog('ok', t('Güncellendi ve doğrulandı: v{0}, {1} sn.', chk.header.version, ((Date.now() - started) / 1000).toFixed(1)) + (es.info.ab ? ' ' + t('Hazırlık yuvasından ana yuvaya kopyalandı.') : ''));
       if (m.run) await this.bootDisconnect(t('Bootloader yeniden başlatıldı: yeni uygulama doğrulanıp çalıştırılıyor.'));
       else await this.esbootRefresh();
     } catch (e) {
-      this.progLog('error', t('Güncelleme başarısız: {0}', e.message) + ' ' + t('Cihazdaki imaj commit almadığı için çalıştırılmaz; bootloader yeni güncelleme bekler.'));
+      this.progLog('error', t('Güncelleme başarısız: {0}', e.message) + ' ' + (es.info.ab ? t('A/B: ana yuvadaki uygulama değişmedi.') : t('Cihazdaki imaj commit almadığı için çalıştırılmaz; bootloader yeni güncelleme bekler.')));
     }
     this.post({ type: 'prog.progress', op: 'write', pct: null });
   }

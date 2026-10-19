@@ -7,6 +7,8 @@
   let seq = 0;
   let toolchains = null; // algılanan araç zincirleri (build.detect)
   let lastSize = null; // son derlemenin boyut özeti (build.size)
+  let bootKey = null; // ES-304: imza anahtarının durumu (boot.key)
+  let askedKey = null;
 
   function mount(parent) {
     parent.append(h('main', { id: 'settings', class: 'tab-pane' }, h('div', { class: 'settings', id: 'settings-body' })));
@@ -191,6 +193,23 @@
     const u = o.uarts.find((x) => x.inst === b.uart) || o.uarts[0];
     const slot = 0x08000000 + sizeKB * 1024;
     const field = (id, label, input) => h('div', { class: 'field' }, h('label', { for: id, text: label }), input);
+    // ES-304: A/B bölünmesi (ana yuva + hazırlık yuvası), imza anahtarı
+    const ab = (o.ab || {})[sizeKB] || null;
+    const isAb = b.layout === 'ab' && !!ab;
+    const appEnd = isAb ? slot + ab.primary : 0x08000000 + mcu.device.flashKB * 1024;
+    if (b.enabled && b.signing && askedKey !== (b.pubKey || '')) {
+      askedKey = b.pubKey || '';
+      post({ type: 'boot.keyStatus' });
+    }
+    const key = b.signing ? h('div', { class: 'field', id: 'set-boot-key' },
+      h('span', { class: 'label', text: t('İmza anahtarı (Ed25519)') }),
+      b.pubKey ? h('div', { class: 'mono', id: 'set-boot-keyid', text: t('Anahtar {0}', b.pubKey.slice(0, 16)) + (bootKey && bootKey.pubKey === b.pubKey ? (bootKey.local ? ' · ' + t('özel anahtar bu makinede') : ' · ' + t('özel anahtar bu makinede yok: güncelleme imzalanamaz')) : '') })
+        : h('p', { class: 'dbg-msg error', text: t('Anahtar yok: üretin ya da içe aktarın. Anahtarsız "Kod Üret" bootloader\'ı derlemez.') }),
+      h('div', { class: 'set-inline' },
+        h('button', { class: 'ghost small', id: 'set-boot-keygen', onclick: () => post({ type: 'boot.keygen' }) }, b.pubKey ? t('Yeni anahtar üret') : t('Anahtar üret')),
+        h('button', { class: 'ghost small', id: 'set-boot-keyimport', onclick: () => post({ type: 'boot.keyImport' }) }, t('İçe aktar')),
+        b.pubKey ? h('button', { class: 'ghost small', id: 'set-boot-keyexport', onclick: () => post({ type: 'boot.keyExport' }) }, t('Dışa aktar (yedek)')) : null),
+      h('p', { class: 'hint', text: t('Açık anahtar projeye yazılır ve bootloader\'a gömülür; özel anahtar yalnızca bu makinede (eklenti depolaması) durur. Programlayıcı güncellemeyi göndermeden önce imzalar. Özel anahtarı yedekleyin, projeye (git) eklemeyin.') })) : null;
     return h('section', { class: 'wizard-card', id: 'set-boot' },
       h('h3', { text: t('Bootloader') }),
       h('p', { class: 'hint', text: t('Güvenli bootloader şablonu: flash\'ın başına bir bootloader, ardından uygulama yuvası. Uygulama imajının başlığı (sürüm, boyut, CRC-32, derleme kimliği) derlemeden sonra yazılır; bootloader açılışta CRC\'yi doğrular, UART üzerinden güncellemeyi (Programlayıcı > Embedded Studio bootloader) kabul eder. Yarıda kalan güncellemede uygulama çalıştırılmaz, bootloader yeni güncelleme bekler.') }),
@@ -209,11 +228,26 @@
         field('set-boot-wait', t('Açılış penceresi (ms)'), h('input', { id: 'set-boot-wait', type: 'number', min: 0, max: 5000, step: 50, value: b.waitMs ?? 300, title: t('Açılışta bu süre UART dinlenir; paket gelirse güncelleme moduna geçilir. 0: yalnızca uygulama isteyince ya da imaj geçersizse.'), onchange: (e) => set((x) => { x.waitMs = Number(e.target.value); }) })),
         field('set-boot-version', t('Uygulama sürümü'), h('input', { id: 'set-boot-version', class: 'mono', value: b.version || '1.0.0', placeholder: '1.0.0', onchange: (e) => set((x) => { x.version = e.target.value.trim(); }) })),
         h('label', { class: 'check' }, h('input', { type: 'checkbox', id: 'set-boot-hwcrc', checked: b.hwCrc !== false, onchange: (e) => set((x) => { x.hwCrc = e.target.checked; }) }), h('span', { text: t('Donanım CRC birimi (F1/F4 dışında)') }))) : null,
+      // ES-304: güvenli güncelleme
+      b.enabled ? h('h4', { text: t('Güvenli güncelleme') }) : null,
+      b.enabled ? h('div', { class: 'set-grid' },
+        field('set-boot-layout', t('Yuva düzeni'), h('select', { id: 'set-boot-layout', title: ab ? '' : t('Flash bu bootloader boyutuyla ikiye bölünemiyor.'), onchange: (e) => set((x) => { x.layout = e.target.value; }) },
+          h('option', { value: 'single', selected: !isAb, text: t('Tek yuva') }),
+          h('option', { value: 'ab', selected: isAb, disabled: !ab, text: ab ? t('A/B: {0} + {1} KB', ab.primary / 1024, ab.stage / 1024) : t('A/B (bu boyutta bölünemiyor)') }))),
+        field('set-boot-minver', t('En düşük sürüm'), h('input', { id: 'set-boot-minver', class: 'mono', value: b.minVersion || '0.0.0', placeholder: '0.0.0', disabled: b.rollback === false, title: t('Bundan düşük sürümler hiçbir zaman kabul edilmez (bootloader\'a gömülür).'), onchange: (e) => set((x) => { x.minVersion = e.target.value.trim(); }) })),
+        h('label', { class: 'check' }, h('input', { type: 'checkbox', id: 'set-boot-sign', checked: !!b.signing, onchange: (e) => { set((x) => { x.signing = e.target.checked; }); if (e.target.checked && !b.pubKey) post({ type: 'boot.keygen' }); } }), h('span', { text: t('İmza doğrulama (Ed25519)') })),
+        h('label', { class: 'check' }, h('input', { type: 'checkbox', id: 'set-boot-rollback', checked: b.rollback !== false, onchange: (e) => set((x) => { x.rollback = e.target.checked; }) }), h('span', { text: t('Geri dönüş koruması (eski sürümü reddet)') }))) : null,
+      b.enabled ? key : null,
+      b.enabled ? h('p', { class: 'hint', id: 'set-boot-sec-hint', text: [
+        isAb ? t('A/B: güncelleme hazırlık yuvasına yazılır; imza, CRC ve sürüm doğrulanmadan ana yuvadaki uygulama silinmez. Kopyalama kesilirse bootloader açılışta tamamlar; ana yuva bozulursa hazırlık yuvasındaki son imajdan kurar.') : t('Tek yuva: güncelleme başlarken eski uygulama silinir (eski sürüm ve yanlış yuva silmeden önce reddedilir). Yarıda kalırsa kart bootloader\'da kalır.'),
+        t('Üretimde bootloader bölgesini (0x08000000, {0} KB) WRP ile yazmaya karşı koruyun ve RDP seviye 1 kullanın: SWD erişimi olan biri imza denetimini atlayabilir. Option byte yazma: ES-306.', sizeKB)
+      ].join(' ') }) : null,
       b.enabled ? h('table', { class: 'regs pg-obt', id: 'set-boot-map' },
         h('tbody', {},
           h('tr', {}, h('td', { text: t('Bootloader') }), h('td', { class: 'mono', text: `0x08000000 – ${hx(slot - 1)} (${sizeKB} KB)` })),
           h('tr', {}, h('td', { text: t('İmaj başlığı') }), h('td', { class: 'mono', text: `${hx(slot)} (1 KB)` })),
-          h('tr', {}, h('td', { text: t('Uygulama (vektör tablosu)') }), h('td', { class: 'mono', text: `${hx(slot + 0x400)} – ${hx(0x08000000 + mcu.device.flashKB * 1024 - 1)} (${mcu.device.flashKB - sizeKB} KB)` })),
+          h('tr', {}, h('td', { text: isAb ? t('Ana yuva: uygulama (vektör tablosu)') : t('Uygulama (vektör tablosu)') }), h('td', { class: 'mono', text: `${hx(slot + 0x400)} – ${hx(appEnd - 1)} (${(appEnd - slot) / 1024} KB)` })),
+          isAb ? h('tr', {}, h('td', { text: t('Hazırlık yuvası (güncelleme)') }), h('td', { class: 'mono', text: `${hx(ab.stageBase)} – ${hx(ab.stageBase + ab.stage - 1)} (${ab.stage / 1024} KB)` })) : null,
           h('tr', {}, h('td', { text: t('Ortak RAM (güncelleme isteği)') }), h('td', { class: 'mono', text: `${hx(0x20000000 + mcu.device.ramKB * 1024 - 16)} (16 B)` })))) : null,
       b.enabled ? h('p', { class: 'hint', text: t('"Kod Üret" bootloader/ klasörünü, linker betiklerini ve cmake/es-image.cmake\'i üretir. Derle: <proje>_boot.elf, <proje>.bin (başlıklı uygulama) ve <proje>_full.hex (ikisi birlikte; Yükle ve Debug bunu yazar). Uygulamadan güncelleme moduna geçmek için es_boot_request_update().') }) : null);
   }
@@ -363,6 +397,10 @@
     render();
   });
   ES.on('build.dir', (m) => setBuild((x) => { x.toolchain[m.field] = m.path; }));
+  ES.on('boot.key', (m) => {
+    bootKey = m;
+    render();
+  });
   ES.on('build.size', (m) => {
     lastSize = m;
     render();

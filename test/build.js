@@ -78,6 +78,13 @@ const ALL = ['usb_uart', 'bme280', 'mpu6050', 'ssd1306', 'w25q32', 'neo6m', 'led
   // ES-303: bootloader + uygulama yuvası (her işlemcide bare-metal, sıkı uyarı + -Werror; F411'de HAL + FreeRTOS)
   for (const id of Object.keys(lib.mcus)) variants.push({ mcu: id, framework: 'register', rtos: false, mode: 'pro', build: strict, suffix: 'boot', ids: ['usb_uart', 'led'], boot: { enabled: true } });
   variants.push({ mcu: f411, framework: 'hal', rtos: true, build: strict, suffix: 'hboot', ids: ['usb_uart', 'led', 'bme280'], boot: { enabled: true, version: '2.1.5' } });
+  // ES-304: A/B + Ed25519 imza + geri dönüş koruması (her işlemcide; bootloader boyutu ve uygulamanın ana yuvaya sığması)
+  const testKey = esboot.generateKey();
+  for (const id of Object.keys(lib.mcus)) {
+    if (!bl.abSplit(lib.mcus[id], bl.defaultSize(lib.mcus[id]))) continue;
+    variants.push({ mcu: id, framework: 'register', rtos: false, mode: 'pro', build: strict, suffix: 'sboot', ids: ['usb_uart', 'led'], key: testKey,
+      boot: { enabled: true, layout: 'ab', signing: true, pubKey: testKey.pub.toString('hex'), version: '1.2.3', minVersion: '1.0.0' } });
+  }
   const userCmake = (name) => `cmake_minimum_required(VERSION 3.20)
 set(CMAKE_TOOLCHAIN_FILE \${CMAKE_CURRENT_SOURCE_DIR}/cmake/arm-none-eabi.cmake CACHE FILEPATH "")
 project(${name} C ASM)
@@ -136,10 +143,19 @@ embedded_studio_target(\${PROJECT_NAME} NO_SOURCES)
         if (chk.header.vectorAddr !== part.vectors) throw new Error(`vektör adresi ${chk.header.vectorAddr.toString(16)} != ${part.vectors.toString(16)}`);
         if (v.boot.version && chk.header.version !== v.boot.version) throw new Error(`sürüm ${chk.header.version}`);
         if (bin.readUInt32LE(esboot.COMMIT_OFF) !== esboot.COMMIT_MAGIC) throw new Error('commit yok');
+        if (v.key) {
+          // ES-304: derlenen imaj imzalanır ve doğrulanır; uygulama yalnızca ana yuvaya bağlanmış olmalı
+          if (!part.ab || chk.total > part.hdr + part.imageMax) throw new Error(`A/B: imaj ${chk.total} B, ana yuva ${part.slotSize} B`);
+          const signed = esboot.signImage(bin, v.key.pem);
+          if (!esboot.verifySig(signed.bytes, v.key.pub)) throw new Error('imza doğrulanamadı');
+          const map = fs.readFileSync(path.join(root, 'build', preset, name + '.map'), 'utf8');
+          const m = /^FLASH\s+0x([0-9a-f]+)\s+0x([0-9a-f]+)/im.exec(map);
+          if (!m || parseInt(m[1], 16) !== part.slotBase || parseInt(m[2], 16) !== part.slotSize) throw new Error(`bağlayıcı FLASH bölgesi ${m && m[1]} ${m && m[2]}`);
+        }
         const full = fs.readFileSync(path.join(root, 'build', preset, `${name}_full.hex`), 'utf8');
         if ((full.match(/:00000001FF/g) || []).length !== 1) throw new Error('birleşik HEX: tek EOF olmalı');
         const bootFlash = out.split(/\r?\n/).filter((l) => /FLASH:/.test(l)).map((l) => l.trim().replace(/\s+/g, ' '));
-        boots.push(`${name}: bootloader ${bootFlash.find((l) => new RegExp(`${part.bootSize / 1024} KB`).test(l)) || bootFlash[0] || '?'} · imaj ${chk.total} B, CRC ${chk.header.imageCrc.toString(16)}, kimlik ${chk.header.buildId}`);
+        boots.push(`${name}: bootloader ${bootFlash.find((l) => new RegExp(`\\b${part.bootSize / 1024} KB`).test(l)) || bootFlash[0] || '?'} · imaj ${chk.total} B, CRC ${chk.header.imageCrc.toString(16)}, kimlik ${chk.header.buildId}`);
       }
       const warn = out.split('\n').filter((l) => /warning:/.test(l) && /Core|Components|src|drivers/.test(l));
       const size = out.split('\n').filter((l) => /FLASH:|RAM:/.test(l)).map((l) => l.trim().replace(/\s+/g, ' ')).join(' | ');

@@ -12,22 +12,36 @@
  * Başlıktaki boyut, CRC ve commit derlemeden sonra cmake/es-image.cmake ile yazılır (ELF, .bin, .hex).
  * Güncellemede commit en son, CRC doğrulandıktan sonra yazılır: yarıda kalan güncelleme commit'siz kalır,
  * bootloader uygulamayı çalıştırmaz ve yeni güncelleme bekler.
+ *
+ * ES-304: Ed25519 imzası (başlık bölgesinde 0x40), A/B düzeni (yuva ikiye bölünür: uygulama ana yuvadan çalışır,
+ * güncelleme hazırlık yuvasına yazılır, doğrulanınca ana yuvaya kopyalanır; eskisi doğrulamadan önce silinmez) ve
+ * sürüm tabanlı geri dönüş koruması (ana yuvadakinden düşük sürüm reddedilir).
  */
 const { familyOf } = require('./families');
 const { regDriverFiles } = require('./regdrivers');
+const ed25519 = require('./ed25519');
 
 const HDR = 0x400;
 const COMMIT_OFF = 0x3e0;
 const IMAGE_MAGIC = 0x474d4945; // "EIMG"
 const COMMIT_MAGIC = 0x54494d43; // "CMIT"
 const REQUEST_MAGIC = 0x51455242; // "BREQ"
-const BOOT_VERSION = [1, 0];
+const SIG_OFF = 0x40;
+const SIG_MAGIC = 0x47495345; // "ESIG"
+const STATE_OFF = 0x3c0;
+const DONE_MAGIC = 0x454e4f44; // "DONE": hazırlık yuvasındaki imaj işlendi (kuruldu ya da reddedildi)
+const BOOT_VERSION = [1, 1];
 const FLASH_BASE = 0x08000000;
 const RAM_BASE = 0x20000000;
 /** Cortex-M0'da (F0) VTOR yok: uygulamanın vektör tablosu RAM başına kopyalanır, RAM'in ilk 0xC0 baytı ayrılır */
 const F0_VECTORS = 0xc0;
 
-const DEFAULT_BOOT = { enabled: false, sizeKB: 0, uart: '', tx: '', rx: '', baud: 115200, waitMs: 300, hwCrc: true, version: '1.0.0' };
+const DEFAULT_BOOT = {
+  enabled: false, sizeKB: 0, uart: '', tx: '', rx: '', baud: 115200, waitMs: 300, hwCrc: true, version: '1.0.0',
+  // ES-304
+  layout: 'single', signing: false, pubKey: '', rollback: true, minVersion: '0.0.0'
+};
+const VERSION_RE = /^\d{1,3}\.\d{1,3}\.\d{1,5}$/;
 
 const hex = (v, w = 8) => '0x' + (v >>> 0).toString(16).toUpperCase().padStart(w, '0');
 
@@ -85,9 +99,45 @@ function normalizeBoot(b, mcu, preferred) {
   s.baud = [9600, 19200, 38400, 57600, 115200, 230400, 460800].includes(Number(s.baud)) ? Number(s.baud) : 115200;
   s.waitMs = Math.max(0, Math.min(5000, Math.round(Number(s.waitMs)) || 0));
   s.hwCrc = s.hwCrc !== false;
-  s.version = /^\d{1,3}\.\d{1,3}\.\d{1,5}$/.test(String(s.version)) ? String(s.version) : '1.0.0';
+  s.version = VERSION_RE.test(String(s.version)) ? String(s.version) : '1.0.0';
+  s.layout = s.layout === 'ab' && abSplit(mcu, s.sizeKB) ? 'ab' : 'single';
+  s.signing = !!s.signing;
+  s.pubKey = /^[0-9a-f]{64}$/i.test(String(s.pubKey)) ? String(s.pubKey).toLowerCase() : '';
+  s.rollback = s.rollback !== false;
+  s.minVersion = VERSION_RE.test(String(s.minVersion)) ? String(s.minVersion) : '0.0.0';
   return s;
 }
+
+/** Yuvadaki silme birimleri (bootloader bölgesinden sonrası) */
+function slotUnits(mcu, sizeKB) {
+  const f = mcu.device.flash;
+  const bootSize = sizeKB * 1024;
+  const units = [];
+  if (f.type === 'sector') {
+    for (const [off, size] of f.sectors) if (off * 1024 >= bootSize) units.push({ addr: FLASH_BASE + off * 1024, size: size * 1024 });
+  } else {
+    for (let a = FLASH_BASE + bootSize; a < FLASH_BASE + mcu.device.flashKB * 1024; a += f.pageKB * 1024) units.push({ addr: a, size: f.pageKB * 1024 });
+  }
+  return units;
+}
+
+/**
+ * ES-304 A/B: yuvayı silme birimi sınırında ana yuva + hazırlık yuvasına böler. Ana yuva hazırlık yuvasından büyük
+ * olamaz (imaj ikisine de sığmalı); en büyük ana yuva seçilir. Bölünemiyorsa (tek sektör, < 8 KB) null.
+ */
+function abSplit(mcu, sizeKB) {
+  const units = slotUnits(mcu, sizeKB);
+  const all = units.reduce((a, u) => a + u.size, 0);
+  let sum = 0, best = null;
+  for (let k = 1; k < units.length; k++) {
+    sum += units[k - 1].size;
+    if (sum <= all - sum) best = { primary: sum, stage: all - sum, stageBase: units[k].addr };
+  }
+  return best && best.primary >= 8 * 1024 ? best : null;
+}
+
+/** Açık anahtar (32 bayt, onaltılık) → anahtar kimliği (ilk 8 bayt) */
+const keyId = (pubHex) => String(pubHex || '').slice(0, 16);
 
 /** Sürüm metni → 0xMMmmpppp */
 function versionWord(v) {
@@ -103,16 +153,15 @@ function partition(mcu, boot) {
   const flashSize = mcu.device.flashKB * 1024;
   const slotBase = FLASH_BASE + bootSize;
   // Yuvadaki silme birimleri (sektör / sayfa): bootloader bunları güncellemede siler
-  const units = [];
-  if (f.type === 'sector') {
-    for (const [off, size] of f.sectors) if (off * 1024 >= bootSize) units.push({ addr: FLASH_BASE + off * 1024, size: size * 1024 });
-  } else {
-    for (let a = slotBase; a < FLASH_BASE + flashSize; a += f.pageKB * 1024) units.push({ addr: a, size: f.pageKB * 1024 });
-  }
+  const units = slotUnits(mcu, boot.sizeKB);
   const f0 = k === 'f0';
   const ramEnd = RAM_BASE + mcu.device.ramKB * 1024;
+  // ES-304 A/B: uygulama ana yuvada (slotSize), güncelleme hazırlık yuvasına
+  const ab = boot.layout === 'ab' ? abSplit(mcu, boot.sizeKB) : null;
+  const slotSize = ab ? ab.primary : flashSize - bootSize;
   return {
-    bootBase: FLASH_BASE, bootSize, slotBase, slotSize: flashSize - bootSize, hdr: HDR, vectors: slotBase + HDR, commitOff: COMMIT_OFF,
+    bootBase: FLASH_BASE, bootSize, slotBase, slotSize, hdr: HDR, vectors: slotBase + HDR, commitOff: COMMIT_OFF,
+    ab: !!ab, stageBase: ab ? ab.stageBase : 0, stageSize: ab ? ab.stage : 0, imageMax: slotSize - HDR,
     ramBase: RAM_BASE, ramEnd, shared: ramEnd - 16, appRamOffset: f0 ? F0_VECTORS : 0, remapVectors: f0,
     progUnit: Math.max(4, f.unit), units, pageType: f.type
   };
@@ -121,11 +170,14 @@ function partition(mcu, boot) {
 // ------------------------------------------------------------------ C kaynakları
 /** Ortak imaj başlığı (bootloader ve uygulama) */
 function imageHeader() {
-  return `/* Embedded Studio (ES-303): uygulama imaj başlığı. Bootloader ve uygulama aynı tanımı kullanır; değiştirmeyin.
+  return `/* Embedded Studio (ES-303/304): uygulama imaj başlığı. Bootloader ve uygulama aynı tanımı kullanır; değiştirmeyin.
  *
  * Yuva düzeni:  [es_image_region_t: 1 KB] [vektör tablosu] [kod ve veri ...]
- * image_size, image_crc, hdr_crc ve commit derlemeden sonra cmake/es-image.cmake ile yazılır.
- * CRC: CRC-32 (IEEE 802.3 / zlib), polinom 0xEDB88320 (yansıtılmış), başlangıç ve son XOR 0xFFFFFFFF. */
+ *   0x000 başlık (64 bayt)    0x040 imza bloğu (80 bayt)    0x3C0 durum (32 bayt)    0x3E0 commit (32 bayt)
+ * image_size, image_crc, hdr_crc ve commit derlemeden sonra cmake/es-image.cmake ile yazılır; imza bloğunu
+ * Embedded Studio imzalarken doldurur. Durum ve commit bloklarını yalnızca bootloader yazar (güncellemede atlanır).
+ * CRC: CRC-32 (IEEE 802.3 / zlib), polinom 0xEDB88320 (yansıtılmış), başlangıç ve son XOR 0xFFFFFFFF.
+ * İmza: Ed25519 (RFC 8032), ileti = başlık (64 bayt) || imaj (image_size bayt). */
 #ifndef ES_IMAGE_H
 #define ES_IMAGE_H
 
@@ -137,6 +189,11 @@ function imageHeader() {
 #define ES_IMAGE_COMMIT_OFF   ${hex(COMMIT_OFF, 4)}U      /* commit bloğu: 32 bayt, ayrı bir programlama birimi */
 #define ES_IMAGE_COMMIT_MAGIC ${hex(COMMIT_MAGIC)}U /* "CMIT": imaj doğrulandıktan sonra yazılır */
 #define ES_BOOT_REQUEST_MAGIC ${hex(REQUEST_MAGIC)}U /* "BREQ": uygulama güncelleme ister (ortak RAM) */
+#define ES_IMAGE_SIG_OFF      ${hex(SIG_OFF, 4)}U
+#define ES_IMAGE_SIG_MAGIC    ${hex(SIG_MAGIC)}U /* "ESIG" */
+#define ES_IMAGE_SIG_ED25519  1U
+#define ES_IMAGE_STATE_OFF    ${hex(STATE_OFF, 4)}U      /* durum bloğu: 32 bayt, ayrı bir programlama birimi */
+#define ES_IMAGE_DONE_MAGIC   ${hex(DONE_MAGIC)}U /* "DONE": A/B hazırlık yuvasındaki imaj işlendi */
 
 typedef struct {
   uint32_t magic;        /* ES_IMAGE_MAGIC */
@@ -152,13 +209,25 @@ typedef struct {
 } es_image_hdr_t;
 
 typedef struct {
+  uint32_t magic;        /* ES_IMAGE_SIG_MAGIC (imzasız imajda 0) */
+  uint16_t alg;          /* ES_IMAGE_SIG_ED25519 */
+  uint16_t sig_size;     /* 64 */
+  uint8_t key_id[8];     /* açık anahtarın ilk 8 baytı */
+  uint8_t sig[64];       /* Ed25519(başlık || imaj) */
+} es_image_sig_t;
+
+typedef struct {
   es_image_hdr_t hdr;
-  uint8_t reserved[ES_IMAGE_COMMIT_OFF - sizeof(es_image_hdr_t)];
+  es_image_sig_t sig;
+  uint8_t reserved[ES_IMAGE_STATE_OFF - sizeof(es_image_hdr_t) - sizeof(es_image_sig_t)];
+  uint32_t state[8];     /* A/B hazırlık yuvasında: state[0] == ES_IMAGE_DONE_MAGIC (işlendi) */
   uint32_t commit[8];    /* commit[0] == ES_IMAGE_COMMIT_MAGIC: imaj tam ve doğrulanmış */
 } es_image_region_t;
 
 #if defined(__STDC_VERSION__) && __STDC_VERSION__ >= 201112L
 _Static_assert(sizeof(es_image_hdr_t) == 64, "es_image_hdr_t 64 bayt olmalı");
+_Static_assert(sizeof(es_image_sig_t) == 80, "es_image_sig_t 80 bayt olmalı");
+_Static_assert(ES_IMAGE_STATE_OFF + 32U == ES_IMAGE_COMMIT_OFF, "durum bloğu commit'ten hemen önce");
 _Static_assert(sizeof(es_image_region_t) == ES_IMAGE_REGION, "es_image_region_t 1 KB olmalı");
 #endif
 
@@ -175,7 +244,8 @@ function bootConfig(mcu, boot, part) {
   const rx = u && u.rx.find((p) => p.pin === boot.rx);
   const t = pin(boot.tx || 'PA9'), r = pin(boot.rx || 'PA10');
   const hwCrc = boot.hwCrc && !['f1', 'f4'].includes(k); // F1/F2/F4 CRC biriminde bit ters çevirme yok: yazılım
-  return `/* Embedded Studio (ES-303): bootloader yapılandırması — ${mcu.name}. Her "Kod Üret"te yeniden yazılır;
+  const pub = boot.signing && boot.pubKey ? boot.pubKey.match(/../g).map((x) => '0x' + x) : null;
+  return `/* Embedded Studio (ES-303/304): bootloader yapılandırması — ${mcu.name}. Her "Kod Üret"te yeniden yazılır;
  * değiştirmek için Proje Ayarları > Bootloader. */
 #ifndef ES_BOOT_CONFIG_H
 #define ES_BOOT_CONFIG_H
@@ -186,9 +256,16 @@ function bootConfig(mcu, boot, part) {
 /* Bellek düzeni */
 #define ES_BOOT_BASE     ${hex(part.bootBase)}U
 #define ES_BOOT_SIZE     ${hex(part.bootSize)}U /* ${boot.sizeKB} KB */
-#define ES_SLOT_BASE     ${hex(part.slotBase)}U
+#define ES_SLOT_BASE     ${hex(part.slotBase)}U /* ana yuva: uygulama buradan çalışır */
 #define ES_SLOT_SIZE     ${hex(part.slotSize)}U /* ${part.slotSize / 1024} KB */
 #define ES_APP_VECTORS   ${hex(part.vectors)}U
+#define ES_IMAGE_MAX     ${hex(part.imageMax)}U /* başlık bölgesinden sonra en fazla imaj boyutu */
+
+/* ES-304 A/B: ${part.ab ? 'güncelleme hazırlık yuvasına yazılır, doğrulanınca ana yuvaya kopyalanır' : "kapalı (tek yuva: güncelleme ana yuvaya yazılır, eskisi START'ta silinir)"} */
+#define ES_BOOT_AB       ${part.ab ? 1 : 0}
+#define ES_STAGE_BASE    ${hex(part.stageBase)}U${part.ab ? ` /* ${part.stageSize / 1024} KB */` : ''}
+#define ES_STAGE_SIZE    ${hex(part.stageSize)}U
+#define ES_RECV_BASE     ${part.ab ? 'ES_STAGE_BASE' : 'ES_SLOT_BASE'} /* güncellemenin yazıldığı yuva */
 #define ES_RAM_BASE      ${hex(part.ramBase)}U
 #define ES_RAM_END       ${hex(part.ramEnd)}U
 #define ES_BOOT_SHARED   ((volatile uint32_t *)${hex(part.shared)}U) /* 4 kelime; resetten sonra korunur */
@@ -213,34 +290,57 @@ function bootConfig(mcu, boot, part) {
 /* İmaj CRC'si donanım CRC birimiyle (bit ters çevirme destekleyen ailelerde) */
 #define ES_BOOT_HW_CRC   ${hwCrc ? 1 : 0}
 
+/* ES-304 imza doğrulaması (Ed25519): ${pub ? `anahtar kimliği ${keyId(boot.pubKey)}. İmzasız ya da başka anahtarla imzalı imaj
+ * güncellemede kabul edilmez (SWD ile yazılan ana yuva imzasız da çalışır: bootloader bölgesini RDP/WRP ile koruyun). */
+#define ES_BOOT_SIGNED   1
+#define ES_BOOT_PUBKEY   { ${pub.slice(0, 16).join(', ')}, \
+                           ${pub.slice(16).join(', ')} }` : boot.signing ? `açık ama açık anahtar yok. */
+#error "Bootloader imzası açık ama açık anahtar yok: Proje Ayarları > Bootloader > Anahtar üret / içe aktar, sonra Kod Üret."
+#define ES_BOOT_SIGNED   0` : `kapalı. */
+#define ES_BOOT_SIGNED   0`}
+
+/* ES-304 geri dönüş koruması: ana yuvadakinden (ve en düşük sürümden) küçük sürüm reddedilir */
+#define ES_BOOT_ROLLBACK ${boot.rollback ? 1 : 0}
+#define ES_BOOT_MIN_VERSION ${hex(versionWord(boot.minVersion))}U /* ${boot.minVersion} */
+
 #endif /* ES_BOOT_CONFIG_H */
 `;
 }
 
 /** Taşınabilir çekirdek: paketler, komutlar, doğrulama (donanımdan bağımsız; bilgisayarda da derlenip test edilir) */
 function coreHeader() {
-  return `/* Embedded Studio (ES-303): bootloader çekirdeği. Donanımdan bağımsızdır; donanım işlevleri es_boot_port.* içinde.
+  return `/* Embedded Studio (ES-303/304): bootloader çekirdeği. Donanımdan bağımsızdır; donanım işlevleri es_boot_port.* içinde.
  *
  * UART paket biçimi (bayt sırası küçük uçlu):
  *   istek : A5 | komut (1) | uzunluk (2) | veri | CRC-32 (komut..veri, 4)
  *   yanıt : A5 | durum (79 ACK / 1F NACK) | kod (1) | uzunluk (2) | veri | CRC-32 (durum..veri, 4)
- * Komutlar: 01 INFO, 02 START (toplam boyut), 03 DATA (ofset + veri), 04 END (doğrula + commit), 05 BOOT (reset). */
+ * Komutlar: 01 INFO, 02 START (toplam boyut [+ 64 bayt başlık]), 03 DATA (ofset + veri), 04 END (doğrula + commit
+ * [+ A/B: ana yuvaya kur]), 05 BOOT (reset). Protokol 2 (ES-304): INFO'da yuva düzeni, imza ve sürüm tabanı. */
 #ifndef ES_BOOT_CORE_H
 #define ES_BOOT_CORE_H
 
 #include <stdint.h>
 #include "es_image.h"
 
+#define ES_BOOT_PROTOCOL 2U
 #define ES_BOOT_SOF      0xA5U
 #define ES_BOOT_ACK      0x79U
 #define ES_BOOT_NACK     0x1FU
 #define ES_BOOT_MAX_DATA 1024U
+#define ES_BOOT_INFO_SIZE 180U
 
 enum { ES_CMD_INFO = 1, ES_CMD_START = 2, ES_CMD_DATA = 3, ES_CMD_END = 4, ES_CMD_BOOT = 5 };
 /* NACK kodları */
-enum { ES_ERR_OK = 0, ES_ERR_FRAME = 1, ES_ERR_CMD = 2, ES_ERR_ARG = 3, ES_ERR_STATE = 4, ES_ERR_FLASH = 5, ES_ERR_VERIFY = 6 };
+enum { ES_ERR_OK = 0, ES_ERR_FRAME = 1, ES_ERR_CMD = 2, ES_ERR_ARG = 3, ES_ERR_STATE = 4, ES_ERR_FLASH = 5, ES_ERR_VERIFY = 6, ES_ERR_ROLLBACK = 7 };
 /* Doğrulama sonucu */
-enum { ES_IMG_OK = 0, ES_IMG_MAGIC = 1, ES_IMG_HDR_CRC = 2, ES_IMG_SIZE = 3, ES_IMG_COMMIT = 4, ES_IMG_CRC = 5, ES_IMG_VECTORS = 6 };
+enum { ES_IMG_OK = 0, ES_IMG_MAGIC = 1, ES_IMG_HDR_CRC = 2, ES_IMG_SIZE = 3, ES_IMG_COMMIT = 4, ES_IMG_CRC = 5, ES_IMG_VECTORS = 6,
+       ES_IMG_SIG = 7, ES_IMG_ROLLBACK = 8 };
+/* INFO bayrakları */
+#define ES_INFO_AB       1U
+#define ES_INFO_SIGNED   2U
+#define ES_INFO_ROLLBACK 4U
+/* es_boot_install sonucu */
+enum { ES_INSTALL_NONE = 0, ES_INSTALL_DONE = 1, ES_INSTALL_REJECTED = 2, ES_INSTALL_FAILED = 3 };
 
 /* Port (donanım) işlevleri: es_boot_port.c (kart) ya da test sahtesi */
 void es_port_putc(uint8_t c);
@@ -256,7 +356,13 @@ void es_port_reset(void);
 
 /* Çekirdek */
 uint32_t es_crc32(uint32_t crc, const void *data, uint32_t n); /* crc: önceki değer (ilk çağrıda 0) */
-int es_boot_validate(int need_commit);              /* ES_IMG_* */
+int es_image_check(uint32_t base, int need_commit); /* base'deki imaj (ana ya da hazırlık yuvası; ana yuva için bağlanmış): ES_IMG_* */
+int es_image_verify_sig(uint32_t base);            /* imza (ES_BOOT_SIGNED); kapalıysa ES_IMG_OK */
+int es_boot_validate(int need_commit);              /* ana yuva: ES_IMG_* */
+uint32_t es_boot_floor(void);                       /* kabul edilecek en düşük sürüm: ES_BOOT_MIN_VERSION ya da ana yuvadaki */
+/* A/B: hazırlık yuvasında kurulmamış (ya da ana yuva bozuksa yedek) imaj varsa doğrulayıp ana yuvaya kopyalar.
+ * ES_INSTALL_*; reddedilirse *detail = ES_IMG_*. Tek yuvada her zaman ES_INSTALL_NONE. */
+int es_boot_install(uint8_t *detail);
 /* Paketleri işler. idle_ms > 0 ise o sürede hiç geçerli paket gelmezse 0 döner (açılış penceresi); paket geldiyse
  * ya da idle_ms == 0 ise sonsuza dek çalışır (BOOT komutu reset atar). */
 int es_boot_serve(uint32_t idle_ms);
@@ -266,10 +372,11 @@ int es_boot_serve(uint32_t idle_ms);
 }
 
 function coreSource() {
-  return `/* Embedded Studio (ES-303): bootloader çekirdeği — paket ayrıştırma, komutlar, imaj doğrulama. */
+  return `/* Embedded Studio (ES-303/304): bootloader çekirdeği — paket ayrıştırma, komutlar, imaj doğrulama, imza, A/B kurulum. */
 #include <string.h>
 #include "es_boot_config.h"
 #include "es_boot_core.h"
+#include "es_ed25519.h"
 
 /* ---- CRC-32 (zlib): tablo flash'ta (1 KB) */
 static const uint32_t crc_table[256] = {
@@ -286,28 +393,161 @@ uint32_t es_crc32(uint32_t crc, const void *data, uint32_t n)
 
 static uint32_t rd32(const uint8_t *p) { return (uint32_t)p[0] | ((uint32_t)p[1] << 8) | ((uint32_t)p[2] << 16) | ((uint32_t)p[3] << 24); }
 static void wr32(uint8_t *p, uint32_t v) { p[0] = (uint8_t)v; p[1] = (uint8_t)(v >> 8); p[2] = (uint8_t)(v >> 16); p[3] = (uint8_t)(v >> 24); }
+static const es_image_region_t *region(uint32_t base) { return (const es_image_region_t *)(const void *)es_port_flash_ptr(base); }
 
 /* ---- imaj doğrulama */
-int es_boot_validate(int need_commit)
+int es_image_check(uint32_t base, int need_commit)
 {
-  const es_image_region_t *r = (const es_image_region_t *)(const void *)es_port_flash_ptr(ES_SLOT_BASE);
+  const es_image_region_t *r = region(base);
   const es_image_hdr_t *h = &r->hdr;
   if (h->magic != ES_IMAGE_MAGIC || h->hdr_version != ES_IMAGE_HDR_VERSION || h->hdr_size != sizeof(es_image_hdr_t)) return ES_IMG_MAGIC;
   if (es_crc32(0, h, (uint32_t)((const uint8_t *)&h->hdr_crc - (const uint8_t *)h)) != h->hdr_crc) return ES_IMG_HDR_CRC;
-  if (h->image_size < 8U || (h->image_size & 3U) || h->image_size > ES_SLOT_SIZE - ES_IMAGE_REGION || h->vector_addr != ES_APP_VECTORS) return ES_IMG_SIZE;
+  if (h->image_size < 8U || (h->image_size & 3U) || h->image_size > ES_IMAGE_MAX || h->vector_addr != ES_APP_VECTORS) return ES_IMG_SIZE;
   if (need_commit && r->commit[0] != ES_IMAGE_COMMIT_MAGIC) return ES_IMG_COMMIT;
-  if (es_port_image_crc(es_port_flash_ptr(ES_APP_VECTORS), h->image_size) != h->image_crc) return ES_IMG_CRC;
-  const uint32_t *v = (const uint32_t *)(const void *)es_port_flash_ptr(ES_APP_VECTORS);
-  /* İlk yığın işaretçisi RAM'de, reset vektörü yuvada ve Thumb */
+  const uint8_t *img = es_port_flash_ptr(base + ES_IMAGE_REGION);
+  if (es_port_image_crc(img, h->image_size) != h->image_crc) return ES_IMG_CRC;
+  const uint32_t *v = (const uint32_t *)(const void *)img;
+  /* İlk yığın işaretçisi RAM'de, reset vektörü ana yuvada ve Thumb */
   if (v[0] < ES_RAM_BASE || v[0] > ES_RAM_END || (v[0] & 3U)) return ES_IMG_VECTORS;
   if (v[1] < ES_APP_VECTORS || v[1] >= ES_SLOT_BASE + ES_SLOT_SIZE || !(v[1] & 1U)) return ES_IMG_VECTORS;
   return ES_IMG_OK;
 }
 
+int es_boot_validate(int need_commit) { return es_image_check(ES_SLOT_BASE, need_commit); }
+
+void es_ed25519_yield(void) { es_port_wdg_refresh(); }
+
+#if ES_BOOT_SIGNED
+static const uint8_t pubkey[32] = ES_BOOT_PUBKEY;
+
+/* Ed25519(başlık (64 bayt) || imaj); imza bloğu başlık bölgesinde (0x40). Anahtar kimliği = açık anahtarın ilk 8 baytı. */
+int es_image_verify_sig(uint32_t base)
+{
+  const es_image_region_t *r = region(base);
+  const es_image_sig_t *s = &r->sig;
+  if (s->magic != ES_IMAGE_SIG_MAGIC || s->alg != ES_IMAGE_SIG_ED25519 || s->sig_size != 64U || memcmp(s->key_id, pubkey, 8) != 0) return ES_IMG_SIG;
+  static es_sha512_t c; /* yığında değil: küçük RAM'li işlemciler */
+  uint8_t h[64];
+  es_sha512_init(&c);
+  es_sha512_update(&c, s->sig, 32);
+  es_sha512_update(&c, pubkey, 32);
+  es_sha512_update(&c, &r->hdr, sizeof r->hdr);
+  const uint8_t *p = es_port_flash_ptr(base + ES_IMAGE_REGION);
+  for (uint32_t o = 0; o < r->hdr.image_size; o += 4096U) {
+    uint32_t n = r->hdr.image_size - o < 4096U ? r->hdr.image_size - o : 4096U;
+    es_sha512_update(&c, p + o, n);
+    es_port_wdg_refresh();
+  }
+  es_sha512_final(&c, h);
+  return es_ed25519_verify(s->sig, pubkey, h) == 0 ? ES_IMG_OK : ES_IMG_SIG;
+}
+#else
+int es_image_verify_sig(uint32_t base)
+{
+  (void)base;
+  return ES_IMG_OK;
+}
+#endif
+
+uint32_t es_boot_floor(void)
+{
+  uint32_t f = ES_BOOT_MIN_VERSION;
+  if (es_image_check(ES_SLOT_BASE, 1) == ES_IMG_OK && region(ES_SLOT_BASE)->hdr.fw_version > f) f = region(ES_SLOT_BASE)->hdr.fw_version;
+  return f;
+}
+
+/* Alınan ya da kurulacak imaj: biçim + CRC, sürüm tabanı, imza (en pahalısı en son) */
+static int accept(uint32_t base, int need_commit, uint32_t floor_version)
+{
+  int v = es_image_check(base, need_commit);
+  if (v != ES_IMG_OK) return v;
+#if ES_BOOT_ROLLBACK
+  if (region(base)->hdr.fw_version < floor_version) return ES_IMG_ROLLBACK;
+#else
+  (void)floor_version;
+#endif
+  return es_image_verify_sig(base);
+}
+
+/* Bir programlama birimine 32 bitlik işaret yazar (commit, kuruldu) */
+static int write_mark(uint32_t addr, uint32_t magic)
+{
+  uint8_t c[ES_PROG_UNIT < 4U ? 4U : ES_PROG_UNIT];
+  memset(c, 0xFF, sizeof c);
+  wr32(c, magic);
+  return es_port_flash_write(addr, c, sizeof c);
+}
+
+/* base'deki yuvaya yazar; işaret blokları (kuruldu + commit: 0x3C0–0x3FF) atlanır — onları yalnızca bootloader,
+ * doğrulamadan sonra yazar — tamamı 0xFF olan birimler de */
+static int write_slot(uint32_t base, uint32_t off, const uint8_t *p, uint32_t n)
+{
+  static uint8_t unit[ES_PROG_UNIT];
+  for (uint32_t i = 0; i < n; i += ES_PROG_UNIT) {
+    uint32_t o = off + i;
+    uint32_t k = n - i < ES_PROG_UNIT ? n - i : ES_PROG_UNIT;
+    if (o + ES_PROG_UNIT > ES_IMAGE_STATE_OFF && o < ES_IMAGE_REGION) continue;
+    memset(unit, 0xFF, sizeof unit);
+    memcpy(unit, p + i, k);
+    int blank = 1;
+    for (uint32_t j = 0; j < ES_PROG_UNIT; j++) if (unit[j] != 0xFFU) { blank = 0; break; }
+    if (blank) continue;
+    if (es_port_flash_write(base + o, unit, ES_PROG_UNIT)) return -1;
+    es_port_wdg_refresh();
+  }
+  return 0;
+}
+
+#if ES_BOOT_AB
+/* Hazırlık yuvasındaki doğrulanmış imajı ana yuvaya kopyalar. Ana yuvanın commit'i en son, ardından hazırlık yuvasına
+ * "kuruldu" yazılır. Kesilirse ana yuva commit'siz kalır; bir sonraki açılışta kopyalama baştan yapılır. */
+static int copy_stage(void)
+{
+  uint32_t n = ES_IMAGE_REGION + region(ES_STAGE_BASE)->hdr.image_size;
+  if (es_port_flash_erase(ES_SLOT_BASE, n)) return -1;
+  if (write_slot(ES_SLOT_BASE, 0, es_port_flash_ptr(ES_STAGE_BASE), n)) return -1;
+  if (es_image_check(ES_SLOT_BASE, 0) != ES_IMG_OK) return -1;
+  if (write_mark(ES_SLOT_BASE + ES_IMAGE_COMMIT_OFF, ES_IMAGE_COMMIT_MAGIC)) return -1;
+  if (es_image_check(ES_SLOT_BASE, 1) != ES_IMG_OK) return -1;
+  if (region(ES_STAGE_BASE)->state[0] == ES_IMAGE_DONE_MAGIC) return 0; /* yedekten kurtarma: işaret zaten var */
+  return write_mark(ES_STAGE_BASE + ES_IMAGE_STATE_OFF, ES_IMAGE_DONE_MAGIC);
+}
+
+int es_boot_install(uint8_t *detail)
+{
+  const es_image_region_t *s = region(ES_STAGE_BASE);
+  *detail = 0;
+  if (s->hdr.magic != ES_IMAGE_MAGIC || s->commit[0] != ES_IMAGE_COMMIT_MAGIC) return ES_INSTALL_NONE;
+  int done = s->state[0] == ES_IMAGE_DONE_MAGIC;
+  int primary = es_image_check(ES_SLOT_BASE, 1) == ES_IMG_OK;
+  if (primary && done) return ES_INSTALL_NONE;
+  if (primary && memcmp(&s->hdr, &region(ES_SLOT_BASE)->hdr, sizeof s->hdr) == 0) {
+    /* Kopyalandı, "kuruldu" yazılamadan kesilmiş */
+    (void)write_mark(ES_STAGE_BASE + ES_IMAGE_STATE_OFF, ES_IMAGE_DONE_MAGIC);
+    return ES_INSTALL_NONE;
+  }
+  /* Bekleyen güncelleme ya da ana yuva bozuk (hazırlık yuvasındaki son imajdan kurtarma) */
+  int v = accept(ES_STAGE_BASE, 1, primary ? es_boot_floor() : ES_BOOT_MIN_VERSION);
+  if (v != ES_IMG_OK) {
+    if (!done) (void)write_mark(ES_STAGE_BASE + ES_IMAGE_STATE_OFF, ES_IMAGE_DONE_MAGIC); /* her açılışta yeniden denenmesin */
+    *detail = (uint8_t)v;
+    return ES_INSTALL_REJECTED;
+  }
+  return copy_stage() ? ES_INSTALL_FAILED : ES_INSTALL_DONE;
+}
+#else
+int es_boot_install(uint8_t *detail)
+{
+  *detail = 0;
+  return ES_INSTALL_NONE;
+}
+#endif
+
 /* ---- paketler */
 static uint8_t frame[4U + 4U + ES_BOOT_MAX_DATA + 4U];
 static uint32_t total;   /* START ile bildirilen toplam boyut (yuva başından) */
 static uint32_t written; /* sıradaki beklenen ofset */
+static uint32_t vfloor;  /* START'ta (silmeden önce) belirlenen en düşük sürüm */
 static int started;
 
 static void reply(uint8_t status, uint8_t code, const uint8_t *data, uint16_t len)
@@ -348,54 +588,54 @@ static int read_frame(uint32_t first_timeout, uint8_t *cmd, uint16_t *len)
   return 0;
 }
 
-static int erase_range(uint32_t addr, uint32_t len)
-{
-  return es_port_flash_erase(addr, len);
-}
-
-/* Yuvaya yazar; commit bloğuna denk gelen birimler atlanır (commit en son, END'de yazılır), tamamı 0xFF olanlar da */
-static int write_slot(uint32_t off, const uint8_t *p, uint32_t n)
-{
-  static uint8_t unit[ES_PROG_UNIT];
-  for (uint32_t i = 0; i < n; i += ES_PROG_UNIT) {
-    uint32_t o = off + i;
-    uint32_t k = n - i < ES_PROG_UNIT ? n - i : ES_PROG_UNIT;
-    if (o + ES_PROG_UNIT > ES_IMAGE_COMMIT_OFF && o < ES_IMAGE_COMMIT_OFF + 32U) continue;
-    memset(unit, 0xFF, sizeof unit);
-    memcpy(unit, p + i, k);
-    int blank = 1;
-    for (uint32_t j = 0; j < ES_PROG_UNIT; j++) if (unit[j] != 0xFFU) { blank = 0; break; }
-    if (blank) continue;
-    if (es_port_flash_write(ES_SLOT_BASE + o, unit, ES_PROG_UNIT)) return -1;
-    es_port_wdg_refresh();
-  }
-  return 0;
-}
-
 static void cmd_info(void)
 {
-  uint8_t d[20 + sizeof(es_image_hdr_t)];
-  int v = es_boot_validate(1);
-  d[0] = 1; /* protokol sürümü */
+  static uint8_t d[ES_BOOT_INFO_SIZE];
+  memset(d, 0, sizeof d);
+  d[0] = ES_BOOT_PROTOCOL;
   d[1] = ES_BOOT_VERSION_MAJOR;
   d[2] = ES_BOOT_VERSION_MINOR;
-  d[3] = (uint8_t)v; /* uygulama doğrulama sonucu (0: geçerli) */
+  d[3] = (uint8_t)es_boot_validate(1); /* ana yuvadaki uygulama (0: geçerli) */
   wr32(&d[4], ES_SLOT_BASE);
   wr32(&d[8], ES_SLOT_SIZE);
   d[12] = (uint8_t)ES_BOOT_MAX_DATA; d[13] = (uint8_t)(ES_BOOT_MAX_DATA >> 8);
   d[14] = (uint8_t)ES_PROG_UNIT; d[15] = (uint8_t)(ES_PROG_UNIT >> 8);
   wr32(&d[16], es_port_device_id());
   memcpy(&d[20], es_port_flash_ptr(ES_SLOT_BASE), sizeof(es_image_hdr_t));
+  /* Protokol 2 (ES-304) */
+  wr32(&d[84], (ES_BOOT_AB ? ES_INFO_AB : 0U) | (ES_BOOT_SIGNED ? ES_INFO_SIGNED : 0U) | (ES_BOOT_ROLLBACK ? ES_INFO_ROLLBACK : 0U));
+  wr32(&d[88], ES_STAGE_BASE);
+  wr32(&d[92], ES_STAGE_SIZE);
+  wr32(&d[96], ES_IMAGE_MAX);
+  wr32(&d[100], es_boot_floor());
+#if ES_BOOT_SIGNED
+  memcpy(&d[104], pubkey, 8);
+#endif
+#if ES_BOOT_AB
+  d[112] = (uint8_t)es_image_check(ES_STAGE_BASE, 1);
+  d[113] = region(ES_STAGE_BASE)->state[0] == ES_IMAGE_DONE_MAGIC;
+  memcpy(&d[116], es_port_flash_ptr(ES_STAGE_BASE), sizeof(es_image_hdr_t));
+#endif
   ack(d, sizeof d);
 }
 
 static void cmd_start(uint16_t len)
 {
-  if (len != 4U) { nack(ES_ERR_ARG, 0); return; }
+  if (len != 4U && len != 4U + sizeof(es_image_hdr_t)) { nack(ES_ERR_ARG, 0); return; }
   uint32_t size = rd32(&frame[3]);
-  if (size < ES_IMAGE_REGION + 8U || size > ES_SLOT_SIZE) { nack(ES_ERR_ARG, 1); return; }
+  if (size < ES_IMAGE_REGION + 8U || size > ES_IMAGE_REGION + ES_IMAGE_MAX) { nack(ES_ERR_ARG, 1); return; }
   started = 0;
-  if (erase_range(ES_SLOT_BASE, size)) { nack(ES_ERR_FLASH, 0); return; }
+  vfloor = es_boot_floor(); /* tek yuvada eski imaj birazdan silinir */
+  if (len > 4U) {
+    /* Başlık önceden geldiyse: silmeden önce yuva ve sürüm denetimi */
+    es_image_hdr_t h;
+    memcpy(&h, &frame[7], sizeof h);
+    if (h.magic != ES_IMAGE_MAGIC || h.vector_addr != ES_APP_VECTORS) { nack(ES_ERR_ARG, 2); return; }
+#if ES_BOOT_ROLLBACK
+    if (h.fw_version < vfloor) { nack(ES_ERR_ROLLBACK, 0); return; }
+#endif
+  }
+  if (es_port_flash_erase(ES_RECV_BASE, size)) { nack(ES_ERR_FLASH, 0); return; }
   total = size;
   written = 0;
   started = 1;
@@ -411,12 +651,12 @@ static void cmd_data(uint16_t len)
   /* Önceki ACK kaybolup aynı paket yeniden geldiyse: yazmadan onayla */
   if (off + n == written && off < written) { ack(0, 0); return; }
   if (off != written || off + n > total || ((n % ES_PROG_UNIT) && off + n != total)) { nack(ES_ERR_ARG, 1); return; }
-  if (write_slot(off, &frame[7], n)) { nack(ES_ERR_FLASH, 0); return; }
+  if (write_slot(ES_RECV_BASE, off, &frame[7], n)) { nack(ES_ERR_FLASH, 0); return; }
   /* Yazılanı geri oku */
-  const uint8_t *f = es_port_flash_ptr(ES_SLOT_BASE + off);
+  const uint8_t *f = es_port_flash_ptr(ES_RECV_BASE + off);
   for (uint32_t i = 0; i < n; i++) {
     uint32_t o = off + i;
-    if (o >= ES_IMAGE_COMMIT_OFF && o < ES_IMAGE_COMMIT_OFF + 32U) continue;
+    if (o >= ES_IMAGE_STATE_OFF && o < ES_IMAGE_REGION) continue;
     if (f[i] != frame[7U + i]) { nack(ES_ERR_VERIFY, 0); return; }
   }
   written = off + n;
@@ -426,16 +666,20 @@ static void cmd_data(uint16_t len)
 static void cmd_end(void)
 {
   if (!started || written != total) { nack(ES_ERR_STATE, 0); return; }
-  int v = es_boot_validate(0);
+#if ES_BOOT_AB
+  vfloor = es_boot_floor(); /* ana yuva yerinde */
+#endif
+  int v = accept(ES_RECV_BASE, 0, vfloor);
   if (v != ES_IMG_OK) { nack(ES_ERR_VERIFY, (uint8_t)v); return; }
-  /* Commit: ayrı programlama birimi; yazıldıktan sonra imaj çalıştırılabilir */
-  uint8_t c[ES_PROG_UNIT < 4U ? 4U : ES_PROG_UNIT];
-  memset(c, 0xFF, sizeof c);
-  wr32(c, ES_IMAGE_COMMIT_MAGIC);
-  if (es_port_flash_write(ES_SLOT_BASE + ES_IMAGE_COMMIT_OFF, c, sizeof c)) { nack(ES_ERR_FLASH, 1); return; }
-  v = es_boot_validate(1);
+  /* Commit: ayrı programlama birimi; yazıldıktan sonra imaj çalıştırılabilir (A/B: kurulabilir) */
+  if (write_mark(ES_RECV_BASE + ES_IMAGE_COMMIT_OFF, ES_IMAGE_COMMIT_MAGIC)) { nack(ES_ERR_FLASH, 1); return; }
+  v = es_image_check(ES_RECV_BASE, 1);
   if (v != ES_IMG_OK) { nack(ES_ERR_VERIFY, (uint8_t)v); return; }
   started = 0;
+#if ES_BOOT_AB
+  /* Yeni imaj doğrulandı: ancak şimdi ana yuva silinip yerine kopyalanır */
+  if (copy_stage()) { nack(ES_ERR_FLASH, 2); return; }
+#endif
   ack(0, 0);
 }
 
@@ -674,8 +918,9 @@ void es_port_jump(void);
 }
 
 function bootMain(userBlock) {
-  return `/* Embedded Studio (ES-303): bootloader ana programı.
- * Açılış: (1) uygulama güncelleme istediyse (ortak RAM'de ES_BOOT_REQUEST_MAGIC) ya da geçerli imaj yoksa
+  return `/* Embedded Studio (ES-303/304): bootloader ana programı.
+ * Açılış: (0) A/B düzeninde hazırlık yuvasında kurulmamış imaj varsa doğrulanıp ana yuvaya kopyalanır;
+ * (1) uygulama güncelleme istediyse (ortak RAM'de ES_BOOT_REQUEST_MAGIC) ya da geçerli imaj yoksa
  * güncelleme modu; (2) yoksa ES_BOOT_WAIT_MS boyunca UART'tan paket beklenir; gelmezse imaj doğrulanıp çalıştırılır.
  * Kendi eklemelerinizi USER CODE bloklarına yazın (ör. bir düğmeyle güncelleme moduna girme, durum LED'i). */
 #include "es_boot_config.h"
@@ -687,6 +932,10 @@ int main(void)
 {
   es_port_init();
 ${userBlock('Init').split('\n').map((l) => '  ' + l).join('\n')}
+#if ES_BOOT_AB
+  uint8_t detail;
+  (void)es_boot_install(&detail); /* kesilen kurulum da burada tamamlanır */
+#endif
   uint32_t request = ES_BOOT_SHARED[0];
   ES_BOOT_SHARED[0] = 0;
   int force = request == ES_BOOT_REQUEST_MAGIC;
@@ -733,7 +982,9 @@ const es_image_region_t es_image = {
     .build_id = ES_BUILD_ID,
     .hdr_crc = 0xFFFFFFFFU,
   },
+  .sig = { 0 }, /* Embedded Studio imzalarken doldurur (ES-304) */
   .reserved = { 0 },
+  .state = { 0xFFFFFFFFU, 0xFFFFFFFFU, 0xFFFFFFFFU, 0xFFFFFFFFU, 0xFFFFFFFFU, 0xFFFFFFFFU, 0xFFFFFFFFU, 0xFFFFFFFFU },
   .commit = { 0xFFFFFFFFU, 0xFFFFFFFFU, 0xFFFFFFFFU, 0xFFFFFFFFU, 0xFFFFFFFFU, 0xFFFFFFFFU, 0xFFFFFFFFU, 0xFFFFFFFFU },
 };
 `;
@@ -950,6 +1201,8 @@ function bootFiles(o) {
     { path: 'bootloader/es_boot_config.h', content: bootConfig(mcu, boot, part) },
     { path: 'bootloader/es_boot_core.h', content: coreHeader() },
     { path: 'bootloader/es_boot_core.c', content: coreSource() },
+    { path: 'bootloader/es_ed25519.h', content: ed25519.header() },
+    { path: 'bootloader/es_ed25519.c', content: ed25519.source() },
     { path: 'bootloader/es_boot_port.h', content: portHeader() },
     { path: 'bootloader/es_boot_port.c', content: portSource(mcu, boot, part) },
     { path: 'bootloader/main.c', content: bootMain(userBlock), kind: 'user' },
@@ -963,6 +1216,7 @@ function bootFiles(o) {
 }
 
 module.exports = {
-  DEFAULT_BOOT, HDR, COMMIT_OFF, IMAGE_MAGIC, COMMIT_MAGIC, REQUEST_MAGIC, BOOT_VERSION, sizeOptions, defaultSize, uartOptions, normalizeBoot,
-  versionWord, partition, bootFiles, bootLinker, appLinker, imageHeader, coreHeader, coreSource, crcTableC
+  DEFAULT_BOOT, HDR, COMMIT_OFF, IMAGE_MAGIC, COMMIT_MAGIC, REQUEST_MAGIC, SIG_OFF, SIG_MAGIC, STATE_OFF, DONE_MAGIC, BOOT_VERSION,
+  sizeOptions, defaultSize, uartOptions, normalizeBoot, versionWord, slotUnits, abSplit, keyId, partition, bootFiles, bootLinker, appLinker,
+  imageHeader, coreHeader, coreSource, crcTableC
 };

@@ -1598,6 +1598,46 @@ edge: { sourcename: "Task_A" targetname: "__indirect_call" label: "a.c:9:40" }
     await assert.rejects(() => client.update(eb.buildImage({ slotBase: 0x08008000 })), /başka bir yuva/);
     passed++;
     console.log('  ✓ Güvenli bootloader (ES-303): 15 işlemcide bölümleme ve UART, F0 vektör kopyası, üretilen dosyalar, linker betikleri, CMake hedefi, Yükle/Debug _full.hex, istemci ↔ benzetim (güncelleme, yarıda kalma, bozuk imaj, yanlış yuva)');
+
+    // ES-304: A/B bölünmesi, imzalı yapılandırma, imza ve anahtarlar
+    let abCount = 0;
+    for (const m of Object.values(lib.mcus)) {
+      if (!bl.abSplit(m, bl.defaultSize(m))) continue;
+      abCount++;
+      const p = bl.partition(m, bl.normalizeBoot({ enabled: true, layout: 'ab' }, m));
+      assert.ok(p.ab && p.stageBase === p.slotBase + p.slotSize && p.stageBase + p.stageSize === 0x08000000 + m.device.flashKB * 1024 && p.slotSize <= p.stageSize, `${m.id}: A/B`);
+      assert.ok(p.units.some((u) => u.addr === p.stageBase), `${m.id}: hazırlık yuvası silme birimi sınırında`);
+      assert.strictEqual(p.imageMax, p.slotSize - 0x400);
+    }
+    assert.strictEqual(abCount, Object.keys(lib.mcus).length, 'her işlemcide varsayılan boyutla A/B');
+    assert.deepStrictEqual(bl.abSplit(f411, 16), { primary: 240 * 1024, stage: 256 * 1024, stageBase: 0x08040000 });
+    assert.deepStrictEqual(bl.normalizeBoot({ layout: 'xyz', pubKey: 'abc', minVersion: 'x' }, f411).layout, 'single');
+    const key = eb.generateKey();
+    const dS = design([inst('usb_uart'), inst('led')], { framework: 'register', mode: 'pro', boot: { enabled: true, layout: 'ab', signing: true, pubKey: key.pub.toString('hex'), minVersion: '1.2.0' } });
+    const bS = Object.fromEntries(generate(dS, lib, assign(dS, lib), computeClock(mcu, dS.clock), {}).files.map((f) => [f.path, f]));
+    const cS = bS['bootloader/es_boot_config.h'].content;
+    assert.match(cS, /#define ES_BOOT_AB\s+1/);
+    assert.match(cS, /#define ES_STAGE_BASE\s+0x08040000U/);
+    assert.match(cS, /#define ES_RECV_BASE\s+ES_STAGE_BASE/);
+    assert.match(cS, /#define ES_BOOT_SIGNED\s+1/);
+    assert.ok(cS.includes([...key.pub.subarray(0, 4)].map((x) => '0x' + x.toString(16).padStart(2, '0')).join(', ')), 'açık anahtar gömülü');
+    assert.match(cS, /#define ES_BOOT_MIN_VERSION 0x01020000U/);
+    assert.ok(bS['bootloader/es_ed25519.c'] && bS['bootloader/es_ed25519.h']);
+    assert.match(bS['linker/STM32F411CEU6_FLASH.ld'].content, /ORIGIN = 0x08004000, LENGTH = 240K/, 'uygulama yalnızca ana yuvada');
+    assert.match(bS['AGENTS.md'].content, /A\/B \(ES-304\)[\s\S]*İmza \(ES-304\): Ed25519, anahtar [0-9a-f]{16}/);
+    const dE = design([inst('led')], { framework: 'register', mode: 'pro', boot: { enabled: true, signing: true } });
+    assert.match(generate(dE, lib, assign(dE, lib), computeClock(mcu, dE.clock), {}).files.find((f) => f.path === 'bootloader/es_boot_config.h').content, /#error "Bootloader imzası açık ama açık anahtar yok/);
+    const simg = eb.signImage(img, key.pem).bytes;
+    assert.ok(eb.verifySig(simg, key.pub) && !eb.verifySig(img, key.pub) && !eb.verifySig(simg, eb.generateKey().pub));
+    assert.deepStrictEqual((({ present, keyId }) => [present, keyId])(eb.checkImage(simg).sig), [true, key.keyId]);
+    const tam = Buffer.from(simg); tam[eb.REGION + 50] ^= 1;
+    assert.ok(!eb.verifySig(tam, key.pub), 'değiştirilen imaj');
+    assert.strictEqual(eb.loadPrivateKey(key.pem).keyId, key.keyId);
+    const rsa = require('crypto').generateKeyPairSync('rsa', { modulusLength: 1024 }).privateKey.export({ type: 'pkcs8', format: 'pem' });
+    assert.throws(() => eb.loadPrivateKey(rsa), /Ed25519 değil/);
+    assert.throws(() => eb.loadPrivateKey('çöp'), /okunamadı/);
+    passed++;
+    console.log('  ✓ İmza ve A/B (ES-304): 15 işlemcide A/B bölünmesi, imzalı yapılandırma (açık anahtar, en düşük sürüm), anahtarsız #error, Ed25519 imzala/doğrula, anahtar içe aktarma');
   }
   const { OpenOcdTarget, freePort } = require('../src/debug/session');
   const port = await freePort();

@@ -792,7 +792,10 @@ Güncelleme ${b.uart} (TX ${b.tx}, RX ${b.rx}, ${b.baud} baud) üzerinden; uygul
 - RAM'in son 16 baytı bootloader ile ortak; yığın bunun altından başlar.
 - Uygulamadan güncelleme moduna geçmek: \`#include "es_boot.h"\` ve \`es_boot_request_update();\`
 - Karta ilk yükleme: \`<proje>_full.hex\` (bootloader + uygulama). Güncelleme: başlıklı \`<proje>.bin\`.
-`;
+${p.ab ? `- A/B (ES-304): uygulama ana yuvaya bağlanır (${p.slotSize / 1024} KB); güncelleme hazırlık yuvasına (${hx(p.stageBase)}, ${p.stageSize / 1024} KB) yazılır, doğrulanınca ana yuvaya kopyalanır. Uygulama hazırlık yuvasını kullanmamalı.
+` : ''}${b.signing ? `- İmza (ES-304): Ed25519, anahtar ${bl.keyId(b.pubKey) || '(yok)'}. Özel anahtar projede değildir; Programlayıcı güncellemeyi gönderirken imzalar. \`es_ed25519.c\` doğrulama kodudur, değiştirmeyin.
+` : ''}${b.rollback ? `- Geri dönüş koruması: kartta çalışan sürümden (ve ${b.minVersion}'dan) düşük sürüm kabul edilmez; her yayında sürümü artırın.
+` : ''}`;
 }
 
 function agentGuide(design, lib, result, mcu, framework, name, files) {

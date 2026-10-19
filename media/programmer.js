@@ -120,13 +120,22 @@
       h('h3', { text: t('Embedded Studio bootloader') }),
       b ? h('div', { class: `pg-result ${b.app === 0 ? 'ok' : 'diff'}`, id: 'pg-es-info' },
         h('div', { text: t('Bootloader v{0} · yuva {1} ({2} KB)', b.version, hex(b.slotBase), b.slotSize / 1024) }),
-        h('div', { id: 'pg-es-app', text: t('Uygulama: {0}', b.appText) + (b.header ? ` · v${b.header.version} · ${b.header.buildId} · ${b.header.size} B` : '') })) : null,
+        h('div', { id: 'pg-es-app', text: t('Uygulama: {0}', b.appText) + (b.header ? ` · v${b.header.version} · ${b.header.buildId} · ${b.header.size} B` : '') }),
+        // ES-304: güvenlik ayarları cihazdan (INFO)
+        b.protocol >= 2 ? h('div', { id: 'pg-es-sec', text: [
+          b.ab ? t('A/B: hazırlık yuvası {0} ({1} KB)', hex(b.stageBase), b.stageSize / 1024) : t('Tek yuva'),
+          b.signed ? t('Ed25519 imzası gerekli (anahtar {0})', b.keyId) : t('imza denetimi yok'),
+          b.rollback ? t('en düşük sürüm v{0}', b.floorText) : t('geri dönüş koruması kapalı')
+        ].join(' · ') }) : null,
+        b.stage && b.stage.header && b.stage.header.present ? h('div', { id: 'pg-es-stage', text: t('Hazırlık yuvası: v{0} · {1}{2}', b.stage.header.version, b.stage.statusText, b.stage.done ? ' · ' + t('işlendi') : '') }) : null) : null,
       on ? null : h('p', { class: 'dbg-msg error', text: t('Bu projede bootloader kapalı (Proje Ayarları > Bootloader). Karttaki bootloader başka bir projeden olabilir.') }),
       h('ol', { class: 'pg-steps', id: 'pg-steps' },
         h('li', { text: t('Bootloader ile uygulama birlikte bir kez SWD ile yüklenir (Yükle düğmesi _full.hex yazar).') }),
         h('li', { text: t('Güncelleme modu: açılış penceresinde (kartı resetleyin), uygulama es_boot_request_update() çağırınca ya da geçerli imaj yokken.') }),
         h('li', { text: t('"Dosya seç ve yaz" başlıklı uygulama imajını (<proje>.bin / .hex / .elf) gönderir; "Sonra çalıştır" bootloader\'ı yeniden başlatır.') }),
-        h('li', { text: t('Güncelleme yarıda kalırsa imaj commit almaz: bootloader uygulamayı çalıştırmaz, yeni güncelleme bekler.') })));
+        b && b.signed ? h('li', { text: t('Cihaz imzalı imaj istiyor: imzasız dosya, bu makinedeki özel anahtarla gönderilmeden önce imzalanır.') }) : null,
+        b && b.ab ? h('li', { text: t('A/B: yeni imaj önce hazırlık yuvasına yazılır; ancak doğrulandıktan sonra ana yuvaya kopyalanır. Kopyalama kesilirse bootloader açılışta tamamlar.') })
+          : h('li', { text: t('Güncelleme yarıda kalırsa imaj commit almaz: bootloader uygulamayı çalıştırmaz, yeni güncelleme bekler.') })));
   }
 
   function renderBoot() {

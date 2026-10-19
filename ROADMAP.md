@@ -306,17 +306,18 @@ Projeye eklenebilir, kendi bootloader'ını yazmak isteyene temel olacak bir şa
 ### ES-304 · İmza doğrulama, A/B slot ve geri dönüş koruması
 `etiketler: tip:özellik, alan:bootloader, öncelik:orta, seviye:profesyonel`
 
-- [ ] İmza doğrulama (ECDSA P-256 veya Ed25519); açık anahtar bootloader'a gömülü
-- [ ] A/B slot: yeni imaj doğrulanmadan eskisi silinmesin
-- [ ] Sürüm sayacı ile rollback koruması
-- [ ] RDP/WRP ile bootloader bölgesinin korunması önerisi
-- [ ] İsteğe bağlı: MCUboot ile uyumluluk değerlendirmesi
+- [x] İmza doğrulama (ECDSA P-256 veya Ed25519); açık anahtar bootloader'a gömülü — Ed25519 (0.6.5)
+- [x] A/B slot: yeni imaj doğrulanmadan eskisi silinmesin — hazırlık yuvası + doğrulanınca kopyalama, kesintide açılışta tamamlama
+- [x] Sürüm sayacı ile rollback koruması — ana yuvadaki sürüm ve gömülü en düşük sürüm
+- [x] RDP/WRP ile bootloader bölgesinin korunması önerisi
+- [x] İsteğe bağlı: MCUboot ile uyumluluk değerlendirmesi — overwrite-only + downgrade prevention'a denk; biçim/protokol farklı (CHANGELOG 0.6.5)
+- [ ] Swap kipi: eski imajı saklayıp yeni imaj onaylanmazsa (deneme açılışı) geri dönme
 
 ### ES-305 · İmaj paketleme ve imzalama aracı
 `etiketler: tip:özellik, alan:bootloader, öncelik:orta, seviye:profesyonel`
 
 - [ ] Derleme sonrası `.bin` dosyasına başlık ve CRC32 ekleme
-- [ ] Anahtar üretme ve imzalama (özel anahtar yalnızca kullanıcının makinesinde)
+- [ ] Anahtar üretme ve imzalama (özel anahtar yalnızca kullanıcının makinesinde) — kısmen: ES-304'te anahtar üretme / içe-dışa aktarma ve Programlayıcı'da gönderirken imzalama var; derleme sonrası imzalı `.bin` / `_full.hex` üretimi yok
 - [ ] Eklenti içinden bootloader'a güncelleme gönderme (ES-303 protokolü)
 
 ---

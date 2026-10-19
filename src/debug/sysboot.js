@@ -53,9 +53,17 @@ class ByteQueue {
         this.waiter = null;
         reject(Object.assign(new Error(t('Bootloader yanıt vermedi ({0} ms).', ms)), { timeout: true }));
       }, ms) : null;
-      this.waiter = { n, resolve, timer };
+      this.waiter = { n, resolve, reject, timer };
       this.check();
     });
+  }
+  /** Bekleyen okumayı hatayla bitirir (bağlantı koptu) */
+  fail(err) {
+    const w = this.waiter;
+    if (!w) return;
+    this.waiter = null;
+    clearTimeout(w.timer);
+    w.reject(err);
   }
   clear() { this.buf = Buffer.alloc(0); }
 }
