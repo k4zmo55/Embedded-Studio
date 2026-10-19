@@ -14,10 +14,11 @@
  * arayüz için her komponent pininin seçenekleri choices'ta: pin, sinyal, çevre birimi, kim kullanıyor, devre dışı nedeni.
  */
 const { t } = require('../i18n');
+const { checkLabels } = require('./labels');
 
 /**
  * @typedef {{ id: string, componentId: string, label: string, options?: { address?: string, periph?: string } }} Instance
- * @typedef {{ mcuId: string, rtos: boolean, instances: Instance[], locks?: Record<string, string> }} Design
+ * @typedef {{ mcuId: string, rtos: boolean, instances: Instance[], locks?: Record<string, string>, pinLabels?: Record<string, string> }} Design
  * @typedef {{ instId: string, compPin: string, mcuPin: string, signal: string, af?: number,
  *             peripheral?: string, kind: string, locked: boolean }} Connection
  */
@@ -407,7 +408,11 @@ function assign(design, lib) {
     }
   }
 
-  return { connections, peripherals, messages, addresses, power, options, choices, lockIssues, pinUsage: Object.fromEntries(used) };
+  // ---- 7) ES-1003: pin etiketleri (geçersizler kodda kullanılmaz, notlarda nedeni) ----
+  const { labels: pinLabels, issues: labelIssues } = checkLabels(design.pinLabels, mcu, connections, design.instances);
+  for (const [pin, text] of Object.entries(labelIssues)) msg('warn', t('{0} etiketi kullanılmıyor: {1}', pin, text));
+
+  return { connections, peripherals, messages, addresses, power, options, choices, lockIssues, pinLabels, labelIssues, pinUsage: Object.fromEntries(used) };
 
   /**
    * Bu komponent pininin bus grubunu bir çevre birimine bağlayan şey (bu pinin kendi kilidi hariç): seçilen örnek

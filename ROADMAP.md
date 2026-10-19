@@ -625,11 +625,11 @@ Pinout görünümü için işlemci tanımlarında paket ve bütün fiziksel pinl
 
 CubeMX'teki "Enter User Label" karşılığı: kullanıcı bir pine ad verir (ör. PA12 → `Pin_Led`), ad tasarımda her yerde görünür.
 
-- [ ] Tasarım dosyasında pin → etiket eşlemesi; geçerli C tanımlayıcısı ve benzersizlik denetimi
-- [ ] Design şemasında MCU pininde ve bağlantı tablolarında etiket (pin adı ipucunda kalır)
-- [ ] Şemada MCU pinine sağ tık → "Etiket gir / kaldır"
-- [ ] Kod üretimi: CubeMX ile aynı biçimde `Pin_Led_Pin` / `Pin_Led_GPIO_Port` tanımları (main.h); bare-metal'de ayrı başlık
-- [ ] İşlemci değişince etiketlerin taşınması ya da uyarı; birim ve arayüz testleri
+- [x] Tasarım dosyasında pin → etiket eşlemesi; geçerli C tanımlayıcısı ve benzersizlik denetimi
+- [x] Design şemasında MCU pininde ve bağlantı tablolarında etiket (pin adı ipucunda kalır)
+- [x] Şemada MCU pinine sağ tık → "Etiket gir / kaldır"
+- [x] Kod üretimi: CubeMX ile aynı biçimde `Pin_Led_Pin` / `Pin_Led_GPIO_Port` tanımları (main.h); bare-metal'de ayrı başlık — iki altyapıda da `board.h` (bu projede main.h yerine ortak başlık)
+- [x] İşlemci değişince etiketlerin taşınması ya da uyarı; birim ve arayüz testleri
 
 ### ES-1004 · Pinout görünümü: işlemci paketinin çizimi
 `etiketler: tip:özellik, alan:pinout, öncelik:yüksek, seviye:hepsi`

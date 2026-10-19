@@ -197,9 +197,11 @@
   const periphsOf = (type) => Object.entries(state.lib.mcus[state.design.mcuId].peripherals || {}).filter(([, v]) => v.type === type).map(([k]) => k);
 
   /** Seçenek metni: "PB10 · I2C2_SCL · BME280_1.SCL — neden" */
+  /** ES-1003: "PA12 [Pin_Led]" */
+  const pinText = (pin) => { const l = (state.design.pinLabels || {})[pin]; return l ? `${pin} [${l}]` : pin; };
   function choiceText(ch) {
     const sig = /^GPIO_/.test(ch.signal) ? '' : ` · ${ch.signal}`;
-    return `${ch.pin}${sig}${ch.user ? ` · ${ch.user}` : ''}${ch.conflict ? ' ⚠' : ''}${ch.disabled ? ` — ${ch.reason}` : ''}`;
+    return `${pinText(ch.pin)}${sig}${ch.user ? ` · ${ch.user}` : ''}${ch.conflict ? ' ⚠' : ''}${ch.disabled ? ` — ${ch.reason}` : ''}`;
   }
 
   /**
@@ -279,7 +281,7 @@
           } else setPin(pin);
         }
       },
-      h('option', { value: 'auto', text: conn ? t('Otomatik ({0})', conn.mcuPin) : t('Otomatik') }),
+      h('option', { value: 'auto', text: conn ? t('Otomatik ({0})', pinText(conn.mcuPin)) : t('Otomatik') }),
       ...[...groups].sort(([a], [b]) => (a === t('Kullanımda')) - (b === t('Kullanımda')) || a.localeCompare(b, 'en', { numeric: true })).map(([g, chs]) => (groups.size > 1 || list[0]?.periph ? h('optgroup', { label: g }, ...chs.map(opt)) : chs.map(opt))).flat());
       const issue = !staged && locked ? issues[key] : null;
       return h('tr', { class: issue ? 'lock-bad' : '' },
@@ -461,6 +463,69 @@
       '-',
       { label: ui.rightPanel ? t('Bağlantılar panelini gizle') : t('Bağlantılar panelini göster'), icon: 'panel', action: () => setRightPanel(!ui.rightPanel) }
     ]);
+  }
+
+  /** ES-1003: MCU pinine sağ tık: etiket gir / değiştir / kaldır */
+  function pinMenu(x, y, pin) {
+    const lbl = (state.design.pinLabels || {})[pin];
+    const mcu = state.lib.mcus[state.design.mcuId];
+    contextMenu(x, y, [
+      { label: lbl ? t('Etiketi değiştir ({0})…', lbl) : t('{0} için etiket gir…', pin), icon: 'edit', action: () => labelDialog(pin) },
+      { label: t('Etiketi kaldır'), icon: 'trash', disabled: !lbl, action: () => setLabel(pin, '') },
+      '-',
+      { label: t('{0} datasheet', mcu.name), icon: 'pdf', action: () => post({ type: 'datasheet', componentId: '@mcu' }) }
+    ]);
+  }
+
+  function setLabel(pin, label) {
+    const next = { ...(state.design.pinLabels || {}) };
+    if (label) next[pin] = label; else delete next[pin];
+    state.design.pinLabels = next;
+    update();
+  }
+
+  // Motorla aynı kurallar (src/engine/labels.js); son karar eklentide, burada yazarken uyarmak için
+  const C_WORDS = new Set('auto break case char const continue default do double else enum extern float for goto if inline int long register restrict return short signed sizeof static struct switch typedef union unsigned void volatile while bool true false NULL'.split(' '));
+  function labelProblem(pin, v) {
+    if (!v) return '';
+    if (v.length > 40) return t('Etiket en fazla {0} karakter olabilir.', 40);
+    if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(v)) return t('Etiket harf ya da _ ile başlamalı; yalnızca harf, rakam ve _ içerebilir (C tanımlayıcısı).');
+    if (C_WORDS.has(v)) return t('"{0}" C anahtar kelimesi; etiket olamaz.', v);
+    if (/^__/.test(v) || /^_[A-Z]/.test(v)) return t('"{0}" C derleyicisine ayrılmış ad biçiminde (__ ya da _ + büyük harf).', v);
+    const other = Object.entries(state.design.pinLabels || {}).find(([p, l]) => p !== pin && l === v);
+    if (other) return t('"{0}" etiketi {1} pininde de var; etiketler benzersiz olmalı.', v, other[0]);
+    return '';
+  }
+
+  function labelDialog(pin) {
+    const cur = (state.design.pinLabels || {})[pin] || '';
+    const err = h('div', { class: 'dbg-msg error', id: 'label-err', hidden: true });
+    const input = h('input', {
+      id: 'label-input', type: 'text', class: 'mono', value: cur, placeholder: 'Pin_Led', maxlength: 40, spellcheck: false,
+      oninput: () => { const e = labelProblem(pin, input.value.trim()); err.textContent = e; err.hidden = !e; },
+      onkeydown: (e) => { if (e.key === 'Enter') document.querySelector('#label-save').click(); }
+    });
+    modal({
+      title: t('{0} · Etiket', pin),
+      width: 420,
+      body: h('div', {},
+        h('label', { for: 'label-input', class: 'hint', text: t('Kodda {0}_Pin ve {0}_GPIO_Port olarak üretilir (board.h). Boş bırakmak etiketi kaldırır.', input.value || '<etiket>') }),
+        input, err),
+      buttons: [
+        { label: t('Kapat') },
+        {
+          label: t('Kaydet'), primary: true, id: 'label-save',
+          action: () => {
+            const v = input.value.trim();
+            const e = labelProblem(pin, v);
+            if (e) { err.textContent = e; err.hidden = false; return false; }
+            setLabel(pin, v);
+            return undefined;
+          }
+        }
+      ]
+    });
+    setTimeout(() => { input.focus(); input.select(); }, 0);
   }
 
   function mcuMenu(x, y) {
@@ -655,17 +720,28 @@
     s('text', { class: 'sym-title', x: 0, y: -26, text: 'U1' }),
     s('text', { class: 'sym-sub', x: 0, y: -12, text: `${L.mcu.name} · ${L.mcu.board}` }),
     s('rect', { class: 'mcu-body', x: 0, y: 0, width: MW, height: L.MH, rx: 2 }));
+    const labels = state.design.pinLabels || {};
+    const labelIssues = state.result.labelIssues || {};
     for (const [name, p] of Object.entries(L.mpos)) {
       const left = p.side === 'left';
       const edge = left ? 0 : MW;
       const c = sigOf[name];
+      // ES-1003: etiketli pinde ad yerine etiket; pin adı ipucunda
+      const lbl = labels[name];
+      const shown = lbl && lbl.length > 16 ? lbl.slice(0, 15) + '…' : lbl;
+      const tip = [lbl ? `${name} · ${lbl}` : '', labelIssues[name] ? `⚠ ${labelIssues[name]}` : '', p.pin.reserved, p.pin.note, ...p.pin.functions.map((f) => f.signal)].filter(Boolean).join(' · ') || 'GPIO';
+      const onPin = (e) => { e.preventDefault(); e.stopPropagation(); pinMenu(e.clientX, e.clientY, name); };
       mcuG.append(
-        s('line', { class: 'pin-line', x1: edge, y1: p.y, x2: p.x, y2: p.y }),
-        s('text', { class: `pin-name${p.pin.reserved ? ' reserved' : ''}`, x: left ? 6 : MW - 6, y: p.y + 3.5, 'text-anchor': left ? 'start' : 'end', text: name },
-          s('title', { text: [p.pin.reserved, p.pin.note, ...p.pin.functions.map((f) => f.signal)].filter(Boolean).join(' · ') || 'GPIO' })));
+        s('line', { class: 'pin-line', x1: edge, y1: p.y, x2: p.x, y2: p.y, oncontextmenu: onPin }),
+        s('text', {
+          class: `pin-name${p.pin.reserved ? ' reserved' : ''}${lbl ? ' pin-label' : ''}${labelIssues[name] ? ' bad' : ''}`, 'data-pin': name,
+          x: left ? 6 : MW - 6, y: p.y + 3.5, 'text-anchor': left ? 'start' : 'end', text: shown || name, oncontextmenu: onPin
+        }, s('title', { text: tip })));
       const tag = p.pin.reserved || (c ? c.signal : '');
       if (tag) {
-        mcuG.append(s('text', { class: `pin-sig ${c ? `w-${c.kind}` : 'pin-name reserved'}`, x: left ? 42 : MW - 42, y: p.y + 3.5, 'text-anchor': left ? 'start' : 'end', text: tag }));
+        // Etiket uzunsa sinyal adı biraz içeri kayar (10 px mono ≈ 6 px / karakter)
+        const off = Math.max(42, 6 + (shown || name).length * 6.2 + 8);
+        mcuG.append(s('text', { class: `pin-sig ${c ? `w-${c.kind}` : 'pin-name reserved'}`, x: left ? off : MW - off, y: p.y + 3.5, 'text-anchor': left ? 'start' : 'end', text: tag }));
       }
     }
     g.append(mcuG);

@@ -43,6 +43,14 @@
     Object.assign(state.design, draft);
     if (mcuChanged) {
       state.design.locks = {};
+      // ES-1003: yeni işlemcide olan pinlerin etiketleri kalır
+      const pins = new Set(state.lib.mcus[draft.mcuId].pins.map((p) => p.name));
+      const dropped = Object.keys(state.design.pinLabels || {}).filter((p) => !pins.has(p));
+      if (dropped.length) {
+        const old = state.design.pinLabels;
+        state.design.pinLabels = Object.fromEntries(Object.entries(old).filter(([p]) => pins.has(p)));
+        toast('warn', t('Yeni işlemcide olmayan pinlerin etiketleri kaldırıldı: {0}', dropped.map((p) => `${p} (${old[p]})`).join(', ')));
+      }
       delete state.design.clock; // eklenti yeni MCU'nun varsayılan saat ayarını koyar
     }
     update();
@@ -228,7 +236,7 @@
         field('set-boot-baud', 'Baud', h('select', { id: 'set-boot-baud', onchange: (e) => set((x) => { x.baud = Number(e.target.value); }) },
           ...[9600, 19200, 38400, 57600, 115200, 230400, 460800].map((v) => h('option', { value: v, selected: v === Number(b.baud || 115200), text: String(v) })))),
         field('set-boot-wait', t('Açılış penceresi (ms)'), h('input', { id: 'set-boot-wait', type: 'number', min: 0, max: 5000, step: 50, value: b.waitMs ?? 300, title: t('Açılışta bu süre UART dinlenir; paket gelirse güncelleme moduna geçilir. 0: yalnızca uygulama isteyince ya da imaj geçersizse.'), onchange: (e) => set((x) => { x.waitMs = Number(e.target.value); }) })),
-        field('set-boot-version', t('Uygulama sürümü'), h('input', { id: 'set-boot-version', class: 'mono', value: b.version || '1.0.0', placeholder: '1.0.0', onchange: (e) => set((x) => { x.version = e.target.value.trim(); }) })),
+        field('set-boot-version', t('Uygulama sürümü'), h('input', { id: 'set-boot-version', type: 'text', class: 'mono', value: b.version || '1.0.0', placeholder: '1.0.0', onchange: (e) => set((x) => { x.version = e.target.value.trim(); }) })),
         h('label', { class: 'check' }, h('input', { type: 'checkbox', id: 'set-boot-hwcrc', checked: b.hwCrc !== false, onchange: (e) => set((x) => { x.hwCrc = e.target.checked; }) }), h('span', { text: t('Donanım CRC birimi (F1/F4 dışında)') }))) : null,
       // ES-304: güvenli güncelleme
       b.enabled ? h('h4', { text: t('Güvenli güncelleme') }) : null,
@@ -236,7 +244,7 @@
         field('set-boot-layout', t('Yuva düzeni'), h('select', { id: 'set-boot-layout', title: ab ? '' : t('Flash bu bootloader boyutuyla ikiye bölünemiyor.'), onchange: (e) => set((x) => { x.layout = e.target.value; }) },
           h('option', { value: 'single', selected: !isAb, text: t('Tek yuva') }),
           h('option', { value: 'ab', selected: isAb, disabled: !ab, text: ab ? t('A/B: {0} + {1} KB', ab.primary / 1024, ab.stage / 1024) : t('A/B (bu boyutta bölünemiyor)') }))),
-        field('set-boot-minver', t('En düşük sürüm'), h('input', { id: 'set-boot-minver', class: 'mono', value: b.minVersion || '0.0.0', placeholder: '0.0.0', disabled: b.rollback === false, title: t('Bundan düşük sürümler hiçbir zaman kabul edilmez (bootloader\'a gömülür).'), onchange: (e) => set((x) => { x.minVersion = e.target.value.trim(); }) })),
+        field('set-boot-minver', t('En düşük sürüm'), h('input', { id: 'set-boot-minver', type: 'text', class: 'mono', value: b.minVersion || '0.0.0', placeholder: '0.0.0', disabled: b.rollback === false, title: t('Bundan düşük sürümler hiçbir zaman kabul edilmez (bootloader\'a gömülür).'), onchange: (e) => set((x) => { x.minVersion = e.target.value.trim(); }) })),
         h('label', { class: 'check' }, h('input', { type: 'checkbox', id: 'set-boot-sign', checked: !!b.signing, onchange: (e) => { set((x) => { x.signing = e.target.checked; }); if (e.target.checked && !b.pubKey) post({ type: 'boot.keygen' }); } }), h('span', { text: t('İmza doğrulama (Ed25519)') })),
         h('label', { class: 'check' }, h('input', { type: 'checkbox', id: 'set-boot-rollback', checked: b.rollback !== false, onchange: (e) => set((x) => { x.rollback = e.target.checked; }) }), h('span', { text: t('Geri dönüş koruması (eski sürümü reddet)') }))) : null,
       b.enabled ? key : null,

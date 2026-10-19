@@ -78,7 +78,9 @@ function designFingerprint(design, generatorVersion) {
     locks: design.locks || {},
     build: normalizeBuild(design.build), // derleme ayarları cmake/embedded-studio.cmake'i değiştirir
     regDrivers: design.regDrivers || [],
-    boot: design.boot && design.boot.enabled ? design.boot : null // ES-303
+    boot: design.boot && design.boot.enabled ? design.boot : null, // ES-303
+    // ES-1003: etiketler board.h'ı değiştirir (etiketsiz projelerin parmak izi aynı kalır)
+    pinLabels: design.pinLabels && Object.keys(design.pinLabels).length ? design.pinLabels : undefined
   };
   return sha1(JSON.stringify(relevant));
 }

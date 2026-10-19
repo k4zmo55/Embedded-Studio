@@ -342,6 +342,8 @@ function migrate(design, lib) {
   d.project = d.project || { name: 'embedded_app' };
   d.instances = d.instances || [];
   d.locks = d.locks || {};
+  // ES-1003: pin etiketleri { PA12: 'Pin_Led' }
+  d.pinLabels = Object.fromEntries(Object.entries(d.pinLabels && typeof d.pinLabels === 'object' ? d.pinLabels : {}).filter(([k, v]) => /^P[A-K]\d{1,2}$/.test(k) && typeof v === 'string' && v.trim()).map(([k, v]) => [k, v.trim()]));
   d.build = cm.normalizeBuild(d.build);
   d.regDrivers = Array.isArray(d.regDrivers) ? d.regDrivers.filter((x) => typeof x === 'string') : [];
   if (!lib.mcus[d.mcuId]) d.mcuId = lib.mcus.stm32f411ceu6 ? 'stm32f411ceu6' : Object.keys(lib.mcus)[0];

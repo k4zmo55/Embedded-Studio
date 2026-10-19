@@ -20,6 +20,31 @@ let passed = 0;
 const test = (name, fn) => { fn(); passed++; console.log('  ✓ ' + name); };
 
 console.log('Pin atama');
+test('pin etiketleri (ES-1003): C tanımlayıcısı, benzersizlik, üretilen adlarla çakışma, board.h tanımları, işlemci değişimi', () => {
+  const lb = require('../src/engine/labels');
+  assert.strictEqual(lb.formatError('Pin_Led'), '');
+  for (const bad of ['1abc', 'Pin-Led', 'if', '__x', '_Reserved', 'a'.repeat(41), '']) assert.ok(lb.formatError(bad), bad);
+  const d = design([inst('led')], { pinLabels: { PA12: 'Pin_Led', PA11: 'Pin_Led', PB0: 'LED_1_A', PC13: 'Btn', PZ9: 'Yok' } });
+  const r = assign(d, lib);
+  assert.deepStrictEqual(r.pinLabels, { PA12: 'Pin_Led', PC13: 'Btn' });
+  assert.deepStrictEqual(Object.keys(r.labelIssues).sort(), ['PA11', 'PB0', 'PZ9']);
+  assert.match(r.labelIssues.PA11, /PA12 pininde de var/);
+  assert.match(r.labelIssues.PB0, /üretilen adla çakışıyor/);
+  assert.ok(r.messages.some((m) => /PB0 etiketi kullanılmıyor/.test(m.text)));
+  for (const fw of ['hal', 'register']) {
+    const dd = { ...d, framework: fw };
+    const board = generate(dd, lib, assign(dd, lib), computeClock(mcu, undefined), {}).files.find((f) => /board\.h$/.test(f.path)).content;
+    assert.match(board, fw === 'hal' ? /#define Pin_Led_Pin GPIO_PIN_12\n#define Pin_Led_GPIO_Port GPIOA\n#define Btn_Pin GPIO_PIN_13\n#define Btn_GPIO_Port GPIOC/
+      : /#define Pin_Led_Pin \(1U << 12\)\n#define Pin_Led_GPIO_Port GPIOA/);
+    assert.ok(!/LED_1_A_Pin GPIO_PIN|Yok_Pin|PA11/.test(board.slice(board.indexOf('Pin etiketleri'))), fw);
+  }
+  assert.ok(!/Pin etiketleri/.test(generate(design([inst('led')]), lib, assign(design([inst('led')]), lib), computeClock(mcu, undefined), {}).files.find((f) => /board\.h$/.test(f.path)).content));
+  assert.deepStrictEqual(lb.carryLabels({ PA12: 'A', PG3: 'B' }, mcu), { kept: { PA12: 'A' }, dropped: { PG3: 'B' } });
+  // Etiket değişince kod güncel sayılmaz; etiketsiz tasarımın parmak izi eskisiyle aynı
+  const base = design([inst('led')]);
+  assert.notStrictEqual(designFingerprint({ ...base, pinLabels: { PA12: 'A' } }, 1), designFingerprint(base, 1));
+  assert.strictEqual(designFingerprint({ ...base, pinLabels: {} }, 1), designFingerprint(base, 1));
+});
 test('alternatif pin seçimi (ES-1001): çevre birimine göre seçenekler, grup süzme, örnek seçimi, çakışmada taşıma, kilit sorunları', () => {
   const two = (extra) => design([inst('bme280'), inst('led')], extra);
   // Seçenekte sinyal ve çevre birimi; kilit yokken her I2C örneği seçilebilir

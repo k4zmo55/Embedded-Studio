@@ -1478,5 +1478,19 @@
   "Sabitlenmiş pin yok: bütün pinleri asistan atıyor. Bağlantılar tablosunda bir pin seçmek onu sabitler.": "No pinned pins: the assistant assigns every pin. Choosing a pin in the connections table pins it.",
   "Hepsini kaldır": "Remove all",
   "{0} sabit pin kaldırıldı.": "{0} pinned pins removed.",
-  "oto": "auto"
+  "oto": "auto",
+  "Etiket boş.": "The label is empty.",
+  "Etiket en fazla {0} karakter olabilir.": "A label can be at most {0} characters.",
+  "Etiket harf ya da _ ile başlamalı; yalnızca harf, rakam ve _ içerebilir (C tanımlayıcısı).": "A label must start with a letter or _ and contain only letters, digits and _ (a C identifier).",
+  "\"{0}\" C anahtar kelimesi; etiket olamaz.": "\"{0}\" is a C keyword and cannot be a label.",
+  "\"{0}\" C derleyicisine ayrılmış ad biçiminde (__ ya da _ + büyük harf).": "\"{0}\" has the form of a name reserved for the C compiler (__ or _ + uppercase).",
+  "\"{0}\" bir komponent pini için üretilen adla çakışıyor.": "\"{0}\" clashes with a name generated for a component pin.",
+  "\"{0}\" etiketi {1} pininde de var; etiketler benzersiz olmalı.": "The label \"{0}\" is also on {1}; labels must be unique.",
+  "{0} etiketi kullanılmıyor: {1}": "Label on {0} is not used: {1}",
+  "Etiketi değiştir ({0})…": "Change label ({0})…",
+  "{0} için etiket gir…": "Enter label for {0}…",
+  "Etiketi kaldır": "Remove label",
+  "{0} · Etiket": "{0} · Label",
+  "Kodda {0}_Pin ve {0}_GPIO_Port olarak üretilir (board.h). Boş bırakmak etiketi kaldırır.": "Generated in code as {0}_Pin and {0}_GPIO_Port (board.h). Leaving it empty removes the label.",
+  "Yeni işlemcide olmayan pinlerin etiketleri kaldırıldı: {0}": "Labels on pins that the new MCU does not have were removed: {0}"
 }

@@ -655,6 +655,46 @@ async function until(fn, ms = 8000, what = 'koşul') {
     await cdp.click(`([...document.querySelectorAll('.lib-item')].find((e) => e.querySelector('.name').textContent === 'MPU-6050'))`);
     await until(() => design().instances.some((i) => i.componentId === 'mpu6050'), 3000, 'geri ekleme');
   });
+  await step('Pin etiketleri (ES-1003): MCU pinine sağ tık → etiket gir, doğrulama, şemada ve tabloda etiket, board.h tanımları, kaldır', async () => {
+    const board = () => fs.readFileSync(path.join(PROJECT, 'Core/Inc/board.h'), 'utf8');
+    const pinText = (pin) => `document.querySelector('#schematic .mcu text[data-pin="${pin}"]')`;
+    const openLabel = async (pin) => {
+      await cdp.click(`(${pinText(pin)})`, 'right');
+      await until(() => cdp.eval(`[...document.querySelectorAll('.ctx-item')].some((e) => e.textContent.includes('etiket'))`), 3000, 'pin menüsü');
+      await cdp.click(`([...document.querySelectorAll('.ctx-item')].find((e) => /etiket gir|Etiketi değiştir/.test(e.textContent)))`);
+      await until(() => cdp.eval(`!!document.querySelector('#label-input')`), 3000, 'etiket penceresi');
+    };
+    const type = (v) => cdp.eval(`(() => { const i = document.querySelector('#label-input'); i.value = '${v}'; i.dispatchEvent(new Event('input')); })()`);
+    await openLabel('PA12');
+    await type('1-Led');
+    assert.match(await cdp.eval(`document.querySelector('#label-err').textContent`), /C tanımlayıcısı/);
+    await cdp.click('#label-save');
+    await sleep(300);
+    assert.ok(await cdp.eval(`!!document.querySelector('#label-input')`), 'geçersiz etiket kaydedilmez');
+    await type('Pin_Led');
+    await cdp.shot('05e-etiket-gir');
+    await cdp.click('#label-save');
+    await until(() => (design().pinLabels || {}).PA12 === 'Pin_Led', 4000, 'etiket kaydı');
+    await until(() => cdp.eval(`${pinText('PA12')}.firstChild.textContent === 'Pin_Led'`), 3000, 'şemada etiket');
+    assert.ok(await cdp.eval(`${pinText('PA12')}.querySelector('title').textContent.startsWith('PA12 · Pin_Led')`), 'pin adı ipucunda');
+    // Aynı etiket başka pine verilemez
+    await openLabel('PA11');
+    await type('Pin_Led');
+    assert.match(await cdp.eval(`document.querySelector('#label-err').textContent`), /PA12 pininde de var/);
+    await cdp.click(`([...document.querySelectorAll('.modal-foot button')].find((b) => b.textContent === 'Kapat'))`);
+    await sleep(300);
+    await cdp.shot('05f-etiket-semada');
+    // Kod: board.h'ta CubeMX biçimi
+    await cdp.click('#generate');
+    await until(() => /#define Pin_Led_Pin GPIO_PIN_12\n#define Pin_Led_GPIO_Port GPIOA/.test(board()), 20000, 'board.h etiket');
+    // Kaldır
+    await cdp.click(`(${pinText('PA12')})`, 'right');
+    await cdp.click(`([...document.querySelectorAll('.ctx-item')].find((e) => e.textContent.includes('Etiketi kaldır')))`);
+    await until(() => !(design().pinLabels || {}).PA12, 4000, 'etiket kaldırıldı');
+    await until(() => cdp.eval(`${pinText('PA12')}.firstChild.textContent === 'PA12'`), 3000, 'şemada pin adı');
+    await cdp.click('#generate');
+    await until(() => !board().includes('Pin_Led'), 20000, 'board.h temizlendi');
+  });
   await step('Monitör: canlı veri, 3B IMU, GPS, gösterge, task tablosu', async () => {
     scene('monitor');
     await cdp.click('#tab-monitor');

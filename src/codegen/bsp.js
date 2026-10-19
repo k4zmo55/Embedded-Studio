@@ -90,6 +90,9 @@ function boardHeader(x, design, result, framework, stamp) {
     pinDefs.push(`#define ${name}_Port GPIO${c.mcuPin[1]}\n#define ${name}_Pin  (1U << ${Number(c.mcuPin.slice(2))})`);
   }
   const addrDefs = design.instances.filter((i) => result.addresses[i.id]).map((i) => `#define ${cIdent(i.label)}_ADDR ${result.addresses[i.id]}`);
+  // ES-1003: kullanıcı pin etiketleri (CubeMX biçimi)
+  const labelDefs = Object.entries(result.pinLabels || {}).sort(([a], [b]) => a.localeCompare(b, 'en', { numeric: true }))
+    .map(([pin, l]) => `#define ${l}_Pin ${framework === 'hal' ? `GPIO_PIN_${Number(pin.slice(2))}` : `(1U << ${Number(pin.slice(2))})`}\n#define ${l}_GPIO_Port GPIO${pin[1]}`);
   return `${stamp}#ifndef BOARD_H
 #define BOARD_H
 
@@ -105,7 +108,10 @@ function boardHeader(x, design, result, framework, stamp) {
 /* ---- Pin atamaları ---- */
 ${pinDefs.join('\n') || '/* yok */'}
 
-/* ---- I2C adresleri (7-bit) ---- */
+${labelDefs.length ? `/* ---- Pin etiketleri (Pinout > Etiket gir; CubeMX'teki User Label) ---- */
+${labelDefs.join('\n')}
+
+` : ''}/* ---- I2C adresleri (7-bit) ---- */
 ${addrDefs.join('\n') || '/* yok */'}
 
 void Board_Init(void);

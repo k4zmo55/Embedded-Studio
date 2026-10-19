@@ -213,6 +213,9 @@ table.pins td:first-child { width: 52px; font-family: var(--mono); }
 table.pins td:last-child { font-family: var(--mono); font-size: 11px; text-align: right; white-space: nowrap; }
 table.pins select { width: 100%; font-size: 12px; padding: 1px 2px; }
 .lock { color: var(--warn); }
+.mcu .pin-name.pin-label { fill: var(--accent); font-weight: 600; }
+.mcu .pin-name.bad { fill: var(--warn); text-decoration: underline dotted; }
+#label-input { width: 100%; margin: 8px 0; }
 button.lock { background: none; border: 0; padding: 0; cursor: pointer; font: inherit; }
 button.lock:hover { color: var(--err, #f14c4c); }
 tr.lock-bad td { background: color-mix(in srgb, var(--warn) 12%, transparent); }
