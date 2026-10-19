@@ -695,6 +695,60 @@ async function until(fn, ms = 8000, what = 'koşul') {
     await cdp.click('#generate');
     await until(() => !board().includes('Pin_Led'), 20000, 'board.h temizlendi');
   });
+  await step('Pinout görünümü (ES-1004): paket pin pin, renkler, sinyal / etiket, sabit pin, bilgi kartı, arama, döndür, yakınlaştır', async () => {
+    // Bir GPIO bağlantısı sabitlenir, PA12'ye etiket verilir
+    const g = await cdp.eval(`(() => { const c = ES.state.result.connections.find((x) => x.kind === 'gpio'); const i = ES.state.design.instances.find((x) => x.id === c.instId); return { key: c.instId + '.' + c.compPin, pin: c.mcuPin, use: i.label + '.' + c.compPin }; })()`);
+    await cdp.eval(`(() => { ES.state.design.pinLabels = { PA12: 'Pin_Led' }; ES.state.design.locks = { '${g.key}': '${g.pin}' }; ES.update(); })()`);
+    await until(() => design().locks[g.key] === g.pin, 4000, 'kilit');
+    await cdp.click('#tab-pinout');
+    const pad = (pin) => `document.querySelector('#po-svg .po-pad[data-pin="${pin}"]')`;
+    await until(() => cdp.eval(`document.querySelectorAll('#po-svg .po-pad').length === 48`), 5000, '48 ped');
+    assert.strictEqual(await cdp.eval(`document.querySelector('#po-title').textContent`), 'STM32F411CEU6 · UFQFPN48');
+    // Renk sınıfları: atanmış, sistem, besleme, boş; etiket ve sinyal yanında
+    const cls = (pin) => cdp.eval(`[...${pad(pin)}.classList].filter((c) => !['po-pad', 'found'].includes(c)).sort().join(' ')`);
+    assert.strictEqual(await cls(g.pin), 'ok pinned');
+    assert.strictEqual(await cls('PA13'), 'sys');
+    assert.strictEqual(await cls('VDD'), 'power');
+    assert.strictEqual(await cls('PA12'), 'free');
+    assert.strictEqual(await cdp.eval(`${pad('PA12')}.querySelector('.po-sig').textContent`), 'Pin_Led');
+    assert.ok(await cdp.eval(`${pad(g.pin)}.querySelector('.po-sig').textContent.startsWith('${g.use}')`), g.use);
+    assert.ok(await cdp.eval(`!!${pad(g.pin)}.querySelector('.po-pin-mark')`), 'raptiye');
+    // Konum: 1. pin sol kenarın üstünde, 13. alt kenarda
+    const box = (pos) => cdp.eval(`(() => { const r = document.querySelector('#po-svg .po-pad[data-pos="${pos}"] rect'); return [Number(r.getAttribute('x')), Number(r.getAttribute('y')), Number(r.getAttribute('width')), Number(r.getAttribute('height'))]; })()`);
+    const [x1, , w1, h1] = await box('1');
+    assert.ok(x1 < 0 && w1 > h1, 'pin 1 sol kenarda');
+    const [, y13, w13, h13] = await box('13');
+    assert.ok(y13 > 0 && h13 > w13, 'pin 13 alt kenarda');
+    await cdp.shot('06-pinout');
+    // Bilgi kartı: no, ad, tür, kullanım, bütün işlevler
+    await cdp.hover(`(${pad('PB6')}.querySelector('rect'))`);
+    await until(() => cdp.eval(`!!document.querySelector('.popover .po-card')`), 3000, 'bilgi kartı');
+    const cardText = await cdp.eval(`document.querySelector('.popover .po-card').textContent`);
+    assert.ok(/42 · PB6/.test(cardText) && /I2C1_SCL → /.test(cardText) && /USART1_TX AF7/.test(cardText), cardText);
+    await cdp.mouse('mouseMoved', 5, 5);
+    // Arama: bulunan pinler işaretlenir
+    await cdp.eval(`(() => { const i = document.querySelector('#po-search'); i.value = 'USART1_TX'; i.dispatchEvent(new Event('input')); })()`);
+    await until(() => cdp.eval(`document.querySelectorAll('#po-svg .po-pad.found').length === 3`), 3000, 'USART1_TX: PA9, PA15, PB6');
+    assert.match(await cdp.eval(`document.querySelector('#po-found').textContent`), /3 pin bulundu/);
+    await cdp.eval(`(() => { const i = document.querySelector('#po-search'); i.value = 'Pin_Led'; i.dispatchEvent(new Event('input')); })()`);
+    await until(() => cdp.eval(`[...document.querySelectorAll('#po-svg .po-pad.found')].map((p) => p.dataset.pin).join() === 'PA12'`), 3000, 'etiketle arama');
+    await cdp.eval(`(() => { const i = document.querySelector('#po-search'); i.value = ''; i.dispatchEvent(new Event('input')); })()`);
+    // Yakınlaştır / sığdır / döndür
+    const vb = () => cdp.eval(`document.querySelector('#po-svg').getAttribute('viewBox')`);
+    const fit = await vb();
+    await cdp.click('#po-zoom-in');
+    assert.notStrictEqual(await vb(), fit);
+    await cdp.click('#po-fit');
+    assert.strictEqual(await vb(), fit);
+    await cdp.click('#po-rotate');
+    const [xr, yr, wr, hr] = await box('1');
+    assert.ok(yr > 0 && hr > wr && xr >= 0, 'döndürünce pin 1 alt kenarda');
+    await cdp.shot('06b-pinout-dondur');
+    for (let i = 0; i < 3; i++) await cdp.click('#po-rotate');
+    await cdp.eval(`(() => { ES.state.design.pinLabels = {}; ES.state.design.locks = {}; ES.update(); })()`);
+    await until(() => Object.keys(design().locks).length === 0, 4000, 'temizlendi');
+    await cdp.click('#tab-design');
+  });
   await step('Monitör: canlı veri, 3B IMU, GPS, gösterge, task tablosu', async () => {
     scene('monitor');
     await cdp.click('#tab-monitor');
@@ -1342,12 +1396,12 @@ async function until(fn, ms = 8000, what = 'koşul') {
     assert.strictEqual(design().mode, 'beginner', 'sihirbaz varsayılanı Acemi');
     assert.ok(await cdp.eval(`!document.body.classList.contains('mode-pro') && document.querySelector('#mode-badge').textContent === 'Acemi'`));
     const order = () => cdp.eval(`[...document.querySelectorAll('#topbar .tabs button')].filter((b) => !b.hidden).map((b) => b.id.slice(4))`);
-    assert.deepStrictEqual(await order(), ['design', 'clock', 'monitor', 'terminal', 'debug', 'programmer', 'analyzer', 'settings']);
+    assert.deepStrictEqual(await order(), ['design', 'pinout', 'clock', 'monitor', 'terminal', 'debug', 'programmer', 'analyzer', 'settings']);
     await cdp.click('#tab-settings');
     await cdp.click(`(document.querySelector('input[name=set-mode][value=pro]').closest('label'))`);
     await until(() => design().mode === 'pro', 4000, 'pro kaydedildi');
     await until(() => cdp.eval(`document.body.classList.contains('mode-pro') && document.querySelector('#debug').classList.contains('active')`), 3000, 'pro: debug ana sekme');
-    assert.deepStrictEqual(await order(), ['debug', 'programmer', 'terminal', 'analyzer', 'monitor', 'clock', 'design', 'settings']);
+    assert.deepStrictEqual(await order(), ['debug', 'programmer', 'terminal', 'analyzer', 'monitor', 'clock', 'pinout', 'design', 'settings']);
     assert.strictEqual(await cdp.eval(`document.querySelector('#mode-badge').textContent`), 'Profesyonel');
     await cdp.shot('25-pro-mod');
     // Alt+6 → moddaki 6. sekme (Clock)
@@ -1391,17 +1445,17 @@ async function until(fn, ms = 8000, what = 'koşul') {
     await until(() => cdp.eval(`!!document.querySelector('#set-tab-monitor')`), 3000, 'görünen sekmeler bölümü');
     await cdp.click('#set-tab-monitor');
     await until(() => JSON.stringify(settings.hiddenTabs) === '{"beginner":["monitor"]}', 3000, 'ayar kaydedildi');
-    assert.deepStrictEqual(await order(), ['design', 'clock', 'terminal', 'debug', 'programmer', 'analyzer', 'settings']);
-    // Alt+3 artık Terminal (gizli Monitör atlanır)
-    await cdp.send('Input.dispatchKeyEvent', { type: 'keyDown', key: '3', code: 'Digit3', windowsVirtualKeyCode: 51, modifiers: 1 });
-    await cdp.send('Input.dispatchKeyEvent', { type: 'keyUp', key: '3', code: 'Digit3', windowsVirtualKeyCode: 51, modifiers: 1 });
-    await until(() => cdp.eval(`document.querySelector('#terminal').classList.contains('active')`), 3000, 'Alt+3 → Terminal');
+    assert.deepStrictEqual(await order(), ['design', 'pinout', 'clock', 'terminal', 'debug', 'programmer', 'analyzer', 'settings']);
+    // Alt+4 artık Terminal (gizli Monitör atlanır)
+    await cdp.send('Input.dispatchKeyEvent', { type: 'keyDown', key: '4', code: 'Digit4', windowsVirtualKeyCode: 52, modifiers: 1 });
+    await cdp.send('Input.dispatchKeyEvent', { type: 'keyUp', key: '4', code: 'Digit4', windowsVirtualKeyCode: 52, modifiers: 1 });
+    await until(() => cdp.eval(`document.querySelector('#terminal').classList.contains('active')`), 3000, 'Alt+4 → Terminal');
     // Etkin sekme dışarıdan (VS Code ayarı) gizlenirse ana sekmeye, o da gizliyse ilk görünen sekmeye geçilir
     await vscodeFake.workspace.getConfiguration('embeddedStudio').update('hiddenTabs', { beginner: ['monitor', 'terminal', 'design'] });
-    await until(() => cdp.eval(`document.querySelector('#clock').classList.contains('active')`), 3000, 'ilk görünen sekme');
-    assert.deepStrictEqual(await order(), ['clock', 'debug', 'programmer', 'analyzer', 'settings']);
+    await until(() => cdp.eval(`document.querySelector('#pinout').classList.contains('active')`), 3000, 'ilk görünen sekme');
+    assert.deepStrictEqual(await order(), ['pinout', 'clock', 'debug', 'programmer', 'analyzer', 'settings']);
     // Hepsi gizlenemez: en az bir çalışma sekmesi kalır, Ayarlar her zaman görünür
-    await vscodeFake.workspace.getConfiguration('embeddedStudio').update('hiddenTabs', { beginner: ['design', 'clock', 'monitor', 'terminal', 'debug', 'programmer', 'analyzer', 'settings'] });
+    await vscodeFake.workspace.getConfiguration('embeddedStudio').update('hiddenTabs', { beginner: ['design', 'pinout', 'clock', 'monitor', 'terminal', 'debug', 'programmer', 'analyzer', 'settings'] });
     await until(async () => (await order()).length === 2, 3000, 'bir sekme + Ayarlar');
     assert.deepStrictEqual(await order(), ['analyzer', 'settings']);
     await cdp.click('#tab-settings');
@@ -1409,13 +1463,13 @@ async function until(fn, ms = 8000, what = 'koşul') {
     await cdp.shot('27-sekme-gizleme');
     await cdp.click('#set-tabs-reset');
     await until(() => JSON.stringify(settings.hiddenTabs) === '{"beginner":[]}', 3000, 'hepsini göster');
-    assert.deepStrictEqual(await order(), ['design', 'clock', 'monitor', 'terminal', 'debug', 'programmer', 'analyzer', 'settings']);
+    assert.deepStrictEqual(await order(), ['design', 'pinout', 'clock', 'monitor', 'terminal', 'debug', 'programmer', 'analyzer', 'settings']);
     // Kalıcılık: yeniden açılınca ayar eklentiden gelir; mod başına ayrı (pro etkilenmez)
     await vscodeFake.workspace.getConfiguration('embeddedStudio').update('hiddenTabs', { beginner: ['monitor'] });
     await cdp.send('Page.navigate', { url: ORIGIN + '/' });
     await until(() => cdp.eval(`!!document.querySelector('#tab-monitor') && document.querySelector('#tab-monitor').hidden && !document.querySelector('#tab-design').hidden`).catch(() => false), 15000, 'yeniden açılışta gizli');
     await vscodeFake.workspace.getConfiguration('embeddedStudio').update('hiddenTabs', {});
-    await until(async () => (await order()).length === 8, 3000, 'hepsi görünür');
+    await until(async () => (await order()).length === 9, 3000, 'hepsi görünür');
     await cdp.click('#tab-design');
   });
   await step('Başka işlemci (ES-106): Nucleo-G474RE seçilir, saat ağacı M/N/R, kod G4 dosyalarıyla üretilir ve derlenir; F411\'e dönülür', async () => {
@@ -1727,7 +1781,7 @@ async function until(fn, ms = 8000, what = 'koşul') {
       return [...new Set(words)].filter((w) => !userText.includes(w)).map((w) => `${where}: ${w}`);
     };
     const found = [];
-    for (const tab of ['design', 'clock', 'monitor', 'terminal', 'debug', 'programmer', 'analyzer', 'settings']) {
+    for (const tab of ['design', 'pinout', 'clock', 'monitor', 'terminal', 'debug', 'programmer', 'analyzer', 'settings']) {
       await cdp.click(`#tab-${tab}`);
       // Programlayıcı günlüğündeki eski kayıtlar yazıldıkları dilde kalır
       if (tab === 'programmer') await cdp.click('#pg-log-clear');

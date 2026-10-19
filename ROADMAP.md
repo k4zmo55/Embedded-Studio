@@ -636,12 +636,12 @@ CubeMX'teki "Enter User Label" karşılığı: kullanıcı bir pine ad verir (ö
 
 Ortada işlemci (kare), kenarlarında her fiziksel pin küçük bir kutu olarak, adı ve (varsa) atanmış sinyali ya da etiketiyle. ES-1002'deki veriye dayanır.
 
-- [ ] LQFP / QFN için dört kenarda pin numarası sırasıyla yerleşim; BGA için ızgara
-- [ ] Renkler CubeMX'teki gibi: atanmış ve çalışır (yeşil), mod eksik ya da çakışmalı (turuncu/kırmızı), besleme ve özel pinler (sarı/haki), boş (gri); sabitlenmiş pinde raptiye işareti
-- [ ] Pinin yanında atanmış sinyal ya da kullanıcı etiketi
-- [ ] Üzerine gelince kart: pin no, ad, tür, bütün alternatif fonksiyonlar, şu anki kullanım
-- [ ] Yakınlaştır / sığdır / döndür; pin, sinyal ya da etiket arama (bulunan pinler yanıp söner)
-- [ ] Açık / koyu tema, dar pencere; arayüz testi ve ekran görüntüleri
+- [x] LQFP / QFN için dört kenarda pin numarası sırasıyla yerleşim; BGA için ızgara (BGA'lı işlemci henüz yok; ızgara çizimi denenmedi)
+- [x] Renkler CubeMX'teki gibi: atanmış ve çalışır (yeşil), mod eksik ya da çakışmalı (turuncu/kırmızı), besleme ve özel pinler (sarı/haki), boş (gri); sabitlenmiş pinde raptiye işareti
+- [x] Pinin yanında atanmış sinyal ya da kullanıcı etiketi
+- [x] Üzerine gelince kart: pin no, ad, tür, bütün alternatif fonksiyonlar, şu anki kullanım
+- [x] Yakınlaştır / sığdır / döndür; pin, sinyal ya da etiket arama (bulunan pinler yanıp söner)
+- [x] Açık / koyu tema, dar pencere; arayüz testi ve ekran görüntüleri
 
 ### ES-1005 · Pinout görünümü: pine tıklayarak sinyal atama ve sağ tık menüsü
 `etiketler: tip:özellik, alan:pinout, öncelik:yüksek, seviye:hepsi`
