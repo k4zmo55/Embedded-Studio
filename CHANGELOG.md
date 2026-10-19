@@ -1,5 +1,16 @@
 # Değişiklik günlüğü
 
+## 0.6.11 (önizleme)
+
+- **Pinout'ta pine tıklayarak atama (ES-1005):**
+  - **Sol tık:** pinin işlev listesi CubeMX'teki gibi: Reset_State, GPIO_Input / GPIO_Output / GPIO_Analog, bu pine gelebilecek komponent sinyalleri çevre birimine göre gruplu (`I2C1_SCL → BME280_1.SCL`; seçilince Design'daki kilit olur) ve pinin diğer işlevleri (bilgi olarak). GPIO_EXTI kesme ayarlarıyla birlikte ES-1007'de; komponentsiz çevre birimi açmak ES-1006'da.
+  - **Komponentsiz GPIO modları koda girer:** `board.c`'de HAL_GPIO_Init (HAL) ya da `gpio_config` (bare-metal); etiket varsa açıklamada. Bu pinler pin atayıcıda kullanıcınındır: komponentler oraya otomatik atanmaz, kilitli komponent başka pine geçer (nedeni yazar).
+  - **Çakışma:** dolu pine mod verirken ya da komponent sinyali taşırken sorulur ("Diğerini taşı" / "Pinout ayarını kaldır" / Vazgeç).
+  - **Sağ tık:** etiket gir / değiştir, sinyali sabitle / sabitlemeyi kaldır, Sıfırla (Reset_State), bu pine bağlanabilecek çevre birimleri (AF numaralarıyla), alternatif pinleri göster.
+  - **Ctrl + tık:** pindeki komponent sinyalinin gidebileceği boş pinler vurgulanır; birine tıklayınca taşınır (Esc: vazgeç).
+  - **Geri al / yinele** (Ctrl+Z / Ctrl+Y) Pinout sekmesinde de çalışır, Design ile ortak.
+- Testler: birim 79 (Pinout modları, kilit çakışması, HAL ve bare-metal başlatma, parmak izi); derleme: Pinout modlu ve etiketli HAL ve bare-metal varyantları `-Werror` ile; arayüz 50.
+
 ## 0.6.10 (önizleme)
 
 - **Pinout görünümü (ES-1004):** yeni **Pinout** sekmesi (Acemi'de Tasarım'dan sonra, Profesyonel'de Clock'tan sonra): işlemci paketi pin pin, CubeMX'teki gibi.
