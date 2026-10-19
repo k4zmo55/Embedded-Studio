@@ -20,6 +20,27 @@ let passed = 0;
 const test = (name, fn) => { fn(); passed++; console.log('  ✓ ' + name); };
 
 console.log('Pin atama');
+test('Pinout\'ta komponentsiz GPIO modları (ES-1005): pin kullanıcının, komponent başka pine; HAL ve bare-metal başlatma; geçersizler', () => {
+  const d = design([inst('led')], { locks: { 'led1.A': 'PB12' }, pinModes: { PA5: 'GPIO_Output', PB12: 'GPIO_Input', PA0: 'GPIO_Analog', PA13: 'GPIO_Output', PA1: 'GPIO_EXTI' }, pinLabels: { PA5: 'Pin_Led' } });
+  const r = assign(d, lib);
+  assert.deepStrictEqual(r.pinModes, { PA5: 'GPIO_Output', PB12: 'GPIO_Input', PA0: 'GPIO_Analog' });
+  assert.ok(r.messages.some((m) => /PA13: GPIO_Output uygulanmadı \(ayrılmış/.test(m.text)) && r.messages.some((m) => /PA1: GPIO_EXTI uygulanmadı \(desteklenmeyen mod\)/.test(m.text)));
+  // Komponent kilidi Pinout modlu pine düşmez; seçenekte çakışma olarak görünür
+  assert.match(r.lockIssues['led1.A'], /PB12 zaten GPIO_Input tarafından kullanılıyor/);
+  assert.ok(!['PA5', 'PB12', 'PA0'].includes(r.connections.find((c) => c.instId === 'led1').mcuPin));
+  assert.deepStrictEqual((({ user, conflict, pinMode }) => [user, conflict, pinMode])(r.choices['led1.A'].find((c) => c.pin === 'PA5')), ['GPIO_Output (Pinout)', true, true]);
+  const hal = generate({ ...d, framework: 'hal' }, lib, r, computeClock(mcu, undefined), {}).files.find((f) => /board\.c$/.test(f.path)).content;
+  assert.match(hal, /\/\* PA5: GPIO_Output \(Pin_Led\) \*\/\n  HAL_GPIO_WritePin\(GPIOA, GPIO_PIN_5, GPIO_PIN_RESET\);\n  g\.Pin = GPIO_PIN_5;\n  g\.Mode = GPIO_MODE_OUTPUT_PP;/);
+  assert.match(hal, /g\.Pin = GPIO_PIN_12;\n  g\.Mode = GPIO_MODE_INPUT;/);
+  assert.match(hal, /\/\* PA0: GPIO_Analog \*\/\n  g\.Pin = GPIO_PIN_0;\n  g\.Mode = ES_GPIO_MODE_ADC;/);
+  const dr = { ...d, framework: 'register' };
+  const reg = generate(dr, lib, assign(dr, lib), computeClock(mcu, undefined), {}).files.find((f) => /board\.c$/.test(f.path)).content;
+  assert.match(reg, /gpio_config\(GPIOA, 5, 1U, 0U, 0U, 0U\); \/\* GPIO_Output \(Pin_Led\) \*\//);
+  assert.match(reg, /gpio_config\(GPIOA, 0, 3U, 0U, 0U, 0U\); \/\* GPIO_Analog \*\//);
+  // Parmak izi: Pinout modu değişince kod güncel sayılmaz
+  assert.notStrictEqual(designFingerprint(d, 1), designFingerprint({ ...d, pinModes: {} }, 1));
+  assert.strictEqual(designFingerprint({ ...design([inst('led')]), pinModes: {} }, 1), designFingerprint(design([inst('led')]), 1));
+});
 test('pin etiketleri (ES-1003): C tanımlayıcısı, benzersizlik, üretilen adlarla çakışma, board.h tanımları, işlemci değişimi', () => {
   const lb = require('../src/engine/labels');
   assert.strictEqual(lb.formatError('Pin_Led'), '');

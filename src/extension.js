@@ -343,6 +343,8 @@ function migrate(design, lib) {
   d.instances = d.instances || [];
   d.locks = d.locks || {};
   // ES-1003: pin etiketleri { PA12: 'Pin_Led' }
+  // ES-1005: Pinout'ta komponentsiz GPIO modları { PA5: 'GPIO_Output' }
+  d.pinModes = Object.fromEntries(Object.entries(d.pinModes && typeof d.pinModes === 'object' ? d.pinModes : {}).filter(([k, v]) => /^P[A-K]\d{1,2}$/.test(k) && ['GPIO_Input', 'GPIO_Output', 'GPIO_Analog'].includes(v)));
   d.pinLabels = Object.fromEntries(Object.entries(d.pinLabels && typeof d.pinLabels === 'object' ? d.pinLabels : {}).filter(([k, v]) => /^P[A-K]\d{1,2}$/.test(k) && typeof v === 'string' && v.trim()).map(([k, v]) => [k, v.trim()]));
   d.build = cm.normalizeBuild(d.build);
   d.regDrivers = Array.isArray(d.regDrivers) ? d.regDrivers.filter((x) => typeof x === 'string') : [];

@@ -83,6 +83,7 @@ window.ES = (function () {
       mirror: '<path d="M8 1v14" stroke="currentColor" stroke-dasharray="2 1.5"/><path d="M6 4L2 8l4 4zM10 4l4 4-4 4z" fill="none" stroke="currentColor" stroke-width="1.2"/>',
       link: '<path d="M6.5 9.5l3-3M7 4.5l1.5-1.5a2.5 2.5 0 013.5 3.5L10.5 8M9 11.5L7.5 13a2.5 2.5 0 01-3.5-3.5L5.5 8" fill="none" stroke="currentColor" stroke-width="1.2"/>',
       plus: '<path d="M8 3v10M3 8h10" stroke="currentColor" stroke-width="1.4"/>',
+      check: '<path d="M3 8.5l3.2 3.2L13 5" fill="none" stroke="currentColor" stroke-width="1.5"/>',
       fit: '<path d="M2 6V2h4M10 2h4v4M14 10v4h-4M6 14H2v-4" fill="none" stroke="currentColor" stroke-width="1.2"/>',
       clock: '<circle cx="8" cy="8" r="6" fill="none" stroke="currentColor" stroke-width="1.2"/><path d="M8 4.5V8l2.5 1.5" fill="none" stroke="currentColor" stroke-width="1.2"/>',
       panel: '<rect x="1.5" y="2.5" width="13" height="11" rx="1" fill="none" stroke="currentColor"/><path d="M10 2.5v11" stroke="currentColor"/>',

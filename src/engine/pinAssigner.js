@@ -18,7 +18,7 @@ const { checkLabels } = require('./labels');
 
 /**
  * @typedef {{ id: string, componentId: string, label: string, options?: { address?: string, periph?: string } }} Instance
- * @typedef {{ mcuId: string, rtos: boolean, instances: Instance[], locks?: Record<string, string>, pinLabels?: Record<string, string> }} Design
+ * @typedef {{ mcuId: string, rtos: boolean, instances: Instance[], locks?: Record<string, string>, pinLabels?: Record<string, string>, pinModes?: Record<string, string> }} Design
  * @typedef {{ instId: string, compPin: string, mcuPin: string, signal: string, af?: number,
  *             peripheral?: string, kind: string, locked: boolean }} Connection
  */
@@ -35,6 +35,8 @@ const ROLE_PATTERNS = {
   adc: /^ADC\d+_IN\d+$/
 };
 const GPIO_ROLES = ['gpio.out', 'gpio.in', 'spi.CS'];
+/** ES-1005: Pinout'ta komponentsiz atanabilen GPIO modları (GPIO_EXTI: NVIC ayarlarıyla ES-1007) */
+const PIN_MODES = ['GPIO_Input', 'GPIO_Output', 'GPIO_Analog'];
 
 /** "I2C1_SCL" -> { periph: "I2C1", fn: "SCL" } */
 function parseSignal(signal) {
@@ -68,6 +70,18 @@ function assign(design, lib) {
   for (const p of mcu.pins) if (p.reserved) used.set(p.name, p.reserved);
 
   const msg = (level, text) => messages.push({ level, text });
+  // ES-1005: Pinout'ta elle verilen GPIO modları: pin kullanıcınındır, komponentler bu pinlere atanmaz
+  /** @type {Record<string, string>} */
+  const pinModes = {};
+  for (const [pin, mode] of Object.entries(design.pinModes || {})) {
+    const p = pinByName.get(pin);
+    if (!p || p.reserved || !PIN_MODES.includes(mode)) {
+      msg('warn', t('{0}: {1} uygulanmadı ({2}).', pin, mode, !p ? t('bu işlemcide yok') : p.reserved ? t('ayrılmış: {0}', p.reserved) : t('desteklenmeyen mod')));
+      continue;
+    }
+    pinModes[pin] = mode;
+    used.set(pin, mode);
+  }
   /** @type {Record<string, string>} uygulanamayan kilit → neden */
   const lockIssues = {};
   // Kilitli pinler: otomatik atama bunları başka bir komponent pinine vermez (kilit sahibi önce gelmese bile)
@@ -381,6 +395,7 @@ function assign(design, lib) {
       const pattern = ROLE_PATTERNS[cp.role];
       if (!pattern && !GPIO_ROLES.includes(cp.role)) continue;
       const usage = (pin, signal) => {
+        if (pinModes[pin]) return { user: t('{0} (Pinout)', pinModes[pin]), conflict: true, pinMode: true };
         const o = owners.get(pin);
         if (o && !o.instIds.includes(inst.id) && o.signal !== signal) return { user: o.by, conflict: true, ownerIds: o.instIds };
         if (o && !o.instIds.includes(inst.id)) return { user: o.by, shared: true };
@@ -412,7 +427,7 @@ function assign(design, lib) {
   const { labels: pinLabels, issues: labelIssues } = checkLabels(design.pinLabels, mcu, connections, design.instances);
   for (const [pin, text] of Object.entries(labelIssues)) msg('warn', t('{0} etiketi kullanılmıyor: {1}', pin, text));
 
-  return { connections, peripherals, messages, addresses, power, options, choices, lockIssues, pinLabels, labelIssues, pinUsage: Object.fromEntries(used) };
+  return { connections, peripherals, messages, addresses, power, options, choices, lockIssues, pinLabels, labelIssues, pinModes, pinUsage: Object.fromEntries(used) };
 
   /**
    * Bu komponent pininin bus grubunu bir çevre birimine bağlayan şey (bu pinin kendi kilidi hariç): seçilen örnek
@@ -456,4 +471,4 @@ function assign(design, lib) {
   }
 }
 
-module.exports = { assign, parseSignal };
+module.exports = { assign, parseSignal, PIN_MODES };

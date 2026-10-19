@@ -646,12 +646,12 @@ Ortada işlemci (kare), kenarlarında her fiziksel pin küçük bir kutu olarak,
 ### ES-1005 · Pinout görünümü: pine tıklayarak sinyal atama ve sağ tık menüsü
 `etiketler: tip:özellik, alan:pinout, öncelik:yüksek, seviye:hepsi`
 
-- [ ] Sol tık: pinin fonksiyon listesi (Reset_State, GPIO_Input, GPIO_Output, GPIO_Analog, GPIO_EXTIn ve çevre birimi sinyalleri, çevre birimine göre gruplu); seçilen atanır
-- [ ] Sağ tık: "Etiket gir", "Sinyali sabitle / sabitlemeyi kaldır", "Sıfırla (Reset_State)", "Bu pine bağlanabilecek çevre birimleri"
-- [ ] Ctrl + tık: atanmış sinyalin alternatif pinleri vurgulanır, sürükleyerek ya da tıklayarak taşınır
-- [ ] Çakışma: dolu pine atamada uyarı ve seçenekler
-- [ ] Komponentlerin kullandığı pinler komponent adıyla görünür; buradan yapılan değişiklik Design'daki kilitlere yansır
-- [ ] Geri al / yinele; birim ve arayüz testleri
+- [x] Sol tık: pinin fonksiyon listesi (Reset_State, GPIO_Input, GPIO_Output, GPIO_Analog, GPIO_EXTIn ve çevre birimi sinyalleri, çevre birimine göre gruplu); seçilen atanır — komponent sinyalleri atanır; GPIO_EXTI ES-1007'ye (NVIC), komponentsiz çevre birimi sinyalleri ES-1006'ya (mod paneli) bırakıldı, menüde nedeniyle görünür
+- [x] Sağ tık: "Etiket gir", "Sinyali sabitle / sabitlemeyi kaldır", "Sıfırla (Reset_State)", "Bu pine bağlanabilecek çevre birimleri"
+- [x] Ctrl + tık: atanmış sinyalin alternatif pinleri vurgulanır, sürükleyerek ya da tıklayarak taşınır — tıklayarak (sürükleme yok)
+- [x] Çakışma: dolu pine atamada uyarı ve seçenekler
+- [x] Komponentlerin kullandığı pinler komponent adıyla görünür; buradan yapılan değişiklik Design'daki kilitlere yansır
+- [x] Geri al / yinele; birim ve arayüz testleri
 
 ### ES-1006 · Pinout & Configuration sekmesi: çevre birimi ağacı ve mod seçimi
 `etiketler: tip:özellik, alan:pinout, öncelik:orta, seviye:profesyonel`

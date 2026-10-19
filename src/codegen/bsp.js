@@ -54,6 +54,14 @@ function makeContext(design, lib, result, clock) {
       initHigh: c.signal === 'GPIO_Output' && !!c.cs
     });
   }
+  // ES-1005: Pinout'ta komponentsiz verilen GPIO modları
+  const MODE = { GPIO_Output: 'out', GPIO_Input: 'in', GPIO_Analog: 'analog' };
+  for (const [pin, m] of Object.entries(result.pinModes || {})) {
+    if (seen.has(pin) || !MODE[m]) continue;
+    seen.add(pin);
+    const l = (result.pinLabels || {})[pin];
+    pins.push({ conn: { signal: l ? `${m} (${l})` : m, mcuPin: pin }, name: l || pin, port: pin[1], n: Number(pin.slice(2)), mode: MODE[m], pull: 'none', otype: 'pp', af: undefined, initHigh: false });
+  }
   const ports = [...new Set(pins.map((p) => p.port))].sort();
 
   // SPI bölücü: breadboard için 10 MHz üst sınır.

@@ -1,7 +1,12 @@
 /* Pinout sekmesi (ES-1004): işlemci paketi pin pin, CubeMX'teki "Pinout view" gibi. Veri: mcu.package (ES-1002),
- * atama sonucu (bağlantılar, kilitler), pin etiketleri (ES-1003). Yalnızca görüntüler; pine tıklayarak atama ES-1005. */
+ * atama sonucu (bağlantılar, kilitler), pin etiketleri (ES-1003).
+ * ES-1005: sol tık → pinin işlev listesi (Reset_State, GPIO modları, komponent sinyalleri), sağ tık → etiket / sabitle /
+ * sıfırla / çevre birimleri, Ctrl + tık → atanmış sinyalin alternatif pinleri (tıklayınca taşınır). Değişiklikler
+ * tasarıma (kilitler, pinModes) yazılır; geri al / yinele Design ile ortak. */
 (function () {
-  const { t, h, s, $, state, ui, saveUi, showTip, placeTip, hideTip, icon } = ES;
+  const { t, h, s, $, state, ui, saveUi, showTip, placeTip, hideTip, icon, contextMenu, update, modal, toast } = ES;
+  const GPIO_MODES = ['GPIO_Input', 'GPIO_Output', 'GPIO_Analog'];
+  let moving = null; // Ctrl + tık: { key, from, targets: Set<pin> }
   const PITCH = 18, PAD_LEN = 30, PAD_W = 12, MARGIN = 24, TEXT_GAP = 6, LABEL_ROOM = 120;
   const SIDES = ['left', 'bottom', 'right', 'top'];
   let view = null; // { x, y, w, h }
@@ -28,15 +33,169 @@
           h('span', { class: 'po-key' }, h('b', { text: '●' }), t('sabit pin'))))));
     const svg = $('po-svg');
     svg.addEventListener('wheel', (e) => { e.preventDefault(); zoom(e.deltaY > 0 ? 1.15 : 0.87, e); }, { passive: false });
-    svg.addEventListener('mousedown', (e) => { if (e.button === 0) drag = { x: e.clientX, y: e.clientY, v: { ...view } }; });
+    svg.addEventListener('mousedown', (e) => { if (e.button === 0) drag = { x: e.clientX, y: e.clientY, v: { ...view }, moved: false }; });
     window.addEventListener('mousemove', (e) => {
       if (!drag || !view) return;
+      if (Math.abs(e.clientX - drag.x) + Math.abs(e.clientY - drag.y) > 3) drag.moved = true;
       const r = svg.getBoundingClientRect();
       const k = Math.max(view.w / r.width, view.h / r.height);
       view = { ...drag.v, x: drag.v.x - (e.clientX - drag.x) * k, y: drag.v.y - (e.clientY - drag.y) * k };
       applyView();
     });
-    window.addEventListener('mouseup', () => { drag = null; });
+    window.addEventListener('mouseup', () => { setTimeout(() => { drag = null; }, 0); });
+    svg.addEventListener('click', (e) => { if (!e.target.closest('.po-pad') && moving && !(drag && drag.moved)) { moving = null; render(); } });
+    document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && moving) { moving = null; render(); } });
+  }
+
+  // ================================================================ ES-1005: pine tıklayarak atama
+  const inst = (id) => (state.design.instances.find((i) => i.id === id) || { label: id }).label;
+  const keyText = (k) => { const [id, p] = k.split('.'); return `${inst(id)}.${p}`; };
+
+  /** Pinin bağlantı kilidini ya da modunu yazar; çakışmada sorar */
+  function lockTo(key, pin, ch) {
+    const apply = () => {
+      const locks = { ...(state.design.locks || {}) };
+      for (const k of ES.tabs.design.locksOnPin(pin, key.split('.')[0])) delete locks[k];
+      locks[key] = pin;
+      state.design.locks = locks;
+      if (ch && ch.pinMode) { const m = { ...(state.design.pinModes || {}) }; delete m[pin]; state.design.pinModes = m; }
+      update();
+    };
+    const conn = state.result.connections.find((c) => `${c.instId}.${c.compPin}` === key);
+    if (ch && ch.conflict && !(conn && conn.mcuPin === pin)) ES.tabs.design.confirmConflict(key, ch, apply, () => {});
+    else apply();
+  }
+
+  function setMode(pin, mode) {
+    const apply = () => {
+      const m = { ...(state.design.pinModes || {}) };
+      if (mode) m[pin] = mode; else delete m[pin];
+      state.design.pinModes = m;
+      // Pindeki komponent kilitleri kalkar (komponent otomatik olarak başka pine geçer)
+      const locks = { ...(state.design.locks || {}) };
+      for (const k of Object.keys(locks)) if (locks[k] === pin) delete locks[k];
+      state.design.locks = locks;
+      update();
+    };
+    const users = state.result.connections.filter((c) => c.mcuPin === pin);
+    if (mode && users.length) {
+      modal({
+        title: t('{0} kullanımda', pin),
+        width: 440,
+        body: h('div', {},
+          h('p', { text: t('{0} şu anda {1} tarafından kullanılıyor.', pin, [...new Set(users.map((c) => `${c.signal} (${inst(c.instId)}.${c.compPin})`))].join(', ')) }),
+          h('p', { class: 'hint', text: t('{0} verilirse komponent bağlantısı otomatik olarak başka bir uygun pine taşınır.', mode) })),
+        buttons: [{ label: t('Vazgeç') }, { label: t('Diğerini taşı'), primary: true, id: 'conflict-move', action: () => apply() }]
+      });
+    } else apply();
+  }
+
+  /** Sol tık: CubeMX'teki gibi pinin işlev listesi */
+  function padMenu(e, mcu, pad) {
+    e.stopPropagation();
+    if (drag && drag.moved) return;
+    if (pad.type !== 'io' || !pad.gpio) return;
+    const pin = pad.gpio;
+    if (moving) {
+      if (moving.targets.has(pin)) { const k = moving.key; moving = null; lockTo(k, pin, (state.result.choices[k] || []).find((c) => c.pin === pin)); }
+      else { moving = null; render(); }
+      return;
+    }
+    if (e.ctrlKey || e.metaKey) return startMove(pin);
+    const appPin = mcu.pins.find((p) => p.name === pin);
+    if (appPin && appPin.reserved) return toast('info', t('{0} ayrılmış: {1}', pin, appPin.reserved));
+    const cur = (state.result.pinModes || {})[pin];
+    const conns = state.result.connections.filter((c) => c.mcuPin === pin);
+    const items = [
+      { label: 'Reset_State', icon: !cur && !conns.length ? 'check' : undefined, action: () => resetPin(pin) },
+      '-',
+      ...GPIO_MODES.map((m) => ({ label: m, icon: cur === m ? 'check' : undefined, disabled: !appPin, action: () => setMode(pin, m) })),
+      { label: 'GPIO_EXTI', disabled: true, hint: t('kesme ayarlarıyla (ES-1007)') }
+    ];
+    // Bu pine gelebilecek komponent sinyalleri, çevre birimine göre
+    const byPeriph = new Map();
+    for (const [key, list] of Object.entries(state.result.choices || {})) {
+      for (const ch of list.filter((c) => c.pin === pin)) {
+        const g = ch.periph || 'GPIO';
+        byPeriph.set(g, [...(byPeriph.get(g) || []), { key, ch }]);
+      }
+    }
+    for (const [g, list] of [...byPeriph].sort(([a], [b]) => a.localeCompare(b, 'en', { numeric: true }))) {
+      items.push('-', { label: g, header: true, disabled: true });
+      for (const { key, ch } of list) {
+        const here = conns.some((c) => `${c.instId}.${c.compPin}` === key);
+        items.push({
+          label: `${/^GPIO_/.test(ch.signal) ? ch.signal : ch.signal} → ${keyText(key)}`, icon: here ? 'check' : undefined,
+          disabled: !!ch.disabled, hint: ch.disabled ? ch.reason : ch.conflict && !here ? `⚠ ${ch.user}` : '',
+          action: () => lockTo(key, pin, ch)
+        });
+      }
+    }
+    // Komponentsiz çevre birimi sinyalleri bilgi olarak (ES-1006: çevre birimi modu)
+    const used = new Set([...byPeriph.values()].flat().map((x) => x.ch.signal));
+    const other = (pad.signals || []).filter((x) => !used.has(x.signal));
+    if (other.length) items.push('-', { label: t('Diğer işlevler ({0})', other.length), disabled: true, hint: t('çevre birimi modu: ES-1006'), submenu: () => other.map((x) => h('div', { class: 'ctx-item disabled' }, h('span', { class: 'ic' }), h('span', { class: 'ctx-label', text: x.af !== undefined ? `${x.signal} · AF${x.af}` : x.signal }))) });
+    contextMenu(e.clientX, e.clientY, items);
+  }
+
+  function resetPin(pin) {
+    const m = { ...(state.design.pinModes || {}) };
+    delete m[pin];
+    state.design.pinModes = m;
+    const locks = { ...(state.design.locks || {}) };
+    for (const k of Object.keys(locks)) if (locks[k] === pin) delete locks[k];
+    state.design.locks = locks;
+    update();
+  }
+
+  /** Sağ tık: etiket, sabitle, sıfırla, çevre birimleri */
+  function padContext(e, mcu, pad) {
+    e.preventDefault();
+    e.stopPropagation();
+    if (pad.type !== 'io' || !pad.gpio) return;
+    const pin = pad.gpio;
+    const lbl = (state.design.pinLabels || {})[pin];
+    const conns = state.result.connections.filter((c) => c.mcuPin === pin);
+    const keys = [...new Set(conns.map((c) => `${c.instId}.${c.compPin}`))];
+    const locked = keys.filter((k) => (state.design.locks || {})[k] === pin);
+    contextMenu(e.clientX, e.clientY, [
+      { label: lbl ? t('Etiketi değiştir ({0})…', lbl) : t('{0} için etiket gir…', pin), icon: 'edit', action: () => ES.tabs.design.labelDialog(pin) },
+      locked.length
+        ? { label: t('Sabitlemeyi kaldır'), icon: 'link', action: () => { const l = { ...state.design.locks }; for (const k of locked) delete l[k]; state.design.locks = l; update(); } }
+        : { label: t('Sinyali sabitle'), icon: 'link', disabled: !keys.length, action: () => { state.design.locks = { ...(state.design.locks || {}), ...Object.fromEntries(keys.map((k) => [k, pin])) }; update(); } },
+      { label: t('Sıfırla (Reset_State)'), icon: 'trash', disabled: !conns.length && !(state.result.pinModes || {})[pin], action: () => resetPin(pin) },
+      '-',
+      { label: t('Bu pine bağlanabilecek çevre birimleri…'), icon: 'chip', action: () => periphDialog(mcu, pad) },
+      { label: t('Alternatif pinleri göster (Ctrl + tık)'), icon: 'fit', disabled: !keys.length, action: () => startMove(pin) }
+    ]);
+  }
+
+  function periphDialog(mcu, pad) {
+    const groups = new Map();
+    for (const x of pad.signals || []) {
+      const p = x.signal.includes('_') ? x.signal.slice(0, x.signal.indexOf('_')) : x.signal;
+      groups.set(p, [...(groups.get(p) || []), x]);
+    }
+    modal({
+      title: t('{0} · çevre birimleri', pad.gpio),
+      width: 460,
+      body: h('table', { class: 'pins po-periphs' }, ...[...groups].sort(([a], [b]) => a.localeCompare(b, 'en', { numeric: true })).map(([p, list]) => h('tr', {},
+        h('td', { class: 'mono', text: p }),
+        h('td', { class: 'mono', text: list.map((x) => (x.af !== undefined ? `${x.signal} (AF${x.af})` : x.signal)).join(', ') })))),
+      buttons: [{ label: t('Kapat'), primary: true }]
+    });
+  }
+
+  /** Ctrl + tık: pindeki komponent sinyalinin gidebileceği pinler vurgulanır; birine tıklayınca taşınır */
+  function startMove(pin) {
+    const conn = state.result.connections.find((c) => c.mcuPin === pin && c.instId);
+    if (!conn) return toast('info', t('{0} üzerinde taşınacak komponent sinyali yok.', pin));
+    const key = `${conn.instId}.${conn.compPin}`;
+    // Yalnızca boş ve gruba uyan pinler (dolu pine taşımak sol tık menüsünden, soruyla)
+    const targets = new Set((state.result.choices[key] || []).filter((c) => !c.disabled && !c.conflict && c.pin !== pin).map((c) => c.pin));
+    moving = { key, from: pin, targets };
+    render();
+    toast('info', t('{0}: {1} uygun pin vurgulandı; birine tıklayın (Esc: vazgeç).', keyText(key), targets.size));
   }
 
   function zoom(f, e) {
@@ -71,6 +230,8 @@
     let cls = 'free', text = '';
     if (pad.type !== 'io') cls = pad.type === 'nc' ? 'nc' : 'power';
     else if (appPin && appPin.reserved) { cls = 'sys'; text = appPin.reserved; }
+    const mode = gpio && (state.result.pinModes || {})[gpio];
+    if (mode) { cls = 'ok'; text = mode; }
     if (conns.length) {
       cls = 'ok';
       const sig = conns[0].signal;
@@ -79,7 +240,7 @@
     }
     if (label) text = label;
     if (lockBad || labelBad) cls = 'warn';
-    return { cls, text, conns, label, lockKeys, lockBad, labelBad, appPin, pinned: lockKeys.length > 0 };
+    return { cls, text, conns, label, lockKeys, lockBad, labelBad, appPin, mode, pinned: lockKeys.length > 0 };
   }
 
   /** Arama: pin adı, GPIO, etiket, atanmış ya da olası sinyal */
@@ -98,6 +259,7 @@
     return h('div', { class: 'po-card' },
       h('div', { class: 'po-card-head' }, h('b', { text: `${pad.pos} · ${pad.name}` }), h('span', { class: 'hint', text: TYPE[pad.type] || pad.type })),
       info.label ? h('div', { text: t('Etiket: {0}', info.label) }) : null,
+      info.mode ? h('div', { text: t('Pinout: {0}', info.mode) }) : null,
       info.conns.length ? h('div', { class: 'po-use' }, ...info.conns.map((c) => h('div', { text: `${c.signal} → ${inst(c.instId)}.${c.compPin}${c.af !== undefined ? ` (AF${c.af})` : ''}${c.locked ? ' ●' : ''}` }))) : null,
       info.appPin && info.appPin.reserved ? h('div', { class: 'hint', text: t('Ayrılmış: {0}', info.appPin.reserved) }) : null,
       (mcu.boardPins || {})[pad.gpio] ? h('div', { class: 'hint', text: t('Kartta: {0}', mcu.boardPins[pad.gpio]) }) : null,
@@ -144,11 +306,14 @@
     const info = padInfo(mcu, pad);
     const hit = matches(pad, info);
     if (hit) count(1);
+    const target = moving && moving.targets.has(pad.gpio);
     const gg = s('g', {
-      class: `po-pad ${info.cls}${hit ? ' found' : ''}${info.pinned ? ' pinned' : ''}`, 'data-pos': pad.pos, 'data-pin': pad.gpio || pad.name,
+      class: `po-pad ${info.cls}${hit ? ' found' : ''}${info.pinned ? ' pinned' : ''}${target ? ' target' : ''}${moving && moving.from === pad.gpio ? ' source' : ''}`, 'data-pos': pad.pos, 'data-pin': pad.gpio || pad.name,
       onmouseenter: (e) => showTip(e.clientX, e.clientY, card(mcu, pad, info), 150),
       onmousemove: (e) => placeTip(e.clientX, e.clientY),
-      onmouseleave: () => hideTip()
+      onmouseleave: () => hideTip(),
+      onclick: (e) => { hideTip(); padMenu(e, mcu, pad); },
+      oncontextmenu: (e) => { hideTip(); padContext(e, mcu, pad); }
     },
     s('rect', { class: 'po-box', x, y, width: w, height: hgt, rx: 1.5 }));
     gg.append(s('text', { class: 'po-name', ...text }, s('tspan', { text: pad.gpio || shortName(pad.name) })));

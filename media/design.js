@@ -218,12 +218,20 @@
       onClose: () => { if (!moved) onCancel(); },
       body: h('div', {},
         h('p', { text: t('{0} şu anda {1} tarafından kullanılıyor.', ch.pin, ch.user) }),
-        h('p', { class: 'hint', text: t('{0}.{1} bu pine sabitlenirse diğer bağlantı otomatik olarak başka bir uygun pine taşınır.', inst ? inst.label : instId, compPin) })),
+        h('p', { class: 'hint', text: ch.pinMode ? t('{0}.{1} bu pine sabitlenirse pindeki Pinout ayarı ({2}) kaldırılır.', inst ? inst.label : instId, compPin, ch.user)
+          : t('{0}.{1} bu pine sabitlenirse diğer bağlantı otomatik olarak başka bir uygun pine taşınır.', inst ? inst.label : instId, compPin) })),
       buttons: [
         { label: t('Vazgeç') },
-        { label: t('Diğerini taşı'), primary: true, id: 'conflict-move', action: () => { moved = true; onMove(); } }
+        { label: ch.pinMode ? t('Pinout ayarını kaldır') : t('Diğerini taşı'), primary: true, id: 'conflict-move', action: () => { moved = true; onMove(); } }
       ]
     });
+  }
+
+  /** ES-1005: Pinout'ta pine verilmiş GPIO modunu kaldırır (update çağıran yapar) */
+  function clearPinMode(pin) {
+    const m = { ...(state.design.pinModes || {}) };
+    delete m[pin];
+    state.design.pinModes = m;
   }
 
   /** Diğer komponentlerin bu pine kilitleri (çakışmada "taşı" ile kaldırılır) */
@@ -277,7 +285,7 @@
           const [pin, signal] = v.split('|');
           const ch = list.find((x) => x.pin === pin && x.signal === signal) || { pin };
           if (ch.conflict && !(conn && conn.mcuPin === pin)) {
-            confirmConflict(key, ch, () => setPin(pin, locksOnPin(pin, inst.id)), () => { e.target.value = locked ? [...e.target.options].find((o) => o.value.startsWith(locked + '|'))?.value || 'auto' : 'auto'; });
+            confirmConflict(key, ch, () => { if (ch.pinMode) clearPinMode(pin); setPin(pin, locksOnPin(pin, inst.id)); }, () => { e.target.value = locked ? [...e.target.options].find((o) => o.value.startsWith(locked + '|'))?.value || 'auto' : 'auto'; });
           } else setPin(pin);
         }
       },
@@ -896,6 +904,10 @@
       renderDock();
     },
     onShow: () => renderSchematic(),
+    // ES-1005: Pinout sekmesi aynı pencereleri kullanır
+    labelDialog: (pin) => labelDialog(pin),
+    confirmConflict: (key, ch, onMove, onCancel) => confirmConflict(key, ch, onMove, onCancel),
+    locksOnPin: (pin, exceptInst) => locksOnPin(pin, exceptInst),
     setRightPanel,
     renderLibrary,
     /** Kütüphanede varsa hemen, yoksa kütüphane yenilenince tasarıma ekler. */

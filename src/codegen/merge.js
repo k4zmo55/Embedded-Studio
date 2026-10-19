@@ -80,7 +80,8 @@ function designFingerprint(design, generatorVersion) {
     regDrivers: design.regDrivers || [],
     boot: design.boot && design.boot.enabled ? design.boot : null, // ES-303
     // ES-1003: etiketler board.h'ı değiştirir (etiketsiz projelerin parmak izi aynı kalır)
-    pinLabels: design.pinLabels && Object.keys(design.pinLabels).length ? design.pinLabels : undefined
+    pinLabels: design.pinLabels && Object.keys(design.pinLabels).length ? design.pinLabels : undefined,
+    pinModes: design.pinModes && Object.keys(design.pinModes).length ? design.pinModes : undefined // ES-1005
   };
   return sha1(JSON.stringify(relevant));
 }

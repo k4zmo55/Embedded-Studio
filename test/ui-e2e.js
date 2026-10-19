@@ -749,6 +749,66 @@ async function until(fn, ms = 8000, what = 'koşul') {
     await until(() => Object.keys(design().locks).length === 0, 4000, 'temizlendi');
     await cdp.click('#tab-design');
   });
+  await step('Pinout\'ta pine tıklayarak atama (ES-1005): GPIO modu, geri al / yinele, çakışmada taşı, komponent sinyali, Ctrl + tık ile taşıma, sağ tık, sıfırla', async () => {
+    const pad = (pin) => `document.querySelector('#po-svg .po-pad[data-pin="${pin}"]')`;
+    const menuItem = (re) => `([...document.querySelectorAll('.ctx-menu .ctx-item')].find((e) => ${re}.test(e.querySelector('.ctx-label').textContent)))`;
+    const conn = (re) => cdp.eval(`(() => { const c = ES.state.result.connections.find((x) => ${re}.test(x.signal)); return c ? { key: c.instId + '.' + c.compPin, pin: c.mcuPin } : null; })()`);
+    await cdp.click('#tab-pinout');
+    await until(() => cdp.eval(`!!${pad('PA8')}`), 4000, 'pinout');
+    // Boş pine GPIO_Output
+    await cdp.click(`(${pad('PA8')}.querySelector('rect'))`);
+    await until(() => cdp.eval(`!!${menuItem('/^Reset_State$/')}`), 3000, 'işlev listesi');
+    assert.ok(await cdp.eval(`${menuItem('/^GPIO_EXTI$/')}.classList.contains('disabled')`), 'EXTI kapalı (ES-1007)');
+    await cdp.shot('06c-pin-islevleri');
+    await cdp.click(menuItem('/^GPIO_Output$/'));
+    await until(() => (design().pinModes || {}).PA8 === 'GPIO_Output', 3000, 'PA8 çıkış');
+    await until(() => cdp.eval(`${pad('PA8')}.classList.contains('ok') && ${pad('PA8')}.querySelector('.po-sig').textContent === 'GPIO_Output'`), 3000, 'pinoutta yeşil');
+    // Geri al / yinele (Pinout sekmesinde de)
+    await cdp.key('z', 'KeyZ', 90, 2);
+    await until(() => !(design().pinModes || {}).PA8, 3000, 'geri alındı');
+    await cdp.key('y', 'KeyY', 89, 2);
+    await until(() => (design().pinModes || {}).PA8 === 'GPIO_Output', 3000, 'yinelendi');
+    // Dolu pine GPIO modu: sorulur, "Diğerini taşı" komponenti başka pine geçirir
+    const scl = await conn('/^I2C\\d_SCL$/');
+    await cdp.click(`(${pad(scl.pin)}.querySelector('rect'))`);
+    await until(() => cdp.eval(`!!${menuItem('/^GPIO_Input$/')}`), 3000, 'işlev listesi');
+    await cdp.click(menuItem('/^GPIO_Input$/'));
+    await until(() => cdp.eval(`!!document.querySelector('#conflict-move')`), 3000, 'çakışma sorusu');
+    await cdp.click('#conflict-move');
+    await until(() => (design().pinModes || {})[scl.pin] === 'GPIO_Input', 3000, 'mod verildi');
+    await until(async () => { const c = await conn('/^I2C\\d_SCL$/'); return c && c.pin !== scl.pin; }, 4000, 'I2C başka pine taşındı');
+    // Komponent sinyalini pine tıklayarak sabitleme: başka bir SCL pini
+    const target = await cdp.eval(`(() => { const c = ES.state.result.connections.find((x) => /^I2C\\d_SCL$/.test(x.signal)); const k = c.instId + '.' + c.compPin; return ES.state.result.choices[k].find((x) => !x.disabled && !x.conflict && x.pin !== c.mcuPin).pin; })()`);
+    await cdp.click(`(${pad(target)}.querySelector('rect'))`);
+    const sclItem = `([...document.querySelectorAll('.ctx-menu .ctx-item:not(.disabled)')].find((e) => /^I2C\\d_SCL → /.test(e.querySelector('.ctx-label').textContent)))`;
+    await until(() => cdp.eval(`!!${sclItem}`), 3000, 'komponent sinyali listede');
+    await cdp.click(sclItem);
+    await until(async () => (await conn('/^I2C\\d_SCL$/')).pin === target, 4000, 'SCL tıklanan pinde');
+    await until(() => Object.values(design().locks).includes(target), 3000, 'Design kilidi');
+    // Ctrl + tık: alternatif pinler vurgulanır, birine tıklayınca taşınır
+    await cdp.eval(`(() => { const r = ${pad(target)}.querySelector('rect').getBoundingClientRect(); ${pad(target)}.dispatchEvent(new MouseEvent('click', { bubbles: true, ctrlKey: true, clientX: r.x + 2, clientY: r.y + 2 })); })()`);
+    await until(() => cdp.eval(`document.querySelectorAll('#po-svg .po-pad.target').length > 0 && !!document.querySelector('#po-svg .po-pad.source')`), 3000, 'alternatifler vurgulandı');
+    await cdp.shot('06d-ctrl-tik');
+    const alt = await cdp.eval(`document.querySelector('#po-svg .po-pad.target').dataset.pin`);
+    await cdp.click(`(${pad(alt)}.querySelector('rect'))`);
+    await until(async () => (await conn('/^I2C\\d_SCL$/')).pin === alt, 4000, 'Ctrl + tık ile taşındı');
+    assert.strictEqual(await cdp.eval(`document.querySelectorAll('#po-svg .po-pad.target').length`), 0);
+    // Sağ tık: çevre birimleri listesi, sabitlemeyi kaldır, sıfırla
+    await cdp.click(`(${pad('PA9')}.querySelector('rect'))`, 'right');
+    await cdp.click(menuItem('/bağlanabilecek çevre birimleri/'));
+    await until(() => cdp.eval(`!!document.querySelector('.po-periphs')`), 3000, 'çevre birimleri');
+    assert.match(await cdp.eval(`document.querySelector('.po-periphs').textContent`), /USART1USART1_TX \(AF7\)/);
+    await cdp.click(`([...document.querySelectorAll('.modal-foot button')].find((b) => b.textContent === 'Kapat'))`);
+    await cdp.click(`(${pad(alt)}.querySelector('rect'))`, 'right');
+    await cdp.click(menuItem('/^Sabitlemeyi kaldır$/'));
+    await until(() => !Object.values(design().locks).includes(alt), 3000, 'kilit kalktı');
+    await cdp.click(`(${pad(scl.pin)}.querySelector('rect'))`, 'right');
+    await cdp.click(menuItem('/^Sıfırla \\(Reset_State\\)$/'));
+    await until(() => !(design().pinModes || {})[scl.pin], 3000, 'sıfırlandı');
+    await cdp.eval(`(() => { ES.state.design.pinModes = {}; ES.state.design.locks = {}; ES.update(); })()`);
+    await until(() => !Object.keys(design().pinModes || {}).length, 3000, 'temizlendi');
+    await cdp.click('#tab-design');
+  });
   await step('Monitör: canlı veri, 3B IMU, GPS, gösterge, task tablosu', async () => {
     scene('monitor');
     await cdp.click('#tab-monitor');

@@ -839,3 +839,6 @@ button.ghost.danger:not(:disabled) { background: transparent; color: var(--err);
 .po-card { max-width: 340px; display: flex; flex-direction: column; gap: 4px; font-size: 12px; }
 .po-card-head { display: flex; gap: 8px; align-items: baseline; }
 .po-sigs { display: flex; flex-wrap: wrap; gap: 3px 8px; font-family: var(--mono); font-size: 10.5px; color: var(--muted); }
+.po-pad { cursor: pointer; }
+.po-pad.target .po-box { stroke: #2ea043; stroke-width: 2.4; stroke-dasharray: 3 2; }
+.po-pad.source .po-box { stroke: var(--accent); stroke-width: 2.4; }

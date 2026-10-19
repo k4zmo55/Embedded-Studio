@@ -78,6 +78,11 @@ const ALL = ['usb_uart', 'bme280', 'mpu6050', 'ssd1306', 'w25q32', 'neo6m', 'led
   // ES-303: bootloader + uygulama yuvası (her işlemcide bare-metal, sıkı uyarı + -Werror; F411'de HAL + FreeRTOS)
   for (const id of Object.keys(lib.mcus)) variants.push({ mcu: id, framework: 'register', rtos: false, mode: 'pro', build: strict, suffix: 'boot', ids: ['usb_uart', 'led'], boot: { enabled: true } });
   variants.push({ mcu: f411, framework: 'hal', rtos: true, build: strict, suffix: 'hboot', ids: ['usb_uart', 'led', 'bme280'], boot: { enabled: true, version: '2.1.5' } });
+  // ES-1003 / ES-1005: Pinout'ta komponentsiz GPIO modları ve etiketler (HAL ve bare-metal, -Werror)
+  for (const framework of ['hal', 'register']) {
+    variants.push({ mcu: f411, framework, rtos: false, build: strict, suffix: 'pinout', ids: ['led', 'bme280'],
+      pinModes: { PA5: 'GPIO_Output', PB13: 'GPIO_Input', PA0: 'GPIO_Analog' }, pinLabels: { PA5: 'Pin_Led', PB13: 'Btn_In' } });
+  }
   // ES-304: A/B + Ed25519 imza + geri dönüş koruması (her işlemcide; bootloader boyutu ve uygulamanın ana yuvaya sığması)
   const testKey = esboot.generateKey();
   for (const id of Object.keys(lib.mcus)) {
@@ -109,7 +114,7 @@ embedded_studio_target(\${PROJECT_NAME} NO_SOURCES)
     fs.rmSync(root, { recursive: true, force: true });
     const mcu = lib.mcus[v.mcu];
     const design = {
-      mcuId: v.mcu, framework, rtos, mode, project: { name }, build, regDrivers, boot: v.boot,
+      mcuId: v.mcu, framework, rtos, mode, project: { name }, build, regDrivers, boot: v.boot, pinModes: v.pinModes, pinLabels: v.pinLabels,
       instances: ids.map((c, i) => ({ id: 'i' + i, componentId: c, label: `${c.toUpperCase()}_1` })), locks: {}
     };
     // En yüksek saat: over-drive / boost / EPOD yollarını da derle
