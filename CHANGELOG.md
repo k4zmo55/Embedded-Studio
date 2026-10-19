@@ -1,5 +1,13 @@
 # Değişiklik günlüğü
 
+## 0.6.12 (önizleme)
+
+- **Design'da Şema / Pinout geçişi (ES-1008):** tuvalin sol üstünde **Şema | Pinout**. Pinout seçilince komponent şeması yerine yalnızca işlemci paketi görünür; kütüphane ve Bağlantılar paneli yerinde kalır, aynı tasarım verisi kullanılır (pine tıklama, sağ tık, Ctrl + tık, arama Pinout sekmesindeki gibi).
+  - Seçim projede (`embedded-studio.json`) saklanır; seçilmemişse Profesyonel modda Pinout, Acemi'de şema açılır. Görünüm değiştirmek geri al adımı sayılmaz; geri al / yinele görünümü değiştirmez.
+  - Pinout'ta komponentsiz verilen GPIO modları şemada MCU pininde (`GPIO_Output`, italik), etiketler iki görünümde de anında.
+  - Pinout sekmesi ile Design'daki Pinout aynı çizimi paylaşır (arama ve yakınlaştırma korunur).
+- Testler: arayüz 51 (geçiş, iki görünümde etiket ve GPIO modu, geri al / yinele görünümü bozmaz, seçimin kaydı, Pinout sekmesiyle paylaşım).
+
 ## 0.6.11 (önizleme)
 
 - **Pinout'ta pine tıklayarak atama (ES-1005):**
