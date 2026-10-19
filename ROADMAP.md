@@ -602,11 +602,12 @@ Kullanıcı kullanmadığı sekmeleri (ör. Monitör, Bellek raporu) üst çubuk
 4. Başka bir komponentin kullandığı pin listede seçilebiliyor; seçilirse kilit yok sayılıp otomatik atanıyor. CubeMX'teki gibi çakışma açıkça gösterilmeli (kullanıcı ya diğer sinyali taşımalı ya da vazgeçmeli).
 5. Desteklenen sinyaller I2C, SPI, U(S)ART, ADC1 ve TIM PWM kanallarıyla sınırlı (CAN, USB, DAC, I2S, SDIO... yok).
 
-- [ ] Seçeneklerde sinyal ve çevre birimi adı (`PB10 · I2C2_SCL`), gruplu liste (I2C1 / I2C2 / I2C3)
-- [ ] Bus grubu için çevre birimi örneği seçimi; seçilen örneğe uymayan pinler devre dışı ve nedeni yazıyor
-- [ ] Dolu pinler işaretli; seçilince çakışma iletişim kutusu (diğer sinyali taşı / vazgeç), sessiz yok sayma yok
-- [ ] Kilitli pinler için "kilidi kaldır" ve tüm kilitleri listeleme (CubeMX'teki pinned pins listesi)
-- [ ] Birim testleri: grup süzme, çakışma, örnek seçimi; arayüz testi
+- [x] Seçeneklerde sinyal ve çevre birimi adı (`PB10 · I2C2_SCL`), gruplu liste (I2C1 / I2C2 / I2C3)
+- [x] Bus grubu için çevre birimi örneği seçimi; seçilen örneğe uymayan pinler devre dışı ve nedeni yazıyor
+- [x] Dolu pinler işaretli; seçilince çakışma iletişim kutusu (diğer sinyali taşı / vazgeç), sessiz yok sayma yok
+- [x] Kilitli pinler için "kilidi kaldır" ve tüm kilitleri listeleme (CubeMX'teki pinned pins listesi)
+- [x] Birim testleri: grup süzme, çakışma, örnek seçimi; arayüz testi
+- [ ] Sorun 5 (CAN, USB, DAC, I2S, SDIO sinyalleri): ES-1005 / ES-1006 ile, ES-1002'deki tam sinyal verisi üzerinden
 
 ### ES-1002 · İşlemci verisi: paket, fiziksel pin konumları ve bütün sinyaller
 `etiketler: tip:iyileştirme, alan:mcu, öncelik:yüksek, seviye:hepsi`

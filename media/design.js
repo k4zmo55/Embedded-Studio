@@ -31,6 +31,8 @@
       h('aside', { class: 'right-pane', id: 'right-pane' },
         h('div', { class: 'pane-head' },
           h('span', { class: 'pane-title', text: t('Bağlantılar') }),
+          h('span', { class: 'spacer' }),
+          h('button', { class: 'ghost small', id: 'pinned-btn', title: t('Elle sabitlenmiş pinler'), onclick: () => openPinned() }, t('Sabit pinler')),
           h('button', { class: 'icon', title: t('Paneli kapat'), onclick: () => setRightPanel(false) }, icon('close', 13))),
         h('details', { id: 'notes-box', class: 'notes-box', ontoggle: (e) => { ui.notesOpen = e.target.open; saveUi(); } },
           h('summary', {}, h('span', { text: t('Asistan notları') }), h('span', { id: 'notes-badges' })),
@@ -190,6 +192,41 @@
       h('span', { class: 'badge', title: t('Toplam not'), text: String(all.length) })].filter(Boolean));
   }
 
+  // ES-1001: bus komponentinin türü (I2C / SPI / UART) ve seçilebilecek çevre birimi örnekleri
+  const busType = (c) => ['i2c', 'spi', 'uart'].find((x) => c.pins.some((p) => p.role.startsWith(x + '.'))) || null;
+  const periphsOf = (type) => Object.entries(state.lib.mcus[state.design.mcuId].peripherals || {}).filter(([, v]) => v.type === type).map(([k]) => k);
+
+  /** Seçenek metni: "PB10 · I2C2_SCL · BME280_1.SCL — neden" */
+  function choiceText(ch) {
+    const sig = /^GPIO_/.test(ch.signal) ? '' : ` · ${ch.signal}`;
+    return `${ch.pin}${sig}${ch.user ? ` · ${ch.user}` : ''}${ch.conflict ? ' ⚠' : ''}${ch.disabled ? ` — ${ch.reason}` : ''}`;
+  }
+
+  /**
+   * Dolu pin seçildi: CubeMX'teki gibi açıkça sorulur. "Taşı": diğer komponentin bu pine kilidi kalkar, otomatik
+   * atama onu başka bir pine taşır (kilitli pin önce ayrılır). Vazgeç: seçim geri alınır.
+   */
+  function confirmConflict(key, ch, onMove, onCancel) {
+    const [instId, compPin] = key.split('.');
+    const inst = state.design.instances.find((i) => i.id === instId);
+    let moved = false;
+    modal({
+      title: t('{0} kullanımda', ch.pin),
+      width: 440,
+      onClose: () => { if (!moved) onCancel(); },
+      body: h('div', {},
+        h('p', { text: t('{0} şu anda {1} tarafından kullanılıyor.', ch.pin, ch.user) }),
+        h('p', { class: 'hint', text: t('{0}.{1} bu pine sabitlenirse diğer bağlantı otomatik olarak başka bir uygun pine taşınır.', inst ? inst.label : instId, compPin) })),
+      buttons: [
+        { label: t('Vazgeç') },
+        { label: t('Diğerini taşı'), primary: true, id: 'conflict-move', action: () => { moved = true; onMove(); } }
+      ]
+    });
+  }
+
+  /** Diğer komponentlerin bu pine kilitleri (çakışmada "taşı" ile kaldırılır) */
+  const locksOnPin = (pin, exceptInst) => Object.entries(state.design.locks || {}).filter(([k, v]) => v === pin && !k.startsWith(exceptInst + '.')).map(([k]) => k);
+
   /**
    * Bir komponentin bağlantı tablosu.
    * staged verilirse değişiklikler sadece staged'e yazılır (modal: Kaydet ile uygulanır).
@@ -198,6 +235,7 @@
     const c = comp(inst);
     const conns = state.result.connections.filter((x) => x.instId === inst.id);
     const lockOf = (key) => (staged ? staged.locks[key] : state.design.locks && state.design.locks[key]);
+    const issues = state.result.lockIssues || {};
     const rows = c.pins.map((p) => {
       const key = `${inst.id}.${p.name}`;
       if (p.role === 'power' || p.role === 'ground') {
@@ -205,28 +243,77 @@
         return h('tr', {}, h('td', { text: p.name }), h('td', { class: 'hint', text: p.role === 'ground' ? t('Toprak') : t('Besleme') }), h('td', { class: net === 'GND' ? 'k-gpio' : 'k-pwm', text: net }));
       }
       const conn = conns.find((x) => x.compPin === p.name);
-      const opts = state.result.options[key] || [];
+      const list = (state.result.choices || {})[key] || (state.result.options[key] || []).map((pin) => ({ pin, signal: '' }));
       const locked = lockOf(key);
+      const setPin = (pin, release = []) => {
+        if (staged) {
+          if (pin === 'auto') delete staged.locks[key];
+          else staged.locks[key] = pin;
+          staged.release = [...new Set([...(staged.release || []), ...release])];
+        } else {
+          state.design.locks = state.design.locks || {};
+          for (const k of release) delete state.design.locks[k];
+          setLock(key, pin);
+        }
+      };
+      // Çevre birimine göre gruplu (CubeMX: I2C1 / I2C2 …); GPIO'da boş / kullanımda
+      const groups = new Map();
+      for (const ch of list) {
+        const g = ch.periph || (ch.user && !(conn && conn.mcuPin === ch.pin) ? t('Kullanımda') : t('Boş pinler'));
+        groups.set(g, [...(groups.get(g) || []), ch]);
+      }
+      const opt = (ch) => h('option', {
+        value: `${ch.pin}|${ch.signal}`, disabled: !!ch.disabled, title: ch.reason || '',
+        selected: locked === ch.pin && (!conn || conn.mcuPin !== ch.pin || !ch.signal || conn.signal === ch.signal || /^GPIO_/.test(ch.signal)),
+        text: choiceText({ ...ch, user: conn && conn.mcuPin === ch.pin ? '' : ch.user, conflict: ch.conflict && !(conn && conn.mcuPin === ch.pin) })
+      });
       const sel = h('select', {
-        'aria-label': t('{0} {1} MCU pini', inst.label, p.name),
+        'aria-label': t('{0} {1} MCU pini', inst.label, p.name), 'data-key': key,
         onchange: (e) => {
-          if (staged) {
-            if (e.target.value === 'auto') delete staged.locks[key];
-            else staged.locks[key] = e.target.value;
-          } else setLock(key, e.target.value);
+          const v = e.target.value;
+          if (v === 'auto') return setPin('auto');
+          const [pin, signal] = v.split('|');
+          const ch = list.find((x) => x.pin === pin && x.signal === signal) || { pin };
+          if (ch.conflict && !(conn && conn.mcuPin === pin)) {
+            confirmConflict(key, ch, () => setPin(pin, locksOnPin(pin, inst.id)), () => { e.target.value = locked ? [...e.target.options].find((o) => o.value.startsWith(locked + '|'))?.value || 'auto' : 'auto'; });
+          } else setPin(pin);
         }
       },
       h('option', { value: 'auto', text: conn ? t('Otomatik ({0})', conn.mcuPin) : t('Otomatik') }),
-      ...opts.map((pin) => {
-        const user = state.result.pinUsage[pin];
-        const mine = conn && conn.mcuPin === pin;
-        return h('option', { value: pin, selected: locked === pin, text: user && !mine ? `${pin}  · ${user}` : pin });
-      }));
-      return h('tr', {},
+      ...[...groups].sort(([a], [b]) => (a === t('Kullanımda')) - (b === t('Kullanımda')) || a.localeCompare(b, 'en', { numeric: true })).map(([g, chs]) => (groups.size > 1 || list[0]?.periph ? h('optgroup', { label: g }, ...chs.map(opt)) : chs.map(opt))).flat());
+      const issue = !staged && locked ? issues[key] : null;
+      return h('tr', { class: issue ? 'lock-bad' : '' },
         h('td', { text: p.name }),
         h('td', {}, sel),
-        h('td', { class: conn ? `k-${conn.kind}` : 'hint' }, locked ? h('span', { class: 'lock', title: t('Elle seçildi'), text: '● ' }) : null, conn ? conn.signal : '—'));
+        h('td', { class: conn ? `k-${conn.kind}` : 'hint' },
+          locked ? h('button', { class: 'lock link', title: issue || t('Elle sabitlendi — tıkla: kilidi kaldır'), 'aria-label': t('{0} kilidini kaldır', p.name), onclick: () => setPin('auto') }, issue ? '⚠ ' : '● ') : null,
+          conn ? conn.signal : '—'));
     });
+    // ES-1001: çevre birimi örneği (I2C1 / I2C2 …): seçilince grubun pinleri o birimde aranır
+    let periphSel = null;
+    const type = busType(c);
+    if (type) {
+      const list = periphsOf(type);
+      const current = staged ? staged.periph : (inst.options && inst.options.periph) || 'auto';
+      const now = conns.find((x) => x.kind === type && x.peripheral)?.peripheral;
+      periphSel = h('select', {
+        class: 'periph-sel', title: t('Çevre birimi'), 'aria-label': t('{0} çevre birimi', inst.label),
+        onchange: (e) => {
+          const v = e.target.value;
+          // Seçilen birime uymayan kendi bus kilitleri kalkar
+          const misfit = c.pins.filter((p) => p.role.startsWith(type + '.')).map((p) => `${inst.id}.${p.name}`)
+            .filter((k) => { const pin = lockOf(k); return pin && v !== 'auto' && !((state.result.choices || {})[k] || []).some((ch) => ch.pin === pin && ch.periph === v); });
+          if (staged) { staged.periph = v; for (const k of misfit) delete staged.locks[k]; } else {
+            for (const k of misfit) delete state.design.locks[k];
+            const o = { ...(inst.options || {}) };
+            if (v === 'auto') delete o.periph; else o.periph = v;
+            inst.options = o;
+            update();
+          }
+        }
+      }, h('option', { value: 'auto', text: now ? `${now} · ${t('oto')}` : t('Otomatik') }),
+      ...list.map((x) => h('option', { value: x, selected: current === x, text: x })));
+    }
     let addrSel = null;
     if (c.i2c) {
       const addrs = [c.i2c.address, ...(c.i2c.altAddresses || [])];
@@ -235,19 +322,24 @@
         title: t('I2C adresi'), 'aria-label': t('I2C adresi'),
         onchange: (e) => {
           if (staged) staged.address = e.target.value;
-          else { inst.options = e.target.value === 'auto' ? {} : { address: e.target.value }; update(); }
+          else {
+            const o = { ...(inst.options || {}) };
+            if (e.target.value === 'auto') delete o.address; else o.address = e.target.value;
+            inst.options = o;
+            update();
+          }
         }
       }, h('option', { value: 'auto', text: t('adres: auto ({0})', state.result.addresses[inst.id] || '-') }),
       ...addrs.map((a) => h('option', { value: a, text: t('adres: {0}', a), selected: current === a })));
     }
-    return { table: h('table', { class: 'pins' }, ...rows), addrSel };
+    return { table: h('table', { class: 'pins' }, ...rows), addrSel, periphSel };
   }
 
   function renderConnections() {
     const cards = state.design.instances.map((inst) => {
       const c = comp(inst);
       if (!c) return null;
-      const { table, addrSel } = connTable(inst);
+      const { table, addrSel, periphSel } = connTable(inst);
       return h('div', {
         class: `conn-card${selected === inst.id ? ' sel' : ''}`, 'data-inst': inst.id,
         onmouseenter: () => setHighlight(inst.id), onmouseleave: () => setHighlight(null),
@@ -256,19 +348,45 @@
       h('div', { class: 'conn-head' },
         h('span', { class: `iface k-${c.interface}`, text: KIND_LABEL[c.interface] || c.interface }),
         h('span', { class: 'title', title: c.name, text: inst.label }),
+        periphSel,
         addrSel,
         h('button', { class: 'icon', title: t('Tasarımdan çıkar'), 'aria-label': t('{0} sil', inst.label), onclick: () => removeComponent(inst.id) }, icon('trash', 13))),
       table);
     });
     $('conns').replaceChildren(...cards.filter(Boolean));
+    const n = Object.keys(state.design.locks || {}).length;
+    const b = $('pinned-btn');
+    if (b) b.textContent = n ? t('Sabit pinler ({0})', n) : t('Sabit pinler');
+  }
+
+  /** ES-1001: elle sabitlenmiş bütün pinler (CubeMX'teki pinned pins listesi): kaldır / hepsini kaldır */
+  function openPinned() {
+    const locks = state.design.locks || {};
+    const issues = state.result.lockIssues || {};
+    const label = (k) => { const [id, pin] = k.split('.'); const i = state.design.instances.find((x) => x.id === id); return `${i ? i.label : id}.${pin}`; };
+    const keys = Object.keys(locks).sort((a, b) => label(a).localeCompare(label(b)));
+    const m = modal({
+      title: t('Sabit pinler'),
+      width: 460,
+      body: keys.length ? h('table', { class: 'pins pinned-list' }, ...keys.map((k) => h('tr', { class: issues[k] ? 'lock-bad' : '' },
+        h('td', { class: 'mono', text: label(k) }),
+        h('td', { class: 'mono', text: locks[k] }),
+        h('td', { class: 'hint', text: issues[k] || '' }),
+        h('td', {}, h('button', { class: 'ghost small', 'data-key': k, onclick: () => { delete state.design.locks[k]; update(); m.close(); openPinned(); } }, t('Kaldır'))))))
+        : h('p', { class: 'hint', text: t('Sabitlenmiş pin yok: bütün pinleri asistan atıyor. Bağlantılar tablosunda bir pin seçmek onu sabitler.') }),
+      buttons: [
+        ...(keys.length ? [{ label: t('Hepsini kaldır'), id: 'pinned-clear', action: () => { state.design.locks = {}; update(); toast('info', t('{0} sabit pin kaldırıldı.', keys.length)); } }] : []),
+        { label: t('Kapat'), primary: true }
+      ]
+    });
   }
 
   /** Sağ tık → Bağlantılar: aynı tablo, Kaydet / Kapat ile. */
   function openConnections(inst) {
     const locks = {};
     for (const [k, v] of Object.entries(state.design.locks || {})) if (k.startsWith(inst.id + '.')) locks[k] = v;
-    const staged = { locks, address: (inst.options && inst.options.address) || 'auto', mirror: !!inst.mirror };
-    const { table, addrSel } = connTable(inst, staged);
+    const staged = { locks, address: (inst.options && inst.options.address) || 'auto', periph: (inst.options && inst.options.periph) || 'auto', mirror: !!inst.mirror, release: [] };
+    const { table, addrSel, periphSel } = connTable(inst, staged);
     const c = comp(inst);
     modal({
       title: t('{0} · Bağlantılar', inst.label),
@@ -278,6 +396,7 @@
           ES.mode().art ? h('div', { class: 'conn-modal-art' }, ES.art(c)) : null,
           h('div', {},
             h('div', { class: 'hint', text: c.name }),
+            periphSel,
             addrSel,
             h('label', { class: 'check' }, h('input', { type: 'checkbox', checked: staged.mirror, onchange: (e) => (staged.mirror = e.target.checked) }), h('span', { text: t('Yönü değiştir (aynala)') })))),
         h('div', { class: 'conn-card flat' }, table),
@@ -287,9 +406,14 @@
         {
           label: t('Kaydet'), primary: true,
           action: () => {
-            for (const k of Object.keys(state.design.locks || {})) if (k.startsWith(inst.id + '.')) delete state.design.locks[k];
+            state.design.locks = state.design.locks || {};
+            for (const k of Object.keys(state.design.locks)) if (k.startsWith(inst.id + '.')) delete state.design.locks[k];
+            for (const k of staged.release) delete state.design.locks[k];
             Object.assign(state.design.locks, staged.locks);
-            inst.options = staged.address === 'auto' ? {} : { address: staged.address };
+            const o = {};
+            if (staged.address !== 'auto') o.address = staged.address;
+            if (staged.periph !== 'auto') o.periph = staged.periph;
+            inst.options = o;
             inst.mirror = staged.mirror;
             update();
             toast('info', t('{0} bağlantıları kaydedildi.', inst.label));

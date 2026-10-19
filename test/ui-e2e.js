@@ -376,7 +376,7 @@ async function until(fn, ms = 8000, what = 'koşul') {
     await cdp.click(`([...document.querySelectorAll('.ctx-item')].find((e) => e.textContent.includes('Bağlantılar')))`);
     await until(() => cdp.eval(`!!document.querySelector('.modal')`), 2000, 'modal');
     await beat(700);
-    await cdp.eval(`(() => { const s = document.querySelector('.modal table.pins select'); s.value = 'PB8'; s.dispatchEvent(new Event('change')); })()`);
+    await cdp.eval(`(() => { const s = document.querySelector('.modal table.pins select'); s.value = [...s.options].find((o) => o.value.startsWith('PB8|')).value; s.dispatchEvent(new Event('change')); })()`);
     await beat(900);
     await cdp.shot('05-baglantilar-penceresi');
     assert.ok(!design().locks['c' + ''], 'Kaydet öncesi değişmemeli');
@@ -389,11 +389,52 @@ async function until(fn, ms = 8000, what = 'koşul') {
   await step('Bağlantılar penceresi: Kapat değişiklikleri atar', async () => {
     await cdp.click(`([...document.querySelectorAll('#schematic .comp')].find((g) => g.textContent.includes('LED_1')).querySelector('.sym-body'))`, 'right');
     await cdp.click(`([...document.querySelectorAll('.ctx-item')].find((e) => e.textContent.includes('Bağlantılar')))`);
-    await cdp.eval(`(() => { const s = document.querySelector('.modal table.pins select'); s.value = 'PA0'; s.dispatchEvent(new Event('change')); })()`);
+    await cdp.eval(`(() => { const s = document.querySelector('.modal table.pins select'); s.value = [...s.options].find((o) => o.value.startsWith('PA0|')).value; s.dispatchEvent(new Event('change')); })()`);
     const before = JSON.stringify(design());
     await cdp.click(`([...document.querySelectorAll('.modal-foot button')].find((b) => b.textContent === 'Kapat'))`);
     await sleep(800);
     assert.strictEqual(JSON.stringify(design()), before);
+  });
+  await step('Alternatif pin seçimi (ES-1001): çevre birimine göre gruplu seçenekler, grup dışı pinler kapalı, örnek seçimi, çakışmada taşı, sabit pinler listesi', async () => {
+    const card = (label) => `[...document.querySelectorAll('#conns .conn-card')].find((c) => c.querySelector('.title').textContent === '${label}')`;
+    const rowSel = (label, pin) => `[...${card(label)}.querySelectorAll('table.pins tr')].find((r) => r.firstChild.textContent === '${pin}').querySelector('select')`;
+    // BME280_1.SCL önceki adımda PB8'e (I2C1) sabitlendi: SDA'da I2C1 dışındaki seçenekler kapalı ve nedeni yazıyor
+    assert.ok(Object.values(design().locks).includes('PB8'));
+    const groups = await cdp.eval(`[...${rowSel('BME280_1', 'SDA')}.querySelectorAll('optgroup')].map((g) => g.label)`);
+    assert.deepStrictEqual(groups, ['I2C1', 'I2C2', 'I2C3']);
+    const opts = await cdp.eval(`[...${rowSel('BME280_1', 'SDA')}.options].slice(1).map((o) => [o.textContent, o.disabled])`);
+    assert.ok(opts.some(([text, off]) => off && /^PB3 · I2C2_SDA — grup I2C1 üzerinde/.test(text)), JSON.stringify(opts));
+    assert.ok(opts.some(([text, off]) => !off && /^PB9 · I2C1_SDA/.test(text)));
+    // Çevre birimi örneği: I2C3 seçilince uymayan SCL kilidi kalkar, bus I2C3'e geçer
+    await cdp.eval(`(() => { const s = ${card('BME280_1')}.querySelector('.periph-sel'); s.value = 'I2C3'; s.dispatchEvent(new Event('change')); })()`);
+    await until(() => { const i = design().instances.find((x) => x.label === 'BME280_1'); return i.options && i.options.periph === 'I2C3'; }, 4000, 'I2C3 seçildi');
+    await until(() => cdp.eval(`${card('BME280_1')}.textContent.includes('I2C3_SCL')`), 4000, 'bus I2C3');
+    assert.ok(!Object.values(design().locks).includes('PB8'), 'I2C1 kilidi kalktı');
+    await beat(600);
+    await cdp.shot('05b-cevre-birimi-secimi');
+    await cdp.eval(`(() => { const s = ${card('BME280_1')}.querySelector('.periph-sel'); s.value = 'auto'; s.dispatchEvent(new Event('change')); })()`);
+    await until(() => { const i = design().instances.find((x) => x.label === 'BME280_1'); return !(i.options && i.options.periph); }, 4000, 'otomatik');
+    // Çakışma: LED_1'i BME280_1'in SCL pinine almak açıkça sorulur; "Diğerini taşı" BME280'i başka pine geçirir
+    await until(() => cdp.eval(`(${card('BME280_1')}.textContent.match(/I2C\\d_SCL/) || []).length > 0`), 4000, 'SCL');
+    const scl = await cdp.eval(`(() => { const t = ${card('BME280_1')}.querySelectorAll('table.pins tr'); const r = [...t].find((x) => x.firstChild.textContent === 'SCL'); return r.querySelector('select').options[0].textContent.match(/\\((P[A-K]\\d+)\\)/)[1]; })()`);
+    const ledPin = (await cdp.eval(`[...${card('LED_1')}.querySelectorAll('table.pins tr')].find((r) => r.querySelector('select')).firstChild.textContent`));
+    await cdp.eval(`(() => { const s = ${rowSel('LED_1', ledPin)}; s.value = [...s.options].find((o) => o.value.startsWith('${scl}|')).value; s.dispatchEvent(new Event('change')); })()`);
+    await until(() => cdp.eval(`!!document.querySelector('#conflict-move')`), 3000, 'çakışma sorusu');
+    assert.match(await cdp.eval(`document.querySelector('.modal-body').textContent`), new RegExp(`${scl} şu anda I2C\\d_SCL tarafından kullanılıyor`));
+    await cdp.shot('05c-cakisma');
+    await cdp.click('#conflict-move');
+    await until(() => Object.entries(design().locks).some(([k, v]) => v === scl && k.endsWith('.' + ledPin)), 4000, 'LED sabitlendi');
+    await until(() => cdp.eval(`!${card('BME280_1')}.querySelector('table.pins select').options[0].textContent.includes('(${scl})')`), 4000, 'BME280 taşındı');
+    assert.ok(!(await cdp.eval(`!!document.querySelector('tr.lock-bad')`)), 'kilit sorunu yok');
+    // Sabit pinler listesi: kilitler görünür, hepsi kaldırılır
+    await until(() => cdp.eval(`/Sabit pinler \\(\\d+\\)/.test(document.querySelector('#pinned-btn').textContent)`), 3000, 'sayı');
+    await cdp.click('#pinned-btn');
+    await until(() => cdp.eval(`document.querySelectorAll('.pinned-list tr').length > 0`), 3000, 'liste');
+    assert.ok(await cdp.eval(`document.querySelector('.pinned-list').textContent.includes('LED_1.${ledPin}')`));
+    await cdp.shot('05d-sabit-pinler');
+    await cdp.click('#pinned-clear');
+    await until(() => Object.keys(design().locks).length === 0, 4000, 'kilitler kaldırıldı');
+    assert.strictEqual(await cdp.eval(`document.querySelector('#pinned-btn').textContent`), 'Sabit pinler');
   });
   await step('Aynala (yön değiştir)', async () => {
     await cdp.click(`([...document.querySelectorAll('#schematic .comp')].find((g) => g.textContent.includes('BME280_1')).querySelector('.sym-body'))`, 'right');

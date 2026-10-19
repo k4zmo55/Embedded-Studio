@@ -206,13 +206,19 @@ path.wire[class*=w-] { fill: none; }
 .conn-card.sel { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
 .conn-head { display: flex; align-items: center; gap: 6px; padding: 5px 8px; background: color-mix(in srgb, var(--fg) 5%, transparent); }
 .conn-head .title { flex: 1; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.conn-head select { font-size: 11px; padding: 1px 4px; max-width: 150px; }
+.conn-head select { font-size: 11px; padding: 1px 4px; max-width: 112px; min-width: 0; }
 table.pins { width: 100%; border-collapse: collapse; font-size: 12px; }
 table.pins td { padding: 3px 8px; border-top: 1px solid var(--border); }
 table.pins td:first-child { width: 52px; font-family: var(--mono); }
 table.pins td:last-child { font-family: var(--mono); font-size: 11px; text-align: right; white-space: nowrap; }
 table.pins select { width: 100%; font-size: 12px; padding: 1px 2px; }
 .lock { color: var(--warn); }
+button.lock { background: none; border: 0; padding: 0; cursor: pointer; font: inherit; }
+button.lock:hover { color: var(--err, #f14c4c); }
+tr.lock-bad td { background: color-mix(in srgb, var(--warn) 12%, transparent); }
+.conn-head .periph-sel { max-width: 88px; }
+.conn-head .title { min-width: 72px; }
+.pinned-list td:last-child { text-align: right; }
 
 .dock { grid-area: dock; border-top: 1px solid var(--border); display: flex; flex-direction: column; min-height: 0; background: var(--side); }
 .dock-head { display: flex; align-items: center; gap: 10px; padding: 7px 12px; cursor: pointer; flex-shrink: 0; }

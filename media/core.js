@@ -165,7 +165,8 @@ window.ES = (function () {
       document.removeEventListener('keydown', onKey);
       opts.onClose && opts.onClose();
     };
-    const onKey = (e) => { if (e.key === 'Escape') close(); };
+    // İç içe pencerede Esc yalnızca en üsttekini kapatır
+    const onKey = (e) => { if (e.key === 'Escape' && [...document.querySelectorAll('.modal-overlay')].pop() === overlay) close(); };
     const overlay = h('div', { class: 'modal-overlay', onmousedown: (e) => { if (e.target === overlay) close(); } },
       h('div', { class: `modal${opts.className ? ' ' + opts.className : ''}`, role: 'dialog', 'aria-label': opts.title, style: opts.width ? `width:${opts.width}px` : null },
         h('div', { class: 'modal-head' }, h('span', { class: 'modal-title', text: opts.title }), h('button', { class: 'icon', title: t('Kapat'), onclick: () => close() }, icon('close', 14))),

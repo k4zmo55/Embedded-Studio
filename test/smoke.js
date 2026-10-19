@@ -20,6 +20,43 @@ let passed = 0;
 const test = (name, fn) => { fn(); passed++; console.log('  ✓ ' + name); };
 
 console.log('Pin atama');
+test('alternatif pin seçimi (ES-1001): çevre birimine göre seçenekler, grup süzme, örnek seçimi, çakışmada taşıma, kilit sorunları', () => {
+  const two = (extra) => design([inst('bme280'), inst('led')], extra);
+  // Seçenekte sinyal ve çevre birimi; kilit yokken her I2C örneği seçilebilir
+  let r = assign(two(), lib);
+  const sda = r.choices['bme2801.SDA'];
+  assert.deepStrictEqual(sda.map((c) => `${c.pin}·${c.signal}`), ['PB3·I2C2_SDA', 'PB4·I2C3_SDA', 'PB7·I2C1_SDA', 'PB8·I2C3_SDA', 'PB9·I2C1_SDA']);
+  assert.ok(sda.every((c) => !c.disabled));
+  assert.deepStrictEqual(r.options['bme2801.SDA'], ['PB3', 'PB4', 'PB7', 'PB8', 'PB9'], 'eski options alanı');
+  // SCL I2C1'e sabitlenince SDA'da başka örnekler devre dışı, nedeniyle
+  r = assign(two({ locks: { 'bme2801.SCL': 'PB8' } }), lib);
+  const sda2 = r.choices['bme2801.SDA'];
+  assert.deepStrictEqual(sda2.filter((c) => !c.disabled).map((c) => c.pin), ['PB7', 'PB9']);
+  assert.match(sda2.find((c) => c.pin === 'PB3').reason, /grup I2C1 üzerinde \(BME280_1\.SCL → PB8 sabit\)/);
+  // Uymayan kilit sessizce yok sayılmaz: satırda neden
+  r = assign(two({ locks: { 'bme2801.SCL': 'PB8', 'bme2801.SDA': 'PB3' } }), lib);
+  assert.match(r.lockIssues['bme2801.SDA'], /PB3 kilidi I2C2 gerektiriyor ama grup I2C1 üzerinde/);
+  assert.strictEqual(r.connections.find((c) => c.compPin === 'SDA').peripheral, 'I2C1');
+  // Çevre birimi örneği doğrudan: I2C3
+  r = assign(two({ instances: [{ ...inst('bme280'), options: { periph: 'I2C3' } }, inst('led')] }), lib);
+  assert.deepStrictEqual(r.connections.filter((c) => c.kind === 'i2c').map((c) => c.signal), ['I2C3_SCL', 'I2C3_SDA']);
+  assert.match(r.choices['bme2801.SCL'].find((c) => c.periph === 'I2C1').reason, /BME280_1 için I2C3 seçili/);
+  assert.deepStrictEqual(Object.keys(r.lockIssues), []);
+  // Olmayan örnek yok sayılır (otomatik)
+  assert.ok(assign(two({ instances: [{ ...inst('bme280'), options: { periph: 'I2C9' } }, inst('led')] }), lib).connections.some((c) => c.peripheral === 'I2C1'));
+  // Dolu pin: seçenekte kim kullandığı ve çakışma işareti
+  r = assign(two(), lib);
+  const pb6 = r.choices['led1.A'].find((c) => c.pin === 'PB6');
+  assert.deepStrictEqual([pb6.user, pb6.conflict, pb6.ownerIds], ['I2C1_SCL', true, ['bme2801']]);
+  // "Diğerini taşı": LED PB6'ya sabitlenir, BME280 otomatik olarak başka SCL pinine geçer (LED sonra yerleşse bile)
+  r = assign(two({ locks: { 'led1.A': 'PB6' } }), lib);
+  assert.deepStrictEqual(r.lockIssues, {});
+  assert.strictEqual(r.connections.find((c) => c.instId === 'led1').mcuPin, 'PB6');
+  assert.notStrictEqual(r.connections.find((c) => c.compPin === 'SCL').mcuPin, 'PB6');
+  // İki kilit aynı pinde: ilki kazanır, ikincisinin nedeni yazılır
+  r = assign(two({ locks: { 'led1.A': 'PB8', 'bme2801.SCL': 'PB8' } }), lib);
+  assert.match(r.lockIssues['bme2801.SCL'], /PB8 zaten LED_1\.A tarafından kullanılıyor/);
+});
 test('aynı adresli iki BME280 → ikincisi 0x77, aynı bus', () => {
   const r = assign(design([inst('bme280', 1), inst('bme280', 2)]), lib);
   assert.strictEqual(r.addresses.bme2801, '0x76');

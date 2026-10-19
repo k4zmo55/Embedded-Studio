@@ -8,11 +8,15 @@
  *
  * Kullanıcı tablodan bir pini elle seçtiğinde bu "lock" olarak gelir ve
  * motor geri kalan her şeyi bu kısıta göre yeniden çözer.
+ *
+ * ES-1001: kilitli pinler otomatik atamada başkalarına verilmez (önce ayrılır); uygulanamayan kilit nedeniyle
+ * lockIssues'ta döner; bus komponentinin çevre birimi örneği (I2C1/I2C2…) inst.options.periph ile seçilir;
+ * arayüz için her komponent pininin seçenekleri choices'ta: pin, sinyal, çevre birimi, kim kullanıyor, devre dışı nedeni.
  */
 const { t } = require('../i18n');
 
 /**
- * @typedef {{ id: string, componentId: string, label: string, options?: { address?: string } }} Instance
+ * @typedef {{ id: string, componentId: string, label: string, options?: { address?: string, periph?: string } }} Instance
  * @typedef {{ mcuId: string, rtos: boolean, instances: Instance[], locks?: Record<string, string> }} Design
  * @typedef {{ instId: string, compPin: string, mcuPin: string, signal: string, af?: number,
  *             peripheral?: string, kind: string, locked: boolean }} Connection
@@ -63,6 +67,17 @@ function assign(design, lib) {
   for (const p of mcu.pins) if (p.reserved) used.set(p.name, p.reserved);
 
   const msg = (level, text) => messages.push({ level, text });
+  /** @type {Record<string, string>} uygulanamayan kilit → neden */
+  const lockIssues = {};
+  // Kilitli pinler: otomatik atama bunları başka bir komponent pinine vermez (kilit sahibi önce gelmese bile)
+  /** @type {Map<string, string>} pin -> kilit anahtarı (inst.compPin) */
+  const lockedPins = new Map();
+  for (const [key, pin] of Object.entries(locks)) {
+    const p = pinByName.get(pin);
+    if (p && !p.reserved && !lockedPins.has(pin)) lockedPins.set(pin, key);
+  }
+  /** Otomatik atamada kullanılabilir mi: boş ve başka birinin kilidinde değil (instIds: kilidi sayılmayacak komponentler) */
+  const freeFor = (p, instIds) => !used.has(p.name) && (!lockedPins.has(p.name) || instIds.includes(lockedPins.get(p.name).split('.')[0]));
   // Az fonksiyonlu pinleri tercih et: çok yönlü pinler sonraki ihtiyaçlar için boş kalsın.
   const score = (p) => p.functions.length + (p.note ? 0.5 : 0);
   const byScore = (a, b) => score(a) - score(b);
@@ -86,21 +101,35 @@ function assign(design, lib) {
     });
   };
 
-  /** Bir lock'u doğrular; geçersizse uyarı verip yok sayar. */
+  /** "c1.SCL" → "BME280_1.SCL" */
+  const keyLabel = (key) => {
+    const [id, pin] = key.split('.');
+    const m = design.instances.find((i) => i.id === id);
+    return `${m ? m.label : id}.${pin}`;
+  };
+
+  /** Kilit uygulanamadı: uyarı + arayüzde satırda neden */
+  const lockIssue = (inst, compPin, text) => {
+    lockIssues[`${inst.id}.${compPin}`] = text;
+    msg('warn', `${inst.label}.${compPin}: ${text}`);
+  };
+
+  /** Bir lock'u doğrular; geçersizse nedenini bildirip yok sayar (otomatik atanır). */
   const validLock = (inst, compPin, predicate) => {
-    const pinName = locks[`${inst.id}.${compPin}`];
+    const key = `${inst.id}.${compPin}`;
+    const pinName = locks[key];
     if (!pinName) return undefined;
     const pin = pinByName.get(pinName);
     if (!pin || pin.reserved) {
-      msg('warn', t('{0}.{1} → {2} kullanılamaz (rezerve). Otomatik atanıyor.', inst.label, compPin, pinName));
+      lockIssue(inst, compPin, t('{0} kullanılamaz (rezerve). Otomatik atandı.', pinName));
       return undefined;
     }
-    if (used.has(pinName)) {
-      msg('warn', t('{0}.{1} → {2} zaten {3} tarafından kullanılıyor. Otomatik atanıyor.', inst.label, compPin, pinName, used.get(pinName)));
+    if (used.has(pinName) || lockedPins.get(pinName) !== key) {
+      lockIssue(inst, compPin, t('{0} zaten {1} tarafından kullanılıyor. Otomatik atandı.', pinName, used.get(pinName) || keyLabel(lockedPins.get(pinName))));
       return undefined;
     }
     if (predicate && !predicate(pin)) {
-      msg('warn', t('{0}.{1} → {2} bu fonksiyonu desteklemiyor. Otomatik atanıyor.', inst.label, compPin, pinName));
+      lockIssue(inst, compPin, t('{0} bu fonksiyonu desteklemiyor. Otomatik atandı.', pinName));
       return undefined;
     }
     return pin;
@@ -111,10 +140,10 @@ function assign(design, lib) {
    * farklı, boş pinler seçer. Basit geri izlemeli (backtracking) arama.
    * @param {string} periph @param {string[]} fns @param {Record<string, any>} fixed fn -> pin
    */
-  const pickPins = (periph, fns, fixed) => {
+  const pickPins = (periph, fns, fixed, instIds) => {
     const candidates = fns.map((fn) => {
       if (fixed[fn]) return fnOf(fixed[fn], `${periph}_${fn}`) ? [fixed[fn]] : [];
-      return mcu.pins.filter((p) => !used.has(p.name) && fnOf(p, `${periph}_${fn}`)).sort(byScore);
+      return mcu.pins.filter((p) => freeFor(p, instIds) && fnOf(p, `${periph}_${fn}`)).sort(byScore);
     });
     const chosen = [];
     const search = (i) => {
@@ -134,7 +163,8 @@ function assign(design, lib) {
   /** Bir grup komponentin bus pinleri üzerindeki lock'ları toplar. */
   const collectBusLocks = (members, type) => {
     /** @type {Record<string, any>} */ const fixed = {};
-    let lockPeriph;
+    // Seçilen çevre birimi örneği (I2C2 …) kilitlerden önce gelir
+    let lockPeriph = members.map((m) => chosenPeriph(m, type)).find(Boolean);
     for (const inst of members) {
       for (const cp of inst.comp.pins) {
         if (!cp.role.startsWith(type + '.') || !ROLE_PATTERNS[cp.role]) continue;
@@ -144,7 +174,7 @@ function assign(design, lib) {
         const sig = pin.functions.find((f) => ROLE_PATTERNS[cp.role].test(f.signal)).signal;
         const { periph } = parseSignal(sig);
         if (lockPeriph && lockPeriph !== periph) {
-          msg('warn', t('{0}.{1} kilidi {2} gerektiriyor ama grup {3} üzerinde. Kilit yok sayıldı.', inst.label, cp.name, periph, lockPeriph));
+          lockIssue(inst, cp.name, t('{0} kilidi {1} gerektiriyor ama grup {2} üzerinde. Otomatik atandı.', pin.name, periph, lockPeriph));
           continue;
         }
         lockPeriph = periph;
@@ -160,7 +190,7 @@ function assign(design, lib) {
     const order = lockPeriph ? [lockPeriph] : peripheralsOfType(type).filter((p) => !peripherals[p]);
     for (const periph of order) {
       if (peripherals[periph] && !lockPeriph) continue;
-      const pick = pickPins(periph, fns, fixed);
+      const pick = pickPins(periph, fns, fixed, members.map((m) => m.id));
       if (!pick) continue;
       peripherals[periph] = {
         type,
@@ -185,9 +215,17 @@ function assign(design, lib) {
       }
       return periph;
     }
-    msg('error', t('{0} için uygun {1} pini bulunamadı. Bazı pinleri serbest bırakmayı deneyin.', members.map((m) => m.label).join(', '), type.toUpperCase()));
+    msg('error', lockPeriph
+      ? t('{0} için {1} pinleri bulunamadı (boş ya da kilitlerle uyumlu değil). Başka bir {2} seçin ya da pinleri serbest bırakın.', members.map((m) => m.label).join(', '), lockPeriph, type.toUpperCase())
+      : t('{0} için uygun {1} pini bulunamadı. Bazı pinleri serbest bırakmayı deneyin.', members.map((m) => m.label).join(', '), type.toUpperCase()));
     return null;
   };
+
+  /** Komponent için seçilmiş çevre birimi örneği (options.periph), bu türde ve işlemcide varsa */
+  function chosenPeriph(inst, type) {
+    const want = inst.options && inst.options.periph;
+    return want && mcu.peripherals[want] && mcu.peripherals[want].type === type ? want : undefined;
+  }
 
   const hasRole = (inst, prefix) => inst.comp.pins.some((p) => p.role.startsWith(prefix));
   const neededFns = (members, type) => {
@@ -202,7 +240,7 @@ function assign(design, lib) {
     const cfg = inst.comp.i2c;
     const userAddr = inst.options && inst.options.address;
     const candidates = userAddr ? [userAddr] : [cfg.address, ...(cfg.altAddresses || [])];
-    const { lockPeriph } = collectBusLocksQuiet(inst);
+    const { lockPeriph } = collectBusLocksQuiet(inst, 'i2c');
     let placed = false;
     for (const g of i2cGroups) {
       if (lockPeriph && g.lockPeriph && g.lockPeriph !== lockPeriph) continue;
@@ -238,7 +276,7 @@ function assign(design, lib) {
   if (spiInsts.length) {
     /** @type {Map<string, any[]>} */ const spiGroups = new Map();
     for (const inst of spiInsts) {
-      const key = collectBusLocksQuiet(inst).lockPeriph || '*';
+      const key = collectBusLocksQuiet(inst, 'spi').lockPeriph || '*';
       spiGroups.set(key, [...(spiGroups.get(key) || []), inst]);
     }
     for (const [, members] of [...spiGroups].sort(([a], [b]) => Number(a === '*') - Number(b === '*'))) {
@@ -270,7 +308,7 @@ function assign(design, lib) {
           return !timerFreq.has(tim) || timerFreq.get(tim) === freq;
         });
         const locked = validLock(inst, cp.name, ok);
-        const pin = locked || mcu.pins.filter((p) => !used.has(p.name) && ok(p)).sort(byScore)[0];
+        const pin = locked || mcu.pins.filter((p) => freeFor(p, [inst.id]) && ok(p)).sort(byScore)[0];
         if (!pin) { msg('error', t('{0}.{1} için boş PWM kanalı yok.', inst.label, cp.name)); continue; }
         // Aynı timer'ı tercih et (daha az init kodu), yoksa ilk uygun kanal.
         const fns = pin.functions.filter((f) => ROLE_PATTERNS.pwm.test(f.signal) && !usedTimerChannels.has(f.signal));
@@ -283,7 +321,7 @@ function assign(design, lib) {
         connect(inst, cp.name, pin.name, f.signal, 'pwm', { af: f.af, peripheral: periph });
       } else if (cp.role === 'adc') {
         const ok = (p) => p.functions.some((f) => ROLE_PATTERNS.adc.test(f.signal));
-        const pin = validLock(inst, cp.name, ok) || mcu.pins.filter((p) => !used.has(p.name) && ok(p)).sort(byScore)[0];
+        const pin = validLock(inst, cp.name, ok) || mcu.pins.filter((p) => freeFor(p, [inst.id]) && ok(p)).sort(byScore)[0];
         if (!pin) { msg('error', t('{0}.{1} için boş ADC kanalı yok.', inst.label, cp.name)); continue; }
         const f = pin.functions.find((x) => ROLE_PATTERNS.adc.test(x.signal));
         const { periph, fn } = parseSignal(f.signal);
@@ -296,7 +334,7 @@ function assign(design, lib) {
   for (const inst of instances) {
     for (const cp of inst.comp.pins) {
       if (!GPIO_ROLES.includes(cp.role)) continue;
-      const pin = validLock(inst, cp.name) || mcu.pins.filter((p) => !used.has(p.name)).sort(byScore)[0];
+      const pin = validLock(inst, cp.name) || mcu.pins.filter((p) => freeFor(p, [inst.id])).sort(byScore)[0];
       if (!pin) { msg('error', t('{0}.{1} için boş GPIO kalmadı.', inst.label, cp.name)); continue; }
       const isOut = cp.role !== 'gpio.in';
       const spiPeriph = cp.role === 'spi.CS'
@@ -319,25 +357,88 @@ function assign(design, lib) {
   }
 
   // ---- 6) UI için: her komponent pini için seçilebilir MCU pinleri ----
+  // Pin sahipleri: hangi komponentler, hangi sinyal (bus pinleri grubun üyelerince paylaşılır)
+  /** @type {Map<string, { by: string, signal: string, instIds: string[] }>} */
+  const owners = new Map();
+  for (const c of connections) {
+    const o = owners.get(c.mcuPin) || { by: used.get(c.mcuPin) || '', signal: c.signal, instIds: [] };
+    o.instIds.push(c.instId);
+    owners.set(c.mcuPin, o);
+  }
+  const labelOf = (id) => (instances.find((i) => i.id === id) || { label: id }).label;
+  /**
+   * Seçenek: { pin, signal, periph?, af?, user?, conflict?, disabled?, reason? }. conflict: pin başka bir komponentte
+   * (seçilirse arayüz sorar: onu taşı / vazgeç). disabled: bus grubu başka bir çevre birimine bağlı.
+   */
+  /** @type {Record<string, any[]>} */
+  const choices = {};
   /** @type {Record<string, string[]>} */
   const options = {};
   for (const inst of instances) {
     for (const cp of inst.comp.pins) {
       const key = `${inst.id}.${cp.name}`;
-      if (ROLE_PATTERNS[cp.role]) {
-        options[key] = mcu.pins
-          .filter((p) => !p.reserved && p.functions.some((f) => ROLE_PATTERNS[cp.role].test(f.signal)))
-          .map((p) => p.name);
-      } else if (GPIO_ROLES.includes(cp.role)) {
-        options[key] = mcu.pins.filter((p) => !p.reserved).map((p) => p.name);
+      const pattern = ROLE_PATTERNS[cp.role];
+      if (!pattern && !GPIO_ROLES.includes(cp.role)) continue;
+      const usage = (pin, signal) => {
+        const o = owners.get(pin);
+        if (o && !o.instIds.includes(inst.id) && o.signal !== signal) return { user: o.by, conflict: true, ownerIds: o.instIds };
+        if (o && !o.instIds.includes(inst.id)) return { user: o.by, shared: true };
+        if (!o && used.has(pin)) return { user: used.get(pin) };
+        return {};
+      };
+      const list = [];
+      if (pattern) {
+        const type = cp.role.split('.')[0];
+        const fixed = busFixed(inst, cp.name, type);
+        for (const p of mcu.pins) {
+          if (p.reserved) continue;
+          for (const f of p.functions.filter((x) => pattern.test(x.signal))) {
+            const { periph } = parseSignal(f.signal);
+            const c = { pin: p.name, signal: f.signal, periph, ...(f.af !== undefined ? { af: f.af } : {}), ...usage(p.name, f.signal) };
+            if (fixed && fixed.periph !== periph && type !== 'pwm' && type !== 'adc') Object.assign(c, { disabled: true, reason: fixed.reason });
+            list.push(c);
+          }
+        }
+      } else {
+        for (const p of mcu.pins) if (!p.reserved) list.push({ pin: p.name, signal: cp.role === 'gpio.in' ? 'GPIO_Input' : 'GPIO_Output', ...usage(p.name, '') });
       }
+      choices[key] = list;
+      options[key] = [...new Set(list.map((c) => c.pin))];
     }
   }
 
-  return { connections, peripherals, messages, addresses, power, options, pinUsage: Object.fromEntries(used) };
+  return { connections, peripherals, messages, addresses, power, options, choices, lockIssues, pinUsage: Object.fromEntries(used) };
+
+  /**
+   * Bu komponent pininin bus grubunu bir çevre birimine bağlayan şey (bu pinin kendi kilidi hariç): seçilen örnek
+   * ya da grubun başka bir pinindeki kilit. Yoksa null (pin seçmek grubu taşır).
+   */
+  function busFixed(inst, compPin, type) {
+    if (!['i2c', 'spi', 'uart'].includes(type)) return null;
+    const conn = connections.find((c) => c.instId === inst.id && c.compPin === compPin);
+    const group = conn && conn.peripheral && peripherals[conn.peripheral] ? peripherals[conn.peripheral].members : [inst.id];
+    for (const id of group) {
+      const m = instances.find((i) => i.id === id);
+      const want = m && chosenPeriph(m, type);
+      if (want) return { periph: want, reason: t('{0} için {1} seçili', m.label, want) };
+    }
+    for (const id of group) {
+      const m = instances.find((i) => i.id === id);
+      if (!m) continue;
+      for (const p of m.comp.pins) {
+        const key = `${id}.${p.name}`;
+        if (key === `${inst.id}.${compPin}` || !p.role.startsWith(type + '.') || !locks[key] || lockIssues[key]) continue;
+        const c = connections.find((x) => x.instId === id && x.compPin === p.name);
+        if (c && c.peripheral) return { periph: c.peripheral, reason: t('grup {0} üzerinde ({1}.{2} → {3} sabit)', c.peripheral, labelOf(id), p.name, locks[key]) };
+      }
+    }
+    return null;
+  }
 
   /** Gruplama aşaması için: tek bir komponentin kilitlediği çevre birimi (mesaj üretmeden). */
-  function collectBusLocksQuiet(inst) {
+  function collectBusLocksQuiet(inst, type) {
+    const want = chosenPeriph(inst, type);
+    if (want) return { lockPeriph: want };
     for (const cp of inst.comp.pins) {
       const pinName = locks[`${inst.id}.${cp.name}`];
       const pattern = ROLE_PATTERNS[cp.role];
