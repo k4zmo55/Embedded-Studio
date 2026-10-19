@@ -1,5 +1,15 @@
 # Değişiklik günlüğü
 
+## 0.6.9 (önizleme)
+
+- **Pin etiketleri (ES-1003, CubeMX'teki User Label):** Design şemasında MCU pinine sağ tık → **Etiket gir / değiştir / kaldır** (ör. PA12 → `Pin_Led`).
+  - Etiket yazarken denetlenir: geçerli C tanımlayıcısı, en fazla 40 karakter, C anahtar kelimesi ya da derleyiciye ayrılmış ad (`__x`, `_X`) değil, benzersiz. Eklenti ayrıca komponent pinleri için üretilen adlarla (`LED_1_A`) çakışmayı denetler; geçersiz etiket koda girmez, Asistan notlarında nedeni yazar.
+  - Şemada pinin yerinde etiket (pin adı ipucunda); bağlantı tablolarında `PA12 [Pin_Led]`.
+  - Kod: `board.h`'ta CubeMX biçiminde `#define Pin_Led_Pin GPIO_PIN_12` / `#define Pin_Led_GPIO_Port GPIOA` (bare-metal'de `(1U << 12)`).
+  - İşlemci değişince yeni işlemcide olan pinlerin etiketleri kalır, olmayanlar listelenerek kaldırılır.
+  - Bootloader ayarlarındaki sürüm alanları ve etiket kutusu temaya uymayan (beyaz) giriş kutusu olarak görünüyordu; düzeltildi.
+- Testler: birim 78 (biçim kuralları, benzersizlik, üretilen adla çakışma, HAL ve bare-metal `board.h`, işlemci değişimi, parmak izi); arayüz 48 (sağ tık → etiket, geçersiz ve yinelenen etiket, şemada etiket, Kod Üret, kaldırma).
+
 ## 0.6.8 (önizleme)
 
 - **Bağlantılarda alternatif pin seçimi (ES-1001):** Design sağ panel ve sağ tık > Bağlantılar.
