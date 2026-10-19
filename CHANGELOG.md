@@ -1,5 +1,14 @@
 # Değişiklik günlüğü
 
+## 0.6.8 (önizleme)
+
+- **Bağlantılarda alternatif pin seçimi (ES-1001):** Design sağ panel ve sağ tık > Bağlantılar.
+  - Seçenekler pin, sinyal ve kullanıcısıyla (`PB10 · I2C2_SDA · BME280_2.SDA`) ve çevre birimine göre gruplu (I2C1 / I2C2 / I2C3); GPIO'da boş / kullanımda.
+  - Bus komponentinde **çevre birimi örneği** doğrudan seçilir (I2C1 / I2C2 / I2C3, SPI1 …, USART1 …); seçilen örneğe ya da grubun sabit pinine uymayan seçenekler devre dışı ve nedeni yanında yazar ("grup I2C1 üzerinde (BME280_1.SCL → PB8 sabit)").
+  - Başka bir komponentin kullandığı pin işaretli (⚠); seçilince sorulur: **Diğerini taşı** (onun bu pine kilidi kalkar, otomatik olarak başka uygun pine geçer) ya da **Vazgeç**. Kilitli pinler artık otomatik atamada başkasına verilmiyor, bu yüzden taşıma sıradan bağımsız çalışır.
+  - Uygulanamayan kilit sessizce yok sayılmaz: satır sarı, işaretin üzerinde neden. Kilit işaretine tıklayınca kaldırılır; **Sabit pinler (N)** düğmesi bütün kilitleri listeler, tek tek ya da hepsini kaldırır.
+- Testler: birim 77 (seçenek listesi, grup süzme ve nedeni, örnek seçimi, çakışmada taşıma, aynı pine iki kilit); arayüz (gruplu seçenekler, örnek seçimi, çakışma sorusu ve taşıma, sabit pinler listesi).
+
 ## 0.6.7 (önizleme)
 
 - **İşlemci verisi: paket ve bütün fiziksel pinler (ES-1002, M10 Pinout'un temeli):** 15 işlemcinin tanımına `package` eklendi: paket adı ve türü (LQFP48/64/100/144, UFQFPN32/48), pin sayısı ve her ped için konum, veritabanındaki adı (ör. `PC14-OSC32_IN`), türü (G/Ç, besleme, reset, boot, tek işlevli), GPIO modları (Input / Output / Analog / EVENTOUT / EXTI) ve **bütün** sinyalleri AF numaralarıyla (USB, CAN, SDIO, I2S, DAC, SWD, OSC …; F1'de AF yerine remap). G0'da aynı pedi paylaşan yeniden eşlenebilir pinler (`PA11 [PA9]`) ikincil girdi olarak işaretli. Kartta bağlı pinler (LED, buton, ST-LINK VCP) ayrı `boardPins` alanında.
