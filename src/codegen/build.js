@@ -236,7 +236,12 @@ execute_process(COMMAND git rev-parse --short=12 HEAD WORKING_DIRECTORY \${ES_RO
 if(es_git OR NOT ES_BUILD_ID)
   string(TIMESTAMP ES_BUILD_ID "%Y%m%d-%H%M%S" UTC)
 endif()
-set(ES_BOOT_LINKER_SCRIPT \${ES_ROOT}/${join(P.linkerDir, `${o.mcu.name}_BOOT.ld`)})
+${o.boot.signing ? `# ES-305: imzalama anahtarı (yalnızca komut satırı / CI; eklenti kendi anahtar deposunu kullanır)
+if(NOT ES_SIGN_KEY AND DEFINED ENV{ES_SIGN_KEY})
+  set(ES_SIGN_KEY "$ENV{ES_SIGN_KEY}")
+endif()
+find_program(ES_NODE node)
+` : ''}set(ES_BOOT_LINKER_SCRIPT \${ES_ROOT}/${join(P.linkerDir, `${o.mcu.name}_BOOT.ld`)})
 
 # Bootloader: \${app}_boot (0x${part.bootBase.toString(16).toUpperCase()}, ${part.bootSize / 1024} KB) ve \${app}_full.hex (bootloader + uygulama)
 function(embedded_studio_bootloader app)
@@ -262,7 +267,19 @@ function(embedded_studio_bootloader app)
     DEPENDS \${app} \${boot}
     COMMENT "Bootloader + uygulama: \${app}_full.hex"
     VERBATIM)
-endfunction()
+${o.boot.signing ? `  # ES-305: imzalı paket (\${app}_signed.bin/.hex, \${app}_full_signed.hex, \${app}_update.json). Embedded Studio'nun
+  # Derle'si bunu kendisi yapar; komut satırında / CI'da ES_SIGN_KEY (PEM dosyası, -D ya da ortam değişkeni) ve Node.js gerekir.
+  if(ES_SIGN_KEY AND ES_NODE)
+    add_custom_target(\${app}_signed ALL
+      COMMAND \${ES_NODE} \${ES_ROOT}/cmake/es-sign.js --key \${ES_SIGN_KEY} --pub ${o.boot.pubKey || '-'} --slot 0x${part.slotBase.toString(16).toUpperCase()}
+        --bin $<TARGET_FILE_DIR:\${app}>/\${app}.bin --boot-hex $<TARGET_FILE_DIR:\${boot}>/\${boot}.hex --out $<TARGET_FILE_DIR:\${app}> --name \${app}
+      DEPENDS \${app}_full
+      COMMENT "İmzalı paket: \${app}_signed.bin"
+      VERBATIM)
+  elseif(ES_SIGN_KEY)
+    message(WARNING "ES_SIGN_KEY verildi ama Node.js bulunamadı: imzalı paket üretilmez")
+  endif()
+` : ''}endfunction()
 `;
 }
 

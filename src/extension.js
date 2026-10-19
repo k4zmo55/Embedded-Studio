@@ -54,6 +54,7 @@ const prog = require('./debug/programmer');
 const bl = require('./codegen/bootloader');
 const sysboot = require('./debug/sysboot');
 const esboot = require('./debug/esboot');
+const esign = require('./codegen/es-sign');
 const { DEV_IDS } = require('./debug/stm32id');
 const A = require('./analyzer');
 const serial = require('./monitor/serial');
@@ -63,10 +64,96 @@ const { t } = i18n;
 const DESIGN_FILE = 'embedded-studio.json';
 const PREVIEW_SCHEME = 'embedded-studio-preview';
 
+// ---- ES-304/305: bootloader imza anahtarları. Özel anahtar yalnızca bu makinede (eklentinin genel depolama klasörü).
+const bootKeyFile = (id) => path.join(Studio.storagePath || require('os').tmpdir(), 'keys', `es-boot-${id}.pem`);
+/** Anahtar kimliğine göre bu makinedeki özel anahtar (PEM) ya da null */
+function bootPrivateKey(id) {
+  try {
+    return id ? fs.readFileSync(bootKeyFile(id), 'utf8') : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * ES-305: Derle başarılıysa ve imza açıksa imzalı paket: <ad>_signed.bin/.hex, <ad>_full_signed.hex, <ad>_update.json.
+ * Özel anahtar bu makinede yoksa uyarır, derlemeyi başarısız saymaz.
+ */
+async function packAfterBuild(p, config) {
+  const mcu = p.lib.mcus[p.design.mcuId];
+  if (!(p.design.boot && p.design.boot.enabled) || !mcu) return null;
+  const boot = bl.normalizeBoot(p.design.boot, mcu);
+  if (!boot.signing || !boot.signOnBuild || !boot.pubKey) return null;
+  const design = { ...p.design, build: { ...p.design.build, type: config || p.design.build.type } };
+  const elf = path.join(p.root, cm.elfRel(design));
+  const dir = path.dirname(elf), base = path.basename(elf, '.elf');
+  const id = bl.keyId(boot.pubKey);
+  const pem = bootPrivateKey(id);
+  const say = (level, text) => (Studio.current ? Studio.current.toast(level, text) : level === 'error' ? vscode.window.showErrorMessage(text) : vscode.window.showWarningMessage(text));
+  if (!pem) {
+    say('warn', t('İmzalı paket üretilmedi: {0} anahtarının özel kısmı bu makinede yok (Proje Ayarları > Bootloader > İçe aktar).', id));
+    return null;
+  }
+  try {
+    const bootHex = path.join(dir, `${base}_boot.hex`);
+    const r = esign.packImage({ bin: path.join(dir, `${base}.bin`), pem, pub: boot.pubKey, slotBase: bl.partition(mcu, boot).slotBase, outDir: dir, name: base, bootHex: fs.existsSync(bootHex) ? bootHex : undefined });
+    Studio.current?.post({ type: 'build.signed', manifest: r.manifest, files: r.files.map((f) => path.relative(p.root, f).split(path.sep).join('/')) });
+    return r;
+  } catch (e) {
+    say('error', t('İmzalı paket üretilemedi: {0}', e.message));
+    return null;
+  }
+}
+
+/** ES-305: bir uygulama imajını (.bin / .hex / .elf) projenin anahtarıyla imzalar; paket dosyanın yanına yazılır */
+async function signImageCommand(uri) {
+  const p = currentProject();
+  const boot = p && p.design.boot;
+  if (!p || !boot || !boot.enabled || !boot.signing || !boot.pubKey) return vscode.window.showErrorMessage(t('Önce Proje Ayarları > Bootloader\'da imza doğrulamayı açın ve anahtar üretin.'));
+  const mcu = p.lib.mcus[p.design.mcuId];
+  const id = bl.keyId(boot.pubKey);
+  const pem = bootPrivateKey(id);
+  if (!pem) return vscode.window.showErrorMessage(t('Bu makinede {0} anahtarının özel kısmı yok.', id));
+  let file = uri && uri.fsPath;
+  if (!file) {
+    const pick = await vscode.window.showOpenDialog({ canSelectMany: false, openLabel: t('İmzala'), defaultUri: vscode.Uri.file(p.root), filters: { [t('Firmware')]: ['bin', 'hex', 'elf'] } });
+    if (!pick || !pick[0]) return undefined;
+    file = pick[0].fsPath;
+  }
+  const part = bl.partition(mcu, bl.normalizeBoot(boot, mcu));
+  try {
+    let bin;
+    if (/\.bin$/i.test(file)) bin = fs.readFileSync(file);
+    else {
+      let text;
+      if (/\.elf$/i.test(file)) {
+        const tmp = path.join(require('os').tmpdir(), `es-sign-${Date.now()}.hex`);
+        await new Promise((resolve, reject) => require('child_process').execFile(cm.gccTool(p.design.build, 'objcopy'), ['-O', 'ihex', file, tmp], { windowsHide: true },
+          (e, so, se) => (e ? reject(new Error(se || e.message)) : resolve(undefined))));
+        text = fs.readFileSync(tmp, 'utf8');
+        fs.rmSync(tmp, { force: true });
+      } else text = fs.readFileSync(file, 'utf8');
+      const segs = prog.parseIntelHex(text).filter((s) => s.addr >= part.slotBase && s.addr < prog.RAM_BASE);
+      if (!segs.length) throw new Error(t('{0} yuva başından (0x{1}) başlamıyor.', path.basename(file), part.slotBase.toString(16).toUpperCase()));
+      const hi = Math.max(...segs.map((g) => g.addr + g.bytes.length));
+      bin = Buffer.alloc(hi - part.slotBase, 0xff);
+      for (const g of segs) Buffer.from(g.bytes).copy(bin, g.addr - part.slotBase);
+    }
+    const name = path.basename(file).replace(/\.(bin|hex|elf)$/i, '').replace(/_signed$/, '');
+    const r = esign.packImage({ bin, pem, pub: boot.pubKey, slotBase: part.slotBase, outDir: path.dirname(file), name });
+    vscode.window.showInformationMessage(t('İmzalandı: v{0}, anahtar {1} → {2}', r.manifest.version, id, r.files.map((f) => path.basename(f)).join(', ')));
+    return r;
+  } catch (e) {
+    vscode.window.showErrorMessage(t('İmzalanamadı: {0}', e.message));
+    return undefined;
+  }
+}
+
 /** @param {vscode.ExtensionContext} context */
 function activate(context) {
   applyLanguage();
   Studio.extensionPath = context.extensionPath;
+  Studio.storagePath = context.globalStorageUri.fsPath;
   context.subscriptions.push(
     vscode.workspace.onDidChangeConfiguration?.((e) => {
       if (e.affectsConfiguration('embeddedStudio.hiddenTabs')) Studio.current?.postHiddenTabs();
@@ -91,7 +178,8 @@ function activate(context) {
     onState: () => statusBar && statusBar.refresh(),
     onSize: (s) => Studio.current?.post({ type: 'build.size', ...s }),
     onTask: (name, ok) => Studio.current?.post(ok === null ? { type: 'task.start', name } : { type: 'task.done', name, ok }),
-    releaseProbe: () => Studio.current?.releaseProbe()
+    releaseProbe: () => Studio.current?.releaseProbe(),
+    afterBuild: (p, config) => packAfterBuild(p, config)
   });
   statusBar = new StatusBar(actions, currentProject);
   const watcher = vscode.workspace.createFileSystemWatcher?.(`**/${DESIGN_FILE}`);
@@ -109,7 +197,8 @@ function activate(context) {
     vscode.commands.registerCommand('embeddedStudio.flashFile', (uri) => flashFileCommand(uri)),
     vscode.commands.registerCommand('embeddedStudio.debugLaunchJson', () => launchJsonCommand()),
     vscode.commands.registerCommand('embeddedStudio.debugReset', () => actions.debugReset()),
-    vscode.commands.registerCommand('embeddedStudio.disassembly', () => actions.disassembly()));
+    vscode.commands.registerCommand('embeddedStudio.disassembly', () => actions.disassembly()),
+    vscode.commands.registerCommand('embeddedStudio.signImage', (uri) => signImageCommand(uri)));
 
   // ---- ES-204: donanım breakpoint sınırı (flash'taki koda konan her breakpoint bir FPB karşılaştırıcısı harcar) ----
   const checkBps = () => {
@@ -1328,19 +1417,11 @@ class Studio {
   }
 
   // ---- ES-304: imza anahtarı. Özel anahtar yalnızca bu makinede (eklentinin genel depolama klasörü), açık anahtar projede.
-  keysDir() { return path.join(this.context.globalStorageUri.fsPath, 'keys'); }
-  keyFile(id) { return path.join(this.keysDir(), `es-boot-${id}.pem`); }
-  /** Anahtar kimliğine göre bu makinedeki özel anahtar (PEM) ya da null */
-  privateKey(id) {
-    try {
-      return id ? fs.readFileSync(this.keyFile(id), 'utf8') : null;
-    } catch {
-      return null;
-    }
-  }
+  keyFile(id) { return bootKeyFile(id); }
+  privateKey(id) { return bootPrivateKey(id); }
   saveKey(k) {
-    fs.mkdirSync(this.keysDir(), { recursive: true });
-    fs.writeFileSync(this.keyFile(k.keyId), k.pem, { mode: 0o600 });
+    fs.mkdirSync(path.dirname(bootKeyFile(k.keyId)), { recursive: true });
+    fs.writeFileSync(bootKeyFile(k.keyId), k.pem, { mode: 0o600 });
   }
   postBootKey() {
     const b = (this.design && this.design.boot) || {};
@@ -2370,4 +2451,4 @@ function download(url, dest, pdf = true, depth = 0) {
 
 function deactivate() {}
 
-module.exports = { activate, deactivate, migrate, download };
+module.exports = { activate, deactivate, migrate, download, packAfterBuild };

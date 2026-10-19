@@ -35,7 +35,8 @@ const shellOpts = () => (process.platform === 'win32' ? { executable: 'cmd.exe',
 class ProjectActions {
   /**
    * @param {() => ({ root: string, design: any, lib: any } | null)} getProject
-   * @param {{ onState?: (s: any) => void, onSize?: (s: any) => void, onTask?: (name: string, ok: boolean | null) => void, toast?: (level: string, text: string) => void }} [hooks]
+   * @param {{ onState?: (s: any) => void, onSize?: (s: any) => void, onTask?: (name: string, ok: boolean | null) => void, toast?: (level: string, text: string) => void,
+   *   afterBuild?: (p: any, config: string) => Promise<any> }} [hooks]
    */
   constructor(getProject, hooks = {}) {
     this.getProject = getProject;
@@ -123,7 +124,10 @@ class ProjectActions {
     const ok = code === 0;
     this.set({ running: null, ok, errors, warnings });
     if (!ok) this.info('error', t('Derleme başarısız: {0} hata, {1} uyarı. Ayrıntı Terminal ve Sorunlar panelinde.', errors, warnings));
-    else if (!opts.quiet) await this.reportSize(p, config);
+    else {
+      await this.hooks.afterBuild?.(p, config); // ES-305: imzalı paket
+      if (!opts.quiet) await this.reportSize(p, config);
+    }
     return ok;
   }
 
@@ -138,7 +142,8 @@ class ProjectActions {
     const pct = (n, totalKB) => ((n * 100) / (totalKB * 1024)).toFixed(1);
     const dir = path.dirname(elf);
     const base = path.basename(elf, '.elf');
-    const outputs = ['.elf', '.hex', '.bin', '.map'].filter((x) => fs.existsSync(path.join(dir, base + x)));
+    // ES-303/305: bootloader açıksa birleşik HEX ve imzalı paket de
+    const outputs = ['.elf', '.hex', '.bin', '.map', '_full.hex', '_signed.bin', '_full_signed.hex', '_update.json'].filter((x) => fs.existsSync(path.join(dir, base + x)));
     const summary = { config: design.build.type, ...size, flashKB: dev.flashKB, ramKB: dev.ramKB, dir: path.relative(p.root, dir).split(path.sep).join('/'), outputs };
     this.hooks.onSize?.(summary);
     const msg = t('Derlendi ({0}): Flash {1} KB / {2} KB (%{3}) · RAM {4} KB / {5} KB (%{6}) · {7}',

@@ -316,9 +316,9 @@ Projeye eklenebilir, kendi bootloader'ını yazmak isteyene temel olacak bir şa
 ### ES-305 · İmaj paketleme ve imzalama aracı
 `etiketler: tip:özellik, alan:bootloader, öncelik:orta, seviye:profesyonel`
 
-- [ ] Derleme sonrası `.bin` dosyasına başlık ve CRC32 ekleme
-- [ ] Anahtar üretme ve imzalama (özel anahtar yalnızca kullanıcının makinesinde) — kısmen: ES-304'te anahtar üretme / içe-dışa aktarma ve Programlayıcı'da gönderirken imzalama var; derleme sonrası imzalı `.bin` / `_full.hex` üretimi yok
-- [ ] Eklenti içinden bootloader'a güncelleme gönderme (ES-303 protokolü)
+- [x] Derleme sonrası `.bin` dosyasına başlık ve CRC32 ekleme — `cmake/es-image.cmake` (0.6.4)
+- [x] Anahtar üretme ve imzalama (özel anahtar yalnızca kullanıcının makinesinde) — Derle sonrası imzalı paket + sürüm bildirimi, "İmzala" komutu, CI için `cmake/es-sign.js` / `ES_SIGN_KEY` (0.6.6)
+- [x] Eklenti içinden bootloader'a güncelleme gönderme (ES-303 protokolü) — Programlayıcı > UART (0.6.4)
 
 ---
 

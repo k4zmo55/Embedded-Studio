@@ -13,6 +13,7 @@
   "config.flashConfirm": "Ask for confirmation before flashing (status bar Flash/Run, designer Flash).",
   "config.probeAutoDetect": "Detect probes (ST-Link, J-Link, CMSIS-DAP, DFU, UART bridges) when they are plugged in and query the connected board automatically.",
   "command.flashFile": "Flash File (.elf / .hex / .bin)…",
+  "command.signImage": "Sign Update Image (Bootloader)…",
   "config.flashTool": "Tool used for flashing. \"auto\": OpenOCD for SWD probes, STM32CubeProgrammer for USB DFU and UART bootloader.",
   "config.flashTool.auto": "OpenOCD for SWD probes, STM32CubeProgrammer for DFU/UART",
   "config.flashErase": "Erase before flashing.",

@@ -1638,6 +1638,42 @@ edge: { sourcename: "Task_A" targetname: "__indirect_call" label: "a.c:9:40" }
     assert.throws(() => eb.loadPrivateKey('çöp'), /okunamadı/);
     passed++;
     console.log('  ✓ İmza ve A/B (ES-304): 15 işlemcide A/B bölünmesi, imzalı yapılandırma (açık anahtar, en düşük sürüm), anahtarsız #error, Ed25519 imzala/doğrula, anahtar içe aktarma');
+
+    // ES-305: imzalama ve paketleme aracı (cmake/es-sign.js = src/codegen/es-sign.js)
+    const es = require('../src/codegen/es-sign');
+    assert.ok(es.sign(img, key.pem).bytes.equals(simg), 'eklentinin imzasıyla bayt bayt aynı');
+    assert.strictEqual(bS['cmake/es-sign.js'].content, fs.readFileSync(path.join(__dirname, '../src/codegen/es-sign.js'), 'utf8'));
+    const modS = bS['cmake/embedded-studio.cmake'].content;
+    assert.match(modS, /set\(ES_SIGN_KEY "\$ENV\{ES_SIGN_KEY\}"\)[\s\S]*find_program\(ES_NODE node\)/);
+    assert.match(modS, new RegExp(`add_custom_target\\(\\$\\{app\\}_signed ALL[\\s\\S]*es-sign\\.js --key \\$\\{ES_SIGN_KEY\\} --pub ${key.pub.toString('hex')} --slot 0x8004000`));
+    assert.ok(!/es-sign/.test(byPath['cmake/embedded-studio.cmake'].content) && !byPath['cmake/es-sign.js'], 'imza kapalıyken yok');
+    assert.strictEqual(bl.normalizeBoot({ signOnBuild: false }, f411).signOnBuild, false);
+    const out = fs.mkdtempSync(path.join(os.tmpdir(), 'es-sign-'));
+    const bootHex = ':020000040800F2\n:0400000000000220DA\n:00000001FF\n';
+    const pk = es.packImage({ bin: img, pem: key.pem, pub: key.pub, slotBase: 0x08004000, outDir: out, name: 'app', bootHex, now: new Date(0) });
+    assert.deepStrictEqual(pk.files.map((f) => path.basename(f)), ['app_signed.bin', 'app_signed.hex', 'app_full_signed.hex', 'app_update.json']);
+    assert.deepStrictEqual(pk.manifest, {
+      format: 'embedded-studio-update/1', name: 'app', version: '1.4.2', fwVersion: '0x01040002', buildId: 'deadbeef', slotBase: '0x08004000', size: img.length,
+      imageSize: img.length - 0x400, imageCrc: '0x' + img.readUInt32LE(12).toString(16).toUpperCase().padStart(8, '0'),
+      sha256: require('crypto').createHash('sha256').update(simg).digest('hex'), signature: { alg: 'Ed25519', keyId: key.keyId }, file: 'app_signed.bin', created: '1970-01-01T00:00:00.000Z'
+    });
+    const full = fs.readFileSync(path.join(out, 'app_full_signed.hex'), 'utf8');
+    assert.strictEqual((full.match(/:00000001FF/g) || []).length, 1, 'tek EOF');
+    const segs = require('../src/debug/programmer').parseIntelHex(full);
+    assert.strictEqual(segs[0].addr, 0x08000000);
+    const app = segs.find((g) => g.addr === 0x08004000);
+    assert.ok(app && Buffer.from(app.bytes).equals(simg), 'birleşik HEX\'te imzalı uygulama');
+    assert.throws(() => es.packImage({ bin: img, pem: key.pem, pub: eb.generateKey().pub, slotBase: 0x08004000, outDir: out, name: 'x' }), /gömülü açık anahtarla .* aynı değil/);
+    assert.throws(() => es.packImage({ bin: img, pem: key.pem, slotBase: 0x08008000, outDir: out, name: 'x' }), /başka bir yuva/);
+    assert.throws(() => es.sign(bad, key.pem), /CRC-32 tutmuyor/);
+    // Komut satırı: anahtar ortam değişkeninden (CI gizli değişkeni)
+    fs.writeFileSync(path.join(out, 'in.bin'), img);
+    assert.match(es.cli(['--bin', path.join(out, 'in.bin'), '--slot', '0x08004000', '--name', 'ci'], { ES_SIGN_KEY_PEM: key.pem }), /v1\.4\.2 \(deadbeef\).*ci_signed\.bin/);
+    assert.ok(fs.readFileSync(path.join(out, 'ci_signed.bin')).equals(simg));
+    assert.throws(() => es.cli(['--bin', 'a.bin', '--slot', '0x08004000'], {}), /Özel anahtar yok/);
+    fs.rmSync(out, { recursive: true, force: true });
+    passed++;
+    console.log('  ✓ İmzalama aracı (ES-305): eklentiyle aynı imza, paket dosyaları ve sürüm bildirimi, birleşik imzalı HEX, yanlış anahtar / yuva / bozuk imaj, CMake ES_SIGN_KEY hedefi, komut satırı (ortam değişkeni)');
   }
   const { OpenOcdTarget, freePort } = require('../src/debug/session');
   const port = await freePort();

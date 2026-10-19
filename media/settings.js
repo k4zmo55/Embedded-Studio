@@ -209,6 +209,8 @@
         h('button', { class: 'ghost small', id: 'set-boot-keygen', onclick: () => post({ type: 'boot.keygen' }) }, b.pubKey ? t('Yeni anahtar üret') : t('Anahtar üret')),
         h('button', { class: 'ghost small', id: 'set-boot-keyimport', onclick: () => post({ type: 'boot.keyImport' }) }, t('İçe aktar')),
         b.pubKey ? h('button', { class: 'ghost small', id: 'set-boot-keyexport', onclick: () => post({ type: 'boot.keyExport' }) }, t('Dışa aktar (yedek)')) : null),
+      h('label', { class: 'check' }, h('input', { type: 'checkbox', id: 'set-boot-signbuild', checked: b.signOnBuild !== false, onchange: (e) => set((x) => { x.signOnBuild = e.target.checked; }) }),
+        h('span', { text: t('Derlemeden sonra imzalı paket üret (_signed.bin, _full_signed.hex, _update.json)') })),
       h('p', { class: 'hint', text: t('Açık anahtar projeye yazılır ve bootloader\'a gömülür; özel anahtar yalnızca bu makinede (eklenti depolaması) durur. Programlayıcı güncellemeyi göndermeden önce imzalar. Özel anahtarı yedekleyin, projeye (git) eklemeyin.') })) : null;
     return h('section', { class: 'wizard-card', id: 'set-boot' },
       h('h3', { text: t('Bootloader') }),
@@ -397,6 +399,7 @@
     render();
   });
   ES.on('build.dir', (m) => setBuild((x) => { x.toolchain[m.field] = m.path; }));
+  ES.on('build.signed', (m) => toast('info', t('İmzalı paket: {0} (v{1}, anahtar {2})', m.files[0], m.manifest.version, m.manifest.signature.keyId)));
   ES.on('boot.key', (m) => {
     bootKey = m;
     render();

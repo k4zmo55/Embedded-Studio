@@ -13,6 +13,7 @@
   "config.flashConfirm": "Karta yüklemeden önce onay iste (durum çubuğundaki Flash/Run, tasarımcıdaki Yükle).",
   "config.probeAutoDetect": "Prob takılınca (ST-Link, J-Link, CMSIS-DAP, DFU, UART köprüsü) algıla ve bağlı kartı kendiliğinden sorgula.",
   "command.flashFile": "Dosya Yükle (.elf / .hex / .bin)…",
+  "command.signImage": "Güncelleme İmajını İmzala (Bootloader)…",
   "config.flashTool": "Yükleme aracı. \"auto\": SWD problarında OpenOCD, USB DFU ve UART önyükleyicisinde STM32CubeProgrammer.",
   "config.flashTool.auto": "SWD problarında OpenOCD, DFU/UART için STM32CubeProgrammer",
   "config.flashErase": "Yüklemeden önce silme.",

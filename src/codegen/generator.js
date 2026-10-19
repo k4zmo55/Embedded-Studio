@@ -794,6 +794,7 @@ Güncelleme ${b.uart} (TX ${b.tx}, RX ${b.rx}, ${b.baud} baud) üzerinden; uygul
 - Karta ilk yükleme: \`<proje>_full.hex\` (bootloader + uygulama). Güncelleme: başlıklı \`<proje>.bin\`.
 ${p.ab ? `- A/B (ES-304): uygulama ana yuvaya bağlanır (${p.slotSize / 1024} KB); güncelleme hazırlık yuvasına (${hx(p.stageBase)}, ${p.stageSize / 1024} KB) yazılır, doğrulanınca ana yuvaya kopyalanır. Uygulama hazırlık yuvasını kullanmamalı.
 ` : ''}${b.signing ? `- İmza (ES-304): Ed25519, anahtar ${bl.keyId(b.pubKey) || '(yok)'}. Özel anahtar projede değildir; Programlayıcı güncellemeyi gönderirken imzalar. \`es_ed25519.c\` doğrulama kodudur, değiştirmeyin.
+- İmzalı paket (ES-305): Derle'den sonra \`<proje>_signed.bin/.hex\`, \`<proje>_full_signed.hex\`, \`<proje>_update.json\`. Komut satırında / CI'da: \`ES_SIGN_KEY=<pem yolu>\` (ya da \`-DES_SIGN_KEY=\`) ve PATH'te Node.js; araç \`cmake/es-sign.js\`. Özel anahtarı depoya eklemeyin.
 ` : ''}${b.rollback ? `- Geri dönüş koruması: kartta çalışan sürümden (ve ${b.minVersion}'dan) düşük sürüm kabul edilmez; her yayında sürümü artırın.
 ` : ''}`;
 }

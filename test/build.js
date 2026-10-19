@@ -130,8 +130,15 @@ embedded_studio_target(\${PROJECT_NAME} NO_SOURCES)
     try {
       if (errors.length) throw new Error(`tasarım hatası: ${errors.map((e) => e.text).join('; ')}`);
       if (build.cmake === 'user' && fs.readFileSync(path.join(root, 'CMakeLists.txt'), 'utf8') !== userCmake(name)) throw new Error('kullanıcının CMakeLists.txt dosyası değişti');
-      execSync(`cmake --preset ${preset}`, { cwd: root, stdio: 'pipe' });
-      const out = execSync(`cmake --build --preset ${preset}`, { cwd: root, stdio: 'pipe' }).toString();
+      // ES-305: imzalı A/B varyantlarında CMake'in imzalama hedefi (CI yolu): ES_SIGN_KEY + Node.js (burada Electron, ELECTRON_RUN_AS_NODE)
+      let signArgs = '';
+      if (v.key) {
+        const pem = path.join(root, '..', 'es-test-key.pem');
+        fs.writeFileSync(pem, v.key.pem);
+        signArgs = ` -DES_SIGN_KEY="${pem}" -DES_NODE="${process.execPath}"`;
+      }
+      execSync(`cmake --preset ${preset}${signArgs}`, { cwd: root, stdio: 'pipe', env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' } });
+      const out = execSync(`cmake --build --preset ${preset}`, { cwd: root, stdio: 'pipe', env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' } }).toString();
       const missing = ['.elf', '.hex', '.bin', '.map', ...(v.boot ? ['_boot.elf', '_boot.hex', '_full.hex'] : [])].filter((x) => !fs.existsSync(path.join(root, 'build', preset, name + x)));
       if (missing.length) throw new Error(`build/${preset}/ altında eksik çıktı: ${missing.join(', ')}`);
       if (v.boot) {
@@ -148,6 +155,10 @@ embedded_studio_target(\${PROJECT_NAME} NO_SOURCES)
           if (!part.ab || chk.total > part.hdr + part.imageMax) throw new Error(`A/B: imaj ${chk.total} B, ana yuva ${part.slotSize} B`);
           const signed = esboot.signImage(bin, v.key.pem);
           if (!esboot.verifySig(signed.bytes, v.key.pub)) throw new Error('imza doğrulanamadı');
+          const dir = path.join(root, 'build', preset);
+          const missingSigned = ['_signed.bin', '_signed.hex', '_full_signed.hex', '_update.json'].filter((x) => !fs.existsSync(path.join(dir, name + x)));
+          if (missingSigned.length) throw new Error(`ES_SIGN_KEY ile imzalı paket eksik: ${missingSigned.join(', ')}`);
+          if (!fs.readFileSync(path.join(dir, name + '_signed.bin')).equals(signed.bytes)) throw new Error('CMake imzası eklentininkiyle aynı değil');
           const map = fs.readFileSync(path.join(root, 'build', preset, name + '.map'), 'utf8');
           const m = /^FLASH\s+0x([0-9a-f]+)\s+0x([0-9a-f]+)/im.exec(map);
           if (!m || parseInt(m[1], 16) !== part.slotBase || parseInt(m[2], 16) !== part.slotSize) throw new Error(`bağlayıcı FLASH bölgesi ${m && m[1]} ${m && m[2]}`);

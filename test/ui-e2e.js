@@ -1467,7 +1467,7 @@ async function until(fn, ms = 8000, what = 'koşul') {
     assert.ok(!fs.existsSync(P('Core/Src/es_image.c')), 'uygulama başlığı kaldırıldı');
     await cdp.click('#tab-design');
   });
-  await step('İmza ve A/B (ES-304): A/B + Ed25519 aç, anahtar üret ve yedekle, derle, Programlayıcı\'da imzalayıp güncelle, eski sürüm reddedilir; kapat', async () => {
+  await step('İmza ve A/B (ES-304) + paket (ES-305): A/B + Ed25519 aç, anahtar üret ve yedekle, derle, imzalı paket ve İmzala komutu, Programlayıcı\'da imzalayıp güncelle, eski sürüm reddedilir; kapat', async () => {
     const P = (p) => path.join(PROJECT, p);
     const eb = require('../src/debug/esboot');
     const setVal = (sel, v) => cdp.eval(`(() => { const i = document.querySelector('${sel}'); i.value = '${v}'; i.dispatchEvent(new Event('change')); })()`);
@@ -1497,6 +1497,17 @@ async function until(fn, ms = 8000, what = 'koşul') {
     assert.match(fs.readFileSync(P('STM32F411CEU6_FLASH.ld'), 'utf8'), /ORIGIN = 0x08004000, LENGTH = 240K/);
     execSync('cmake --preset debug && cmake --build --preset debug', { cwd: PROJECT, stdio: 'pipe', shell: process.platform === 'win32' ? 'cmd.exe' : undefined });
     assert.ok(!eb.checkImage(fs.readFileSync(P('build/debug/demo_proje.bin'))).sig.present, 'derleme imzasız (imzayı Programlayıcı atar)');
+    // ES-305: Derle sonrası imzalı paket (eklentinin anahtar deposundan) ve "İmzala" komutu
+    const packed = await ext.packAfterBuild({ root: PROJECT, design: design(), lib: require('../src/library').loadLibrary(EXT) }, 'Debug');
+    assert.ok(packed, 'imzalı paket');
+    for (const f of ['demo_proje_signed.bin', 'demo_proje_signed.hex', 'demo_proje_full_signed.hex', 'demo_proje_update.json']) assert.ok(fs.existsSync(P(`build/debug/${f}`)), f);
+    const man = JSON.parse(fs.readFileSync(P('build/debug/demo_proje_update.json'), 'utf8'));
+    assert.deepStrictEqual([man.version, man.signature.keyId, man.slotBase], ['2.0.0', keyId, '0x08004000']);
+    assert.ok(eb.verifySig(fs.readFileSync(P('build/debug/demo_proje_signed.bin')), Buffer.from(design().boot.pubKey, 'hex')), 'paket imzası geçerli');
+    assert.ok(fs.existsSync(P('cmake/es-sign.js')), 'CI imzalama aracı projede');
+    fs.rmSync(P('build/debug/demo_proje_signed.bin'));
+    const viaCmd = await cmds['embeddedStudio.signImage'](vscodeFake.Uri.file(P('build/debug/demo_proje.hex')));
+    assert.ok(viaCmd && fs.existsSync(P('build/debug/demo_proje_signed.bin')), 'İmzala komutu (.hex)');
     // Programlayıcı: benzetim cihazı projenin anahtarı ve A/B düzeniyle
     await cdp.click('#tab-programmer');
     await cdp.eval(`(() => { const s = document.querySelector('#pg-transport'); s.value = 'esboot'; s.dispatchEvent(new Event('change')); })()`);

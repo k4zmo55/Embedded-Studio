@@ -1451,5 +1451,14 @@
   "Tek yuva: güncelleme başlarken eski uygulama silinir (eski sürüm ve yanlış yuva silmeden önce reddedilir). Yarıda kalırsa kart bootloader'da kalır.": "Single slot: the old application is erased when the update starts (older versions and wrong-slot images are rejected before erasing). If interrupted, the board stays in the bootloader.",
   "Üretimde bootloader bölgesini (0x08000000, {0} KB) WRP ile yazmaya karşı koruyun ve RDP seviye 1 kullanın: SWD erişimi olan biri imza denetimini atlayabilir. Option byte yazma: ES-306.": "In production, write-protect the bootloader region (0x08000000, {0} KB) with WRP and use RDP level 1: anyone with SWD access can bypass the signature check. Option byte writing: ES-306.",
   "Ana yuva: uygulama (vektör tablosu)": "Primary slot: application (vector table)",
-  "Hazırlık yuvası (güncelleme)": "Staging slot (update)"
+  "Hazırlık yuvası (güncelleme)": "Staging slot (update)",
+  "İmzalı paket üretilmedi: {0} anahtarının özel kısmı bu makinede yok (Proje Ayarları > Bootloader > İçe aktar).": "Signed package not produced: the private part of key {0} is not on this machine (Project Settings > Bootloader > Import).",
+  "İmzalı paket üretilemedi: {0}": "Could not produce the signed package: {0}",
+  "Önce Proje Ayarları > Bootloader'da imza doğrulamayı açın ve anahtar üretin.": "First enable signature verification in Project Settings > Bootloader and generate a key.",
+  "İmzala": "Sign",
+  "{0} yuva başından (0x{1}) başlamıyor.": "{0} does not start at the slot base (0x{1}).",
+  "İmzalandı: v{0}, anahtar {1} → {2}": "Signed: v{0}, key {1} → {2}",
+  "İmzalanamadı: {0}": "Could not sign: {0}",
+  "Derlemeden sonra imzalı paket üret (_signed.bin, _full_signed.hex, _update.json)": "Produce a signed package after building (_signed.bin, _full_signed.hex, _update.json)",
+  "İmzalı paket: {0} (v{1}, anahtar {2})": "Signed package: {0} (v{1}, key {2})"
 }

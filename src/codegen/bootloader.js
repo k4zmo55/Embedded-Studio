@@ -39,7 +39,9 @@ const F0_VECTORS = 0xc0;
 const DEFAULT_BOOT = {
   enabled: false, sizeKB: 0, uart: '', tx: '', rx: '', baud: 115200, waitMs: 300, hwCrc: true, version: '1.0.0',
   // ES-304
-  layout: 'single', signing: false, pubKey: '', rollback: true, minVersion: '0.0.0'
+  layout: 'single', signing: false, pubKey: '', rollback: true, minVersion: '0.0.0',
+  // ES-305: Derle'den sonra imzalı paket (eklenti; CMake'te ES_SIGN_KEY ile)
+  signOnBuild: true
 };
 const VERSION_RE = /^\d{1,3}\.\d{1,3}\.\d{1,5}$/;
 
@@ -105,6 +107,7 @@ function normalizeBoot(b, mcu, preferred) {
   s.pubKey = /^[0-9a-f]{64}$/i.test(String(s.pubKey)) ? String(s.pubKey).toLowerCase() : '';
   s.rollback = s.rollback !== false;
   s.minVersion = VERSION_RE.test(String(s.minVersion)) ? String(s.minVersion) : '0.0.0';
+  s.signOnBuild = s.signOnBuild !== false;
   return s;
 }
 
@@ -1209,7 +1212,9 @@ function bootFiles(o) {
     { path: `${P.src}/es_image.c`, content: appHeaderSource() },
     { path: `${P.inc}/es_boot.h`, content: appApiHeader() },
     { path: `${P.src}/es_boot.c`, content: appApiSource(mcu, part) },
-    { path: 'cmake/es-image.cmake', content: imageScript() }
+    { path: 'cmake/es-image.cmake', content: imageScript() },
+    // ES-305: imzalama ve paketleme aracı (eklentiyle aynı kod; CI'da Node.js ile)
+    ...(boot.signing ? [{ path: 'cmake/es-sign.js', content: require('fs').readFileSync(require('path').join(__dirname, 'es-sign.js'), 'utf8') }] : [])
   ];
   for (const [n, content] of Object.entries(regDriverFiles(mcu, ['gpio', 'uart', 'flash', 'iwdg'], o.clock))) files.push({ path: `bootloader/reg/${n}`, content });
   return files;
