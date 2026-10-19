@@ -1,5 +1,12 @@
 # Değişiklik günlüğü
 
+## 0.6.7 (önizleme)
+
+- **İşlemci verisi: paket ve bütün fiziksel pinler (ES-1002, M10 Pinout'un temeli):** 15 işlemcinin tanımına `package` eklendi: paket adı ve türü (LQFP48/64/100/144, UFQFPN32/48), pin sayısı ve her ped için konum, veritabanındaki adı (ör. `PC14-OSC32_IN`), türü (G/Ç, besleme, reset, boot, tek işlevli), GPIO modları (Input / Output / Analog / EVENTOUT / EXTI) ve **bütün** sinyalleri AF numaralarıyla (USB, CAN, SDIO, I2S, DAC, SWD, OSC …; F1'de AF yerine remap). G0'da aynı pedi paylaşan yeniden eşlenebilir pinler (`PA11 [PA9]`) ikincil girdi olarak işaretli. Kartta bağlı pinler (LED, buton, ST-LINK VCP) ayrı `boardPins` alanında.
+  - Pin atayıcının kullandığı veri değişmedi; yeni veri `tools/mcu/gen-package.js` ile ST'nin açık pin veritabanından üretilir ve AF numaraları mevcut veriyle çapraz denetlenir. `src/engine/package.js`: ped listesi, GPIO'nun pedi, kenar ve sıra (Pinout çizimi için).
+  - 5 V toleransı veritabanında olmadığından yok (datasheet'ten ayrıca girilecek).
+- Testler: birim 76 (15 işlemcide ped sayısı ve 1..N konumlar, pin atayıcı pinlerinin ve AF'lerin pakette olması, kenar hesabı, F1 remap, G0 ikincil ped).
+
 ## 0.6.6 (önizleme)
 
 - **İmaj paketleme ve imzalama aracı (ES-305):** imza açık bir bootloader projesinde.
