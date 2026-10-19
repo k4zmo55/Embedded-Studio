@@ -10,15 +10,17 @@ jobs:
     name: Birim testleri
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
         with:
           node-version: 22
       - run: node test/smoke.js
 
   build:
     name: Derle (${{ matrix.group }})
-    runs-on: ubuntu-latest
+    # Sabit sürüm: ubuntu-latest Ubuntu 26'ya geçerken arm-none-eabi-gcc sürümü habersiz değişmesin.
+    # Ubuntu 24.04'te GCC 13.2: kullanıcıların apt ile kurduğu sürüm; üretilen kod onda da -Werror ile derlenmeli.
+    runs-on: ubuntu-24.04
     strategy:
       fail-fast: false
       matrix:
@@ -34,14 +36,14 @@ jobs:
           - group: H7 U5
             filter: stm32h|stm32u
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
         with:
           node-version: 22
       - name: ARM araç zinciri
         run: sudo apt-get update && sudo apt-get install -y gcc-arm-none-eabi libnewlib-arm-none-eabi ninja-build cmake
       - name: Paket önbelleği
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: ~/es-packs
           key: es-packs-v3-${{ strategy.job-index }}

@@ -691,8 +691,8 @@ int es_boot_serve(uint32_t idle_ms)
   int active = idle_ms == 0U;
   uint32_t t0 = es_port_ms();
   for (;;) {
-    uint8_t cmd;
-    uint16_t len;
+    uint8_t cmd = 0;
+    uint16_t len = 0; /* GCC 13: -Wmaybe-uninitialized (read_frame yalnızca başarıda yazar) */
     es_port_wdg_refresh();
     uint32_t wait = 200U;
     if (!active) {
