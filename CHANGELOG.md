@@ -1,5 +1,16 @@
 # Değişiklik günlüğü
 
+## 0.6.10 (önizleme)
+
+- **Pinout görünümü (ES-1004):** yeni **Pinout** sekmesi (Acemi'de Tasarım'dan sonra, Profesyonel'de Clock'tan sonra): işlemci paketi pin pin, CubeMX'teki gibi.
+  - LQFP / QFN'de pinler dört kenarda numara sırasıyla (1. pin sol üstte, saat yönünün tersine; köşede 1. pin noktası); BGA / WLCSP için ızgara.
+  - Renkler: atanmış (yeşil), kilit ya da etiket sorunu (turuncu), sistem pinleri SWD / OSC / NRST (sarı), besleme ve özel pinler (haki), boş G/Ç (gri), bağlantısız (kesikli). Sabitlenmiş pinde işaret.
+  - Pinin yanında atanmış sinyal (`I2C1_SCL`), GPIO'da komponent pini (`MPU6050_1.INT`) ya da kullanıcı etiketi (`Pin_Led`).
+  - Üzerine gelince kart: pin no ve adı, türü, etiket, şu anki kullanım (sinyal → komponent, AF), kartta neye bağlı, GPIO modları ve pinin **bütün** alternatif işlevleri AF numaralarıyla; G0'da aynı pedi paylaşan pin.
+  - Yakınlaştır / uzaklaştır (tekerlek, imlecin altındaki nokta sabit), sürükleyerek kaydır, sığdır, 90° döndür; pin, sinyal ya da etiket araması (bulunan pinler yanıp söner, sayısı yazar).
+  - Dar pencerede üst çubuk sekmeleri sıkışır, tek satır kalır.
+- Testler: arayüz 49 (Pinout: 48 ped, renk sınıfları, sinyal / etiket / sabit pin, pin konumları, bilgi kartı, arama, yakınlaştır / sığdır / döndür; sekme sırası ve gizleme Pinout ile); koyu ve açık tema.
+
 ## 0.6.9 (önizleme)
 
 - **Pin etiketleri (ES-1003, CubeMX'teki User Label):** Design şemasında MCU pinine sağ tık → **Etiket gir / değiştir / kaldır** (ör. PA12 → `Pin_Led`).
