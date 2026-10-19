@@ -403,6 +403,1004 @@
       "reserved": "HSE OSC_OUT"
     }
   ],
+  "package": {
+    "name": "LQFP48",
+    "type": "LQFP",
+    "pinCount": 48,
+    "grid": false,
+    "sides": 4,
+    "pins": [
+      {
+        "pos": "1",
+        "name": "VBAT",
+        "type": "power"
+      },
+      {
+        "pos": "2",
+        "name": "PC13-TAMPER-RTC",
+        "type": "io",
+        "gpio": "PC13",
+        "modes": [
+          "Input",
+          "Output",
+          "Analog",
+          "EVENTOUT",
+          "EXTI"
+        ],
+        "signals": [
+          {
+            "signal": "RTC_OUT"
+          },
+          {
+            "signal": "RTC_TAMPER"
+          }
+        ]
+      },
+      {
+        "pos": "3",
+        "name": "PC14-OSC32_IN",
+        "type": "io",
+        "gpio": "PC14",
+        "modes": [
+          "Input",
+          "Output",
+          "Analog",
+          "EVENTOUT",
+          "EXTI"
+        ],
+        "signals": [
+          {
+            "signal": "RCC_OSC32_IN"
+          }
+        ]
+      },
+      {
+        "pos": "4",
+        "name": "PC15-OSC32_OUT",
+        "type": "io",
+        "gpio": "PC15",
+        "modes": [
+          "Input",
+          "Output",
+          "Analog",
+          "EVENTOUT",
+          "EXTI"
+        ],
+        "signals": [
+          {
+            "signal": "ADC1_EXTI15"
+          },
+          {
+            "signal": "ADC2_EXTI15"
+          },
+          {
+            "signal": "RCC_OSC32_OUT"
+          }
+        ]
+      },
+      {
+        "pos": "5",
+        "name": "PD0-OSC_IN",
+        "type": "io",
+        "gpio": "PD0",
+        "modes": [
+          "Input",
+          "Output",
+          "Analog",
+          "EXTI"
+        ],
+        "signals": [
+          {
+            "signal": "RCC_OSC_IN"
+          }
+        ]
+      },
+      {
+        "pos": "6",
+        "name": "PD1-OSC_OUT",
+        "type": "io",
+        "gpio": "PD1",
+        "modes": [
+          "Input",
+          "Output",
+          "Analog",
+          "EXTI"
+        ],
+        "signals": [
+          {
+            "signal": "RCC_OSC_OUT"
+          }
+        ]
+      },
+      {
+        "pos": "7",
+        "name": "NRST",
+        "type": "reset"
+      },
+      {
+        "pos": "8",
+        "name": "VSSA",
+        "type": "power"
+      },
+      {
+        "pos": "9",
+        "name": "VDDA",
+        "type": "power"
+      },
+      {
+        "pos": "10",
+        "name": "PA0-WKUP",
+        "type": "io",
+        "gpio": "PA0",
+        "modes": [
+          "Input",
+          "Output",
+          "Analog",
+          "EVENTOUT",
+          "EXTI"
+        ],
+        "signals": [
+          {
+            "signal": "ADC1_IN0"
+          },
+          {
+            "signal": "ADC2_IN0"
+          },
+          {
+            "signal": "SYS_WKUP"
+          },
+          {
+            "signal": "TIM2_CH1"
+          },
+          {
+            "signal": "TIM2_ETR"
+          },
+          {
+            "signal": "USART2_CTS"
+          }
+        ]
+      },
+      {
+        "pos": "11",
+        "name": "PA1",
+        "type": "io",
+        "gpio": "PA1",
+        "modes": [
+          "Input",
+          "Output",
+          "Analog",
+          "EVENTOUT",
+          "EXTI"
+        ],
+        "signals": [
+          {
+            "signal": "ADC1_IN1"
+          },
+          {
+            "signal": "ADC2_IN1"
+          },
+          {
+            "signal": "TIM2_CH2"
+          },
+          {
+            "signal": "USART2_RTS"
+          }
+        ]
+      },
+      {
+        "pos": "12",
+        "name": "PA2",
+        "type": "io",
+        "gpio": "PA2",
+        "modes": [
+          "Input",
+          "Output",
+          "Analog",
+          "EVENTOUT",
+          "EXTI"
+        ],
+        "signals": [
+          {
+            "signal": "ADC1_IN2"
+          },
+          {
+            "signal": "ADC2_IN2"
+          },
+          {
+            "signal": "TIM2_CH3"
+          },
+          {
+            "signal": "USART2_TX"
+          }
+        ]
+      },
+      {
+        "pos": "13",
+        "name": "PA3",
+        "type": "io",
+        "gpio": "PA3",
+        "modes": [
+          "Input",
+          "Output",
+          "Analog",
+          "EVENTOUT",
+          "EXTI"
+        ],
+        "signals": [
+          {
+            "signal": "ADC1_IN3"
+          },
+          {
+            "signal": "ADC2_IN3"
+          },
+          {
+            "signal": "TIM2_CH4"
+          },
+          {
+            "signal": "USART2_RX"
+          }
+        ]
+      },
+      {
+        "pos": "14",
+        "name": "PA4",
+        "type": "io",
+        "gpio": "PA4",
+        "modes": [
+          "Input",
+          "Output",
+          "Analog",
+          "EVENTOUT",
+          "EXTI"
+        ],
+        "signals": [
+          {
+            "signal": "ADC1_IN4"
+          },
+          {
+            "signal": "ADC2_IN4"
+          },
+          {
+            "signal": "SPI1_NSS"
+          },
+          {
+            "signal": "USART2_CK"
+          }
+        ]
+      },
+      {
+        "pos": "15",
+        "name": "PA5",
+        "type": "io",
+        "gpio": "PA5",
+        "modes": [
+          "Input",
+          "Output",
+          "Analog",
+          "EVENTOUT",
+          "EXTI"
+        ],
+        "signals": [
+          {
+            "signal": "ADC1_IN5"
+          },
+          {
+            "signal": "ADC2_IN5"
+          },
+          {
+            "signal": "SPI1_SCK"
+          }
+        ]
+      },
+      {
+        "pos": "16",
+        "name": "PA6",
+        "type": "io",
+        "gpio": "PA6",
+        "modes": [
+          "Input",
+          "Output",
+          "Analog",
+          "EVENTOUT",
+          "EXTI"
+        ],
+        "signals": [
+          {
+            "signal": "ADC1_IN6"
+          },
+          {
+            "signal": "ADC2_IN6"
+          },
+          {
+            "signal": "SPI1_MISO"
+          },
+          {
+            "signal": "TIM1_BKIN",
+            "remap": true
+          },
+          {
+            "signal": "TIM3_CH1"
+          }
+        ]
+      },
+      {
+        "pos": "17",
+        "name": "PA7",
+        "type": "io",
+        "gpio": "PA7",
+        "modes": [
+          "Input",
+          "Output",
+          "Analog",
+          "EVENTOUT",
+          "EXTI"
+        ],
+        "signals": [
+          {
+            "signal": "ADC1_IN7"
+          },
+          {
+            "signal": "ADC2_IN7"
+          },
+          {
+            "signal": "SPI1_MOSI"
+          },
+          {
+            "signal": "TIM1_CH1N",
+            "remap": true
+          },
+          {
+            "signal": "TIM3_CH2"
+          }
+        ]
+      },
+      {
+        "pos": "18",
+        "name": "PB0",
+        "type": "io",
+        "gpio": "PB0",
+        "modes": [
+          "Input",
+          "Output",
+          "Analog",
+          "EVENTOUT",
+          "EXTI"
+        ],
+        "signals": [
+          {
+            "signal": "ADC1_IN8"
+          },
+          {
+            "signal": "ADC2_IN8"
+          },
+          {
+            "signal": "TIM1_CH2N",
+            "remap": true
+          },
+          {
+            "signal": "TIM3_CH3"
+          }
+        ]
+      },
+      {
+        "pos": "19",
+        "name": "PB1",
+        "type": "io",
+        "gpio": "PB1",
+        "modes": [
+          "Input",
+          "Output",
+          "Analog",
+          "EVENTOUT",
+          "EXTI"
+        ],
+        "signals": [
+          {
+            "signal": "ADC1_IN9"
+          },
+          {
+            "signal": "ADC2_IN9"
+          },
+          {
+            "signal": "TIM1_CH3N",
+            "remap": true
+          },
+          {
+            "signal": "TIM3_CH4"
+          }
+        ]
+      },
+      {
+        "pos": "20",
+        "name": "PB2",
+        "type": "io",
+        "gpio": "PB2",
+        "modes": [
+          "Input",
+          "Output",
+          "Analog",
+          "EVENTOUT",
+          "EXTI"
+        ]
+      },
+      {
+        "pos": "21",
+        "name": "PB10",
+        "type": "io",
+        "gpio": "PB10",
+        "modes": [
+          "Input",
+          "Output",
+          "Analog",
+          "EVENTOUT",
+          "EXTI"
+        ],
+        "signals": [
+          {
+            "signal": "I2C2_SCL"
+          },
+          {
+            "signal": "TIM2_CH3",
+            "remap": true
+          },
+          {
+            "signal": "USART3_TX"
+          }
+        ]
+      },
+      {
+        "pos": "22",
+        "name": "PB11",
+        "type": "io",
+        "gpio": "PB11",
+        "modes": [
+          "Input",
+          "Output",
+          "Analog",
+          "EVENTOUT",
+          "EXTI"
+        ],
+        "signals": [
+          {
+            "signal": "ADC1_EXTI11"
+          },
+          {
+            "signal": "ADC2_EXTI11"
+          },
+          {
+            "signal": "I2C2_SDA"
+          },
+          {
+            "signal": "TIM2_CH4",
+            "remap": true
+          },
+          {
+            "signal": "USART3_RX"
+          }
+        ]
+      },
+      {
+        "pos": "23",
+        "name": "VSS",
+        "type": "power"
+      },
+      {
+        "pos": "24",
+        "name": "VDD",
+        "type": "power"
+      },
+      {
+        "pos": "25",
+        "name": "PB12",
+        "type": "io",
+        "gpio": "PB12",
+        "modes": [
+          "Input",
+          "Output",
+          "Analog",
+          "EVENTOUT",
+          "EXTI"
+        ],
+        "signals": [
+          {
+            "signal": "I2C2_SMBA"
+          },
+          {
+            "signal": "SPI2_NSS"
+          },
+          {
+            "signal": "TIM1_BKIN"
+          },
+          {
+            "signal": "USART3_CK"
+          }
+        ]
+      },
+      {
+        "pos": "26",
+        "name": "PB13",
+        "type": "io",
+        "gpio": "PB13",
+        "modes": [
+          "Input",
+          "Output",
+          "Analog",
+          "EVENTOUT",
+          "EXTI"
+        ],
+        "signals": [
+          {
+            "signal": "SPI2_SCK"
+          },
+          {
+            "signal": "TIM1_CH1N"
+          },
+          {
+            "signal": "USART3_CTS"
+          }
+        ]
+      },
+      {
+        "pos": "27",
+        "name": "PB14",
+        "type": "io",
+        "gpio": "PB14",
+        "modes": [
+          "Input",
+          "Output",
+          "Analog",
+          "EVENTOUT",
+          "EXTI"
+        ],
+        "signals": [
+          {
+            "signal": "SPI2_MISO"
+          },
+          {
+            "signal": "TIM1_CH2N"
+          },
+          {
+            "signal": "USART3_RTS"
+          }
+        ]
+      },
+      {
+        "pos": "28",
+        "name": "PB15",
+        "type": "io",
+        "gpio": "PB15",
+        "modes": [
+          "Input",
+          "Output",
+          "Analog",
+          "EVENTOUT",
+          "EXTI"
+        ],
+        "signals": [
+          {
+            "signal": "ADC1_EXTI15"
+          },
+          {
+            "signal": "ADC2_EXTI15"
+          },
+          {
+            "signal": "SPI2_MOSI"
+          },
+          {
+            "signal": "TIM1_CH3N"
+          }
+        ]
+      },
+      {
+        "pos": "29",
+        "name": "PA8",
+        "type": "io",
+        "gpio": "PA8",
+        "modes": [
+          "Input",
+          "Output",
+          "Analog",
+          "EVENTOUT",
+          "EXTI"
+        ],
+        "signals": [
+          {
+            "signal": "RCC_MCO"
+          },
+          {
+            "signal": "TIM1_CH1"
+          },
+          {
+            "signal": "USART1_CK"
+          }
+        ]
+      },
+      {
+        "pos": "30",
+        "name": "PA9",
+        "type": "io",
+        "gpio": "PA9",
+        "modes": [
+          "Input",
+          "Output",
+          "Analog",
+          "EVENTOUT",
+          "EXTI"
+        ],
+        "signals": [
+          {
+            "signal": "TIM1_CH2"
+          },
+          {
+            "signal": "USART1_TX"
+          }
+        ]
+      },
+      {
+        "pos": "31",
+        "name": "PA10",
+        "type": "io",
+        "gpio": "PA10",
+        "modes": [
+          "Input",
+          "Output",
+          "Analog",
+          "EVENTOUT",
+          "EXTI"
+        ],
+        "signals": [
+          {
+            "signal": "TIM1_CH3"
+          },
+          {
+            "signal": "USART1_RX"
+          }
+        ]
+      },
+      {
+        "pos": "32",
+        "name": "PA11",
+        "type": "io",
+        "gpio": "PA11",
+        "modes": [
+          "Input",
+          "Output",
+          "Analog",
+          "EVENTOUT",
+          "EXTI"
+        ],
+        "signals": [
+          {
+            "signal": "ADC1_EXTI11"
+          },
+          {
+            "signal": "ADC2_EXTI11"
+          },
+          {
+            "signal": "CAN_RX"
+          },
+          {
+            "signal": "TIM1_CH4"
+          },
+          {
+            "signal": "USART1_CTS"
+          },
+          {
+            "signal": "USB_DM"
+          }
+        ]
+      },
+      {
+        "pos": "33",
+        "name": "PA12",
+        "type": "io",
+        "gpio": "PA12",
+        "modes": [
+          "Input",
+          "Output",
+          "Analog",
+          "EVENTOUT",
+          "EXTI"
+        ],
+        "signals": [
+          {
+            "signal": "CAN_TX"
+          },
+          {
+            "signal": "TIM1_ETR"
+          },
+          {
+            "signal": "USART1_RTS"
+          },
+          {
+            "signal": "USB_DP"
+          }
+        ]
+      },
+      {
+        "pos": "34",
+        "name": "PA13",
+        "type": "io",
+        "gpio": "PA13",
+        "modes": [
+          "Input",
+          "Output",
+          "Analog",
+          "EVENTOUT",
+          "EXTI"
+        ],
+        "signals": [
+          {
+            "signal": "SYS_JTMS-SWDIO"
+          }
+        ]
+      },
+      {
+        "pos": "35",
+        "name": "VSS",
+        "type": "power"
+      },
+      {
+        "pos": "36",
+        "name": "VDD",
+        "type": "power"
+      },
+      {
+        "pos": "37",
+        "name": "PA14",
+        "type": "io",
+        "gpio": "PA14",
+        "modes": [
+          "Input",
+          "Output",
+          "Analog",
+          "EVENTOUT",
+          "EXTI"
+        ],
+        "signals": [
+          {
+            "signal": "SYS_JTCK-SWCLK"
+          }
+        ]
+      },
+      {
+        "pos": "38",
+        "name": "PA15",
+        "type": "io",
+        "gpio": "PA15",
+        "modes": [
+          "Input",
+          "Output",
+          "Analog",
+          "EVENTOUT",
+          "EXTI"
+        ],
+        "signals": [
+          {
+            "signal": "ADC1_EXTI15"
+          },
+          {
+            "signal": "ADC2_EXTI15"
+          },
+          {
+            "signal": "SPI1_NSS",
+            "remap": true
+          },
+          {
+            "signal": "SYS_JTDI"
+          },
+          {
+            "signal": "TIM2_CH1",
+            "remap": true
+          },
+          {
+            "signal": "TIM2_ETR",
+            "remap": true
+          }
+        ]
+      },
+      {
+        "pos": "39",
+        "name": "PB3",
+        "type": "io",
+        "gpio": "PB3",
+        "modes": [
+          "Input",
+          "Output",
+          "Analog",
+          "EVENTOUT",
+          "EXTI"
+        ],
+        "signals": [
+          {
+            "signal": "SPI1_SCK",
+            "remap": true
+          },
+          {
+            "signal": "SYS_JTDO-TRACESWO"
+          },
+          {
+            "signal": "TIM2_CH2",
+            "remap": true
+          }
+        ]
+      },
+      {
+        "pos": "40",
+        "name": "PB4",
+        "type": "io",
+        "gpio": "PB4",
+        "modes": [
+          "Input",
+          "Output",
+          "Analog",
+          "EVENTOUT",
+          "EXTI"
+        ],
+        "signals": [
+          {
+            "signal": "SPI1_MISO",
+            "remap": true
+          },
+          {
+            "signal": "SYS_NJTRST"
+          },
+          {
+            "signal": "TIM3_CH1",
+            "remap": true
+          }
+        ]
+      },
+      {
+        "pos": "41",
+        "name": "PB5",
+        "type": "io",
+        "gpio": "PB5",
+        "modes": [
+          "Input",
+          "Output",
+          "Analog",
+          "EVENTOUT",
+          "EXTI"
+        ],
+        "signals": [
+          {
+            "signal": "I2C1_SMBA"
+          },
+          {
+            "signal": "SPI1_MOSI",
+            "remap": true
+          },
+          {
+            "signal": "TIM3_CH2",
+            "remap": true
+          }
+        ]
+      },
+      {
+        "pos": "42",
+        "name": "PB6",
+        "type": "io",
+        "gpio": "PB6",
+        "modes": [
+          "Input",
+          "Output",
+          "Analog",
+          "EVENTOUT",
+          "EXTI"
+        ],
+        "signals": [
+          {
+            "signal": "I2C1_SCL"
+          },
+          {
+            "signal": "TIM4_CH1"
+          },
+          {
+            "signal": "USART1_TX",
+            "remap": true
+          }
+        ]
+      },
+      {
+        "pos": "43",
+        "name": "PB7",
+        "type": "io",
+        "gpio": "PB7",
+        "modes": [
+          "Input",
+          "Output",
+          "Analog",
+          "EVENTOUT",
+          "EXTI"
+        ],
+        "signals": [
+          {
+            "signal": "I2C1_SDA"
+          },
+          {
+            "signal": "TIM4_CH2"
+          },
+          {
+            "signal": "USART1_RX",
+            "remap": true
+          }
+        ]
+      },
+      {
+        "pos": "44",
+        "name": "BOOT0",
+        "type": "boot"
+      },
+      {
+        "pos": "45",
+        "name": "PB8",
+        "type": "io",
+        "gpio": "PB8",
+        "modes": [
+          "Input",
+          "Output",
+          "Analog",
+          "EVENTOUT",
+          "EXTI"
+        ],
+        "signals": [
+          {
+            "signal": "CAN_RX",
+            "remap": true
+          },
+          {
+            "signal": "I2C1_SCL",
+            "remap": true
+          },
+          {
+            "signal": "TIM4_CH3"
+          }
+        ]
+      },
+      {
+        "pos": "46",
+        "name": "PB9",
+        "type": "io",
+        "gpio": "PB9",
+        "modes": [
+          "Input",
+          "Output",
+          "Analog",
+          "EVENTOUT",
+          "EXTI"
+        ],
+        "signals": [
+          {
+            "signal": "CAN_TX",
+            "remap": true
+          },
+          {
+            "signal": "I2C1_SDA",
+            "remap": true
+          },
+          {
+            "signal": "TIM4_CH4"
+          }
+        ]
+      },
+      {
+        "pos": "47",
+        "name": "VSS",
+        "type": "power"
+      },
+      {
+        "pos": "48",
+        "name": "VDD",
+        "type": "power"
+      }
+    ]
+  },
+  "boardPins": {
+    "PA11": "USB D-",
+    "PA12": "USB D+",
+    "PC13": "Kart LED'i (aktif düşük)"
+  },
   "datasheet": "https://www.st.com/resource/en/datasheet/stm32f103c8.pdf",
   "referenceManual": "https://www.st.com/resource/en/reference_manual/rm0008-stm32f101xx-stm32f102xx-stm32f103xx-stm32f105xx-and-stm32f107xx-advanced-armbased-32bit-mcus-stmicroelectronics.pdf",
   "svdUrl": "https://raw.githubusercontent.com/cmsis-svd/cmsis-svd-data/main/data/STMicro/STM32F103xx.svd",

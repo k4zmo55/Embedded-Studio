@@ -228,7 +228,15 @@ for (const tg of targets) {
     fs.writeFileSync(path.join(out, `${tg.id}.json`), JSON.stringify(ref, null, 2) + '\n');
     continue;
   }
-  fs.writeFileSync(path.join(out, `${tg.id}.json`), JSON.stringify(mcu, null, 2) + '\n');
+  // ES-1002: paket verisi tools/mcu/gen-package.js ile yazılır; burada korunur (sonra gen-package yeniden çalıştırılmalı)
+  const prevFile = path.join(out, `${tg.id}.json`);
+  const prev = fs.existsSync(prevFile) ? JSON.parse(fs.readFileSync(prevFile, 'utf8')) : {};
+  const ordered = {};
+  for (const [k, v] of Object.entries(mcu)) {
+    ordered[k] = v;
+    if (k === 'pins' && prev.package) Object.assign(ordered, { package: prev.package, boardPins: prev.boardPins });
+  }
+  fs.writeFileSync(prevFile, JSON.stringify(ordered, null, 2) + '\n');
   const fnCount = pins.reduce((s, p) => s + p.functions.length, 0);
   console.log(`${tg.id.padEnd(16)} ${String(pins.length).padStart(3)} pin, ${String(fnCount).padStart(4)} fonksiyon, ${Object.keys(sorted).join(' ')}`);
   made++;

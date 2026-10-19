@@ -613,11 +613,11 @@ Kullanıcı kullanmadığı sekmeleri (ör. Monitör, Bellek raporu) üst çubuk
 
 Pinout görünümü için işlemci tanımlarında paket ve bütün fiziksel pinler gerekiyor. Bugün `tools/mcu/gen-mcus.js` STM32_open_pin_data'daki `Position` bilgisini okuyup atıyor, sadece kartta çıkan GPIO pinlerini (ör. F411CEU6 için 34 pin) ve desteklenen sinyalleri saklıyor; pinin sağda mı solda mı olduğu yapay olarak bölünüyor.
 
-- [ ] Paket adı ve tipi (LQFP48/64/100/144, UFQFPN, WLCSP, BGA) ile pin sayısı
-- [ ] Her fiziksel pin: numara/konum (BGA'da satır-sütun), ad, tür (I/O, besleme, NRST, BOOT0, OSC), 5 V toleransı
-- [ ] Pinin bütün sinyalleri ve AF numaraları (CAN, USB, DAC, I2S, SDIO, SWD, OSC, EXTI, EVENTOUT dahil); pin atayıcının kullandığı alt küme ayrı alan olarak korunur
-- [ ] Kart verisi (hangi pin hangi konnektörde, kartta bağlı LED/buton) ayrı tutulur
-- [ ] 15 işlemcinin yeniden üretilmesi; mevcut testlerin geçmesi
+- [x] Paket adı ve tipi (LQFP48/64/100/144, UFQFPN, WLCSP, BGA) ile pin sayısı — `package` (0.6.7, `tools/mcu/gen-package.js`)
+- [x] Her fiziksel pin: numara/konum (BGA'da satır-sütun), ad, tür (I/O, besleme, NRST, BOOT0, OSC) — 5 V toleransı ST'nin açık pin veritabanında yok; ES-1009'a taşındı
+- [x] Pinin bütün sinyalleri ve AF numaraları (CAN, USB, DAC, I2S, SDIO, SWD, OSC, EVENTOUT dahil; GPIO modları Input/Output/Analog/EXTI); pin atayıcının kullandığı alt küme (`pins`) aynen korunur
+- [x] Kart verisi (kartta bağlı LED/buton) ayrı tutulur — `boardPins`; konnektör eşlemesi ES-1009'a taşındı
+- [x] 15 işlemcinin yeniden üretilmesi; mevcut testlerin geçmesi — AF numaraları mevcut veriyle çapraz denetlenir
 
 ### ES-1003 · Pin etiketleri (User Label)
 `etiketler: tip:özellik, alan:pinout, öncelik:yüksek, seviye:hepsi`
@@ -688,3 +688,4 @@ Design sekmesinde şema ile Pinout görünümü arasında geçiş: kullanıcı k
 - [ ] Bütün pinlerin tablosu: no, ad, tür, sinyal, etiket, GPIO modu, sabitli mi; sıralama ve süzme
 - [ ] Tablodan düzenleme (grafik görünüme alternatif, CubeMX2'deki gibi)
 - [ ] CSV dışa aktarma (CubeMX "Export pinout" karşılığı) ve donanım ekibi için yazdırılabilir pin listesi
+- [ ] 5 V toleransı (FT/TT) sütunu ve kart konnektör eşlemesi (Nucleo CN7/CN10, Morpho) — ES-1002'den taşındı; veri datasheet / kart kılavuzundan elle girilir

@@ -363,6 +363,40 @@ test('15 işlemci tanımlı; her pin fonksiyonunun çevre birimi var, saat açma
     assert.ok(m.device.gpioEnr && m.device.gpioEnr.bit.includes('{P}'), `${id}: gpioEnr`);
   }
 });
+test('paket ve fiziksel pinler (ES-1002): ped sayısı, pin atayıcının pinleri ve AF\'leri pakette, türler, kenarlar, kart pinleri', () => {
+  const pk = require('../src/engine/package');
+  const PKG = { stm32f411ceu6: 'UFQFPN48', stm32f030c8t6: 'LQFP48', stm32f103c8t6: 'LQFP48', stm32f303ret6: 'LQFP64', stm32f407vgt6: 'LQFP100', stm32f429zit6: 'LQFP144',
+    stm32f446ret6: 'LQFP64', stm32f767zit6: 'LQFP144', stm32h743zit6: 'LQFP144', stm32h723zgt6: 'LQFP144', stm32g071rbt6: 'LQFP64', stm32g474ret6: 'LQFP64',
+    stm32l432kcu6: 'UFQFPN32', stm32l476rgt6: 'LQFP64', stm32u575zit6q: 'LQFP144' };
+  for (const m of Object.values(lib.mcus)) {
+    const p = m.package;
+    assert.strictEqual(p.name, PKG[m.id], m.id);
+    const pads = pk.pads(m);
+    assert.strictEqual(pads.length, p.pinCount, `${m.id}: ped sayısı`);
+    assert.deepStrictEqual(pads.map((x) => Number(x.pos)), Array.from({ length: p.pinCount }, (_, i) => i + 1), `${m.id}: 1..N`);
+    assert.ok(pads.some((x) => /NRST/.test(x.name)) && pads.some((x) => x.type === 'power'), `${m.id}: NRST ve besleme`);
+    for (const pin of m.pins) {
+      const pad = pk.padFor(m, pin.name);
+      assert.ok(pad && pad.type === 'io' && pad.modes.includes('Output'), `${m.id}: ${pin.name}`);
+      for (const f of pin.functions.filter((x) => x.af !== undefined)) assert.ok(pad.signals.some((s) => s.af === f.af), `${m.id}: ${pin.name} ${f.signal} AF${f.af}`);
+    }
+    for (const x of pads) assert.ok(pk.sideOf(p, x.pos), `${m.id}: ${x.pos} kenarı`);
+    assert.deepStrictEqual(m.boardPins, Object.fromEntries(m.pins.filter((x) => x.note).map((x) => [x.name, x.note])));
+  }
+  const f411 = lib.mcus.stm32f411ceu6;
+  assert.deepStrictEqual(['NRST', 'BOOT0', 'PA13', 'VBAT'].map((n) => pk.pads(f411).find((x) => x.name === n || x.gpio === n).pos), ['7', '44', '34', '1']);
+  assert.ok(pk.padFor(f411, 'PA9').signals.some((s) => s.signal === 'USB_OTG_FS_VBUS'), 'pin atayıcının desteklemediği sinyaller de var');
+  assert.ok(pk.padFor(f411, 'PB8').signals.some((s) => s.signal === 'SDIO_D4' && s.af === 12));
+  assert.deepStrictEqual([pk.sideOf(f411.package, '1'), pk.sideOf(f411.package, '13'), pk.sideOf(f411.package, '25'), pk.sideOf(f411.package, '48')],
+    [{ side: 'left', index: 0, perSide: 12 }, { side: 'bottom', index: 0, perSide: 12 }, { side: 'right', index: 0, perSide: 12 }, { side: 'top', index: 11, perSide: 12 }]);
+  // F1: AF numarası yok, varsayılan dışı sinyaller remap ile
+  assert.deepStrictEqual(pk.padFor(lib.mcus.stm32f103c8t6, 'PB6').signals.find((s) => s.signal === 'USART1_TX'), { signal: 'USART1_TX', remap: true });
+  // G0: PA11 pedinde PA9 yeniden eşlenebilir (ikincil girdi)
+  const g0 = lib.mcus.stm32g071rbt6;
+  assert.deepStrictEqual(pk.alternates(g0, pk.padFor(g0, 'PA11')).map((x) => x.name), ['PA9 [PA11]']);
+  assert.strictEqual(pk.padFor(g0, 'PA9').pos, '37');
+});
+
 test('her işlemcide varsayılan ve en yüksek saat ayarı geçerli', () => {
   for (const id of mcuIds) {
     const m = lib.mcus[id];
