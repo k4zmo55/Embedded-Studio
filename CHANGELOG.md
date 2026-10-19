@@ -1,5 +1,18 @@
 # Değişiklik günlüğü
 
+## 0.6.5 (önizleme)
+
+- **İmza doğrulama, A/B yuva ve geri dönüş koruması (ES-304):** Proje Ayarları > Bootloader > **Güvenli güncelleme**.
+  - **Ed25519 imzası (RFC 8032):** bootloader'a gömülü açık anahtarla doğrulanır; ileti = imaj başlığı (64 bayt) + imaj. İmza bloğu başlık bölgesinde (0x40: sihirli sayı, algoritma, anahtar kimliği, 64 bayt imza); başlık biçimi değişmedi. Doğrulama kodu (`bootloader/es_ed25519.c`: SHA-512 + TweetNaCl'den uyarlanan alan aritmetiği, S < L denetimi) bağımlılıksız ve taşınabilir; eğri ve SHA-512 sabitleri eklentide BigInt ile hesaplanıp yazılır. İmzasız, başka anahtarla imzalı ya da CRC'leri yeniden hesaplanarak değiştirilmiş imaj kabul edilmez.
+  - **Anahtarlar:** "Anahtar üret" (Ed25519), "İçe aktar" (PEM) ve "Dışa aktar (yedek)". Açık anahtar projeye (`embedded-studio.json`) yazılır; özel anahtar yalnızca bu makinede, eklentinin depolama klasöründe durur. Programlayıcı imzasız `.bin / .hex / .elf` dosyasını cihazın istediği anahtarla göndermeden önce imzalar; anahtar bu makinede yoksa nedenini söyler. İmza açık ama anahtar yokken üretilen yapılandırma `#error` ile durur.
+  - **A/B (hazırlık yuvası):** yuva silme birimi sınırında ikiye bölünür (ör. F411: ana 240 KB + hazırlık 256 KB; L476: 504 + 504 KB). Uygulama ana yuvaya bağlanır ve oradan çalışır; güncelleme hazırlık yuvasına yazılır, imza + CRC + sürüm doğrulandıktan sonra ana yuvaya kopyalanır — yeni imaj doğrulanmadan eskisi silinmez. Kopyalama kesilirse (güç) bootloader açılışta baştan tamamlar; ana yuva bozulursa hazırlık yuvasındaki son imajdan kurar; işlenen imaj "DONE" işaretiyle bir daha denenmez. Tek yuva düzeni de seçilebilir (eskisi gibi; eski sürüm ve yanlış yuva artık silmeden önce reddedilir).
+  - **Geri dönüş koruması:** ana yuvada çalışan sürümden ve ayarlanan "en düşük sürüm"den küçük imaj reddedilir (START'ta silmeden önce, END'de yeniden). MCUboot'un downgrade-prevention davranışına denk; ayrı bir sayaç bölgesi kullanılmaz.
+  - **Protokol 2:** INFO yuva düzenini, imza anahtarı kimliğini, sürüm tabanını ve hazırlık yuvasının durumunu bildirir; START başlığı da taşır. Eski (protokol 1) bootloader'larla istemci uyumlu. Programlayıcı bu bilgileri gösterir.
+  - **Koruma önerisi:** ayarlarda ve AGENTS.md'de: üretimde bootloader bölgesini WRP ile koruyun ve RDP seviye 1 kullanın (SWD erişimi imza denetimini atlatır; option byte yazma ES-306).
+  - **MCUboot değerlendirmesi:** tasarım MCUboot'un "overwrite-only + downgrade prevention" kipine karşılık gelir; imaj biçimi (MCUboot: 32 baytlık başlık + TLV, imgtool) ve güncelleme protokolü (SMP / serial recovery) farklı olduğundan doğrudan uyumlu değil. Swap (geri alma için eski imajı saklama) ve imgtool biçiminde dışa aktarma ileride eklenebilir.
+  - İmzalı bootloader 15 işlemcide 10,9–12,3 KB (varsayılan 16 KB bölgeye sığar; imzasız 4,8–6,2 KB).
+- Testler: birim 74; bootloader çekirdeği bilgisayarda 9 (Ed25519 doğrulayıcısı Node.js imzalarıyla; A/B + imza F411, H7, L476, F030'da: imzasız / yabancı anahtar / değiştirilmiş imaj, geri dönüş, kurulumda ve silmede güç kesintisi, yedekten kurtarma, yarım hazırlık); derleme 86 varyant (15 imzalı A/B: imaj imzalanıp doğrulanır, uygulama yalnızca ana yuvaya bağlanır); arayüz 46 (A/B + imza aç, anahtar üret ve yedekle, derle, imzalayıp güncelle, eski sürüm reddi). Gerçek kartla denenmedi (bu makinede kart yok).
+
 ## 0.6.4 (önizleme)
 
 - **Güvenli bootloader şablonu (ES-303):** Proje Ayarları > **Bootloader** ile açılır; "Kod Üret" projeye bir bootloader ekler, uygulamayı yuvaya taşır.
