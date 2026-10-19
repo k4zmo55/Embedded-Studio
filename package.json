@@ -2,7 +2,7 @@
   "name": "embedded-studio",
   "displayName": "Embedded Studio",
   "description": "STM32 için görsel gömülü sistem tasarımı: komponent seçimi, otomatik pin/saat ataması, HAL veya bare-metal + FreeRTOS kod üretimi, canlı monitör ve debug.",
-  "version": "0.6.5",
+  "version": "0.6.6",
   "publisher": "mhmtakfseckin",
   "license": "MIT",
   "repository": {
@@ -103,6 +103,12 @@
         "title": "%command.flashFile%",
         "category": "Embedded Studio",
         "icon": "$(zap)"
+      },
+      {
+        "command": "embeddedStudio.signImage",
+        "title": "%command.signImage%",
+        "category": "Embedded Studio",
+        "icon": "$(verified)"
       },
       {
         "command": "embeddedStudio.debugLaunchJson",
@@ -281,6 +287,10 @@
           "when": "embeddedStudio.projectOpen"
         },
         {
+          "command": "embeddedStudio.signImage",
+          "when": "embeddedStudio.projectOpen"
+        },
+        {
           "command": "embeddedStudio.debugLaunchJson",
           "when": "embeddedStudio.projectOpen"
         },
@@ -296,6 +306,11 @@
       "explorer/context": [
         {
           "command": "embeddedStudio.flashFile",
+          "when": "embeddedStudio.projectOpen && resourceExtname =~ /^\\.(elf|hex|bin)$/",
+          "group": "embeddedStudio"
+        },
+        {
+          "command": "embeddedStudio.signImage",
           "when": "embeddedStudio.projectOpen && resourceExtname =~ /^\\.(elf|hex|bin)$/",
           "group": "embeddedStudio"
         }

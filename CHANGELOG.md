@@ -1,5 +1,14 @@
 # Değişiklik günlüğü
 
+## 0.6.6 (önizleme)
+
+- **İmaj paketleme ve imzalama aracı (ES-305):** imza açık bir bootloader projesinde.
+  - **Derle'den sonra imzalı paket:** `<proje>_signed.bin` / `_signed.hex` (yuva başından imzalı uygulama: UART güncellemesi), `<proje>_full_signed.hex` (bootloader + imzalı uygulama: üretim hattında SWD) ve `<proje>_update.json` (sürüm bildirimi: sürüm, derleme kimliği, yuva, boyut, CRC-32, SHA-256, imza anahtarı kimliği). Özel anahtar bu makinede yoksa uyarır, derleme başarısız sayılmaz. Proje Ayarları > Bootloader'da kapatılabilir. Derleme özetinde bu dosyalar da listelenir.
+  - **"Güncelleme İmajını İmzala" komutu:** komut paletinde ve gezginde `.bin / .hex / .elf` üzerinde sağ tık; projenin anahtarıyla imzalar, paketi dosyanın yanına yazar.
+  - **Komut satırı / CI:** projeye `cmake/es-sign.js` eklenir (bağımsız, yalnızca Node.js yerleşik modülleri; eklentiyle aynı kod). `ES_SIGN_KEY` (PEM dosyası; ortam değişkeni ya da `-DES_SIGN_KEY=`) verilirse ve Node.js bulunursa CMake `<proje>_signed` hedefiyle paketi üretir; anahtar ayrıca `--pub` ile bootloader'a gömülü açık anahtara karşı denetlenir. Elle: `node cmake/es-sign.js --bin … --slot 0x… [--boot-hex …]`, anahtar `--key`, `ES_SIGN_KEY` ya da `ES_SIGN_KEY_PEM` (CI gizli değişkeni).
+  - Başlık + CRC-32 (0.6.4, `cmake/es-image.cmake`) ve eklentiden güncelleme gönderme (0.6.4) ile ES-305 tamamlandı.
+- Testler: birim 75 (eklentiyle bayt bayt aynı imza, paket ve bildirim, birleşik HEX, yanlış anahtar / yuva, komut satırı); derleme 86 varyant (15 imzalı A/B'de CMake `ES_SIGN_KEY` hedefi Node.js ile çalıştırılıp çıktısı eklentininkiyle karşılaştırılır); arayüz 46 (Derle sonrası paket ve sürüm bildirimi, İmzala komutu).
+
 ## 0.6.5 (önizleme)
 
 - **İmza doğrulama, A/B yuva ve geri dönüş koruması (ES-304):** Proje Ayarları > Bootloader > **Güvenli güncelleme**.
